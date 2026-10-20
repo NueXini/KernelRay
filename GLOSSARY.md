@@ -14,14 +14,11 @@ The Xray executable itself, taken from an upstream `Xray-android-<arch>` release
 _Avoid_: binary, engine, xray-core (that is the upstream project, not our file)
 
 **模块目录 (Module directory)**:
-`/data/adb/modules/kernelray` — mechanism, default config template and core binaries. Replaced
-wholesale when the module is updated.
-_Avoid_: install dir, app dir
-
-**数据目录 (Data directory)**:
-`/data/adb/kernelray` — user config, logs and runtime state. Belongs to the user and survives
-module updates.
-_Avoid_: cache, storage, work dir
+`/data/adb/modules/kernelray` — the one root: mechanism, core binary, default config template,
+user config, node store, logs and runtime state. It is also all we ever write to, so removing
+the module leaves nothing behind. Replaced wholesale on update, which resets the user data
+inside it; that cost is deliberate (see `docs/adr/0002`).
+_Avoid_: install dir, app dir, data dir, storage, work dir
 
 **空转 (Idle run)**:
 The core is up and listening on its own local inbounds, and no device traffic is redirected
@@ -29,8 +26,9 @@ into it. The opposite of transparent proxying.
 _Avoid_: running, normal mode, passive mode
 
 **默认配置 (Default config)**:
-`module/config.example.json` as copied to the data directory on first install. It is a plain
-Xray config with no KernelRay-specific keys; after the copy the user owns that file.
+`module/config.example.json` as copied to `config.json` in the module directory when that file
+is absent. It is a plain Xray config with no KernelRay-specific keys; after the copy the user
+owns that file.
 _Avoid_: template, preset, profile
 
 **运行状态 (Runtime status)**:

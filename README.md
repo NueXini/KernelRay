@@ -13,13 +13,18 @@ the next version, not this one.
 | | |
 | --- | --- |
 | starts on boot | `service.sh` (late_start service) launches the core and records pid + status |
-| keeps state in | `/data/adb/kernelray/` — survives module updates |
+| keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) |
 | outbound | `freedom` — direct, i.e. a plain tunnel you can point clients at |
 | action button | toggles start/stop and prints status (`action.sh`) |
 | WebUI | start / stop the core, watch its log, see the currently selected node |
-| config | `/data/adb/kernelray/config.json`, plain Xray JSON, created once and never overwritten |
-| log | `/data/adb/kernelray/logs/xray.log` |
+| config | `config.json` in the module dir, plain Xray JSON, created from `config.example.json` when absent |
+| log | `logs/xray.log` in the module dir |
+
+> **Everything lives in the module dir.** Nothing is written outside it, so uninstalling leaves no
+> residue. The flip side: a module update replaces that directory wholesale, so `config.json`,
+> `state.json` and the logs are reset when you upgrade (see
+> [`docs/adr/0002`](docs/adr/0002-everything-lives-in-the-module-dir.md)).
 
 Point any app, Termux command or adb-forwarded client at the socks port to check that the
 core really is forwarding traffic — a live pid alone proves nothing.
@@ -33,11 +38,11 @@ core really is forwarding traffic — a live pid alone proves nothing.
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, status; also the CLI used by the WebUI |
 | `module/webroot/index.html` | the WebUI: plain HTML/CSS/JS, no build step, no dependencies; reads `state.json` for the selected node |
 | `docs/webui.png` | screenshot of the WebUI |
-| `module/config.example.json` | default config, copied to the data dir on first install |
+| `module/config.example.json` | default config, copied to `config.json` when absent |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
 | `module.yaml` | KernelSU Modules display metadata (name, summary, icon, tags, …) |
 | `scripts/pack.sh` | builds `build/kernelray-<versionCode>-<version>.zip` from `module/` |
-| `GLOSSARY.md` | what we mean by core / module dir / data dir / idle run |
+| `GLOSSARY.md` | what we mean by node / subscription / selected node / module dir / idle run |
 | `docs/adr/` | decisions worth remembering |
 
 ## Install
@@ -60,7 +65,7 @@ translation.
 ```sh
 # core alive, one instance only
 ps -A -o PID,ARGS | grep 'xray run'
-cat /data/adb/kernelray/runtime/status.json     # {"state":"running",...}
+cat /data/adb/modules/kernelray/runtime/status.json     # {"state":"running",...}
 
 # the core really forwards traffic
 adb forward tcp:11080 tcp:10808
@@ -96,9 +101,10 @@ of pretending to work.
 
 ## Deliberately out of scope (v0)
 
-Transparent proxy (TPROXY/iptables), DNS hijacking, routing/geo rules, subscription and
-share-link import, per-app proxying, WebUI, TUN, watchdog/auto-restart, multi-core support
-(sing-box/mihomo/…). They are parked, not rejected — see `docs/adr/`.
+Transparent proxy (TPROXY/iptables), DNS hijacking, routing/geo rules, subscription fetching,
+share-link import, switching or applying a node (the WebUI only *shows* the selected one),
+per-app proxying, TUN, watchdog/auto-restart, multi-core support (sing-box/mihomo/…).
+They are parked, not rejected — see `docs/adr/`.
 
 ## Releasing a new version
 

@@ -36,5 +36,7 @@ kr_ensure_config
 kr_status_write installed idle
 
 ui_print "- Installed. Core starts in idle mode on boot (socks 127.0.0.1:10808, http 127.0.0.1:10809)."
-ui_print "- Config: $KR_CONF (left untouched on reinstall)"
-ui_print "- Log:    $KR_LOG"
+ui_print "- Config: /data/adb/modules/$KR_ID/config.json (from config.example.json when absent)"
+ui_print "- Log:    /data/adb/modules/$KR_ID/logs/xray.log"
+ui_print "! Everything lives in this module dir. A module update replaces it whole,"
+ui_print "! so config.json, state.json and logs are reset by upgrading."

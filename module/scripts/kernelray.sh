@@ -2,17 +2,18 @@
 # KernelRay shared helpers. Sourced by customize.sh / service.sh / action.sh / uninstall.sh.
 #
 # Layout contract:
-#   module dir  (/data/adb/modules/kernelray)  mechanism + cores, replaced on module update
-#   data dir    (/data/adb/kernelray)          user config, logs, runtime state, survives updates
+#   everything lives in the module dir (/data/adb/modules/kernelray): mechanism, core,
+#   user config, node store, logs and runtime state. Nothing is written outside it, so
+#   uninstalling the module leaves no residue — and a module update replaces the whole
+#   directory, which resets config/state (see docs/adr/0002).
 #
 # Override KR_MODDIR during install: customize.sh sets it to $MODPATH.
 
 KR_ID=kernelray
 KR_MODDIR=${KR_MODDIR:-/data/adb/modules/kernelray}
-KR_DATA=${KR_DATA:-/data/adb/kernelray}
-KR_CONF=$KR_DATA/config.json
-KR_LOGDIR=$KR_DATA/logs
-KR_RUNDIR=$KR_DATA/runtime
+KR_CONF=$KR_MODDIR/config.json
+KR_LOGDIR=$KR_MODDIR/logs
+KR_RUNDIR=$KR_MODDIR/runtime
 KR_LOG=$KR_LOGDIR/xray.log
 KR_PIDFILE=$KR_RUNDIR/xray.pid
 KR_STARTED=$KR_RUNDIR/started
@@ -24,8 +25,10 @@ kr_now() { date +%s; }
 kr_log() { printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*"; }
 
 kr_dirs() {
-  mkdir -p "$KR_DATA" "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
-  chmod 700 "$KR_DATA" "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
+  mkdir -p "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
+  # The module dir itself keeps its installed mode; only our own subdirs are tightened.
+  chmod 700 "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
+  chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" 2>/dev/null
 }
 
 # There is exactly one core: bin/xray. A core is usable only if it executes here.

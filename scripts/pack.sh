@@ -21,9 +21,12 @@ rm -f "$zip"
 
 cd "$mod"
 if command -v zip >/dev/null 2>&1; then
-  zip -qr "$zip" . -x 'bin/README.md' -x '*.DS_Store'
+  # User data lives in the module dir at runtime; never ship it inside the zip.
+  zip -qr "$zip" . -x 'bin/README.md' -x '*.DS_Store' \
+    -x 'config.json' -x 'state.json' -x 'logs/*' -x 'runtime/*'
 elif command -v 7z >/dev/null 2>&1; then
-  7z a -tzip -bso0 -bsp0 "$zip" . -x'!bin/README.md' >/dev/null
+  7z a -tzip -bso0 -bsp0 "$zip" . -x'!bin/README.md' -x'!config.json' -x'!state.json' \
+    -x'!logs/*' -x'!runtime/*' >/dev/null
 else
   echo "error: need zip or 7z on PATH" >&2
   exit 1

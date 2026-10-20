@@ -159,9 +159,9 @@
 
   var MOD = "/data/adb/modules/kernelray";
   var CLI = MOD + "/scripts/kernelray.sh";
-  var DATA = "/data/adb/kernelray";
-  var STATE = DATA + "/state.json";
-  var CONF = DATA + "/config.json";
+  // Config, node store and logs sit in the module dir too — one root, nothing outside it.
+  var STATE = MOD + "/state.json";
+  var CONF = MOD + "/config.json";
   var LOG_LINES = 200;
   var POLL_MS = 2000;
 
