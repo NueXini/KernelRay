@@ -36,7 +36,7 @@ ls -l build/                  # 确认时间戳是刚才的，别推了旧包
 ## 3. 推包到设备
 
 ```sh
-adb -s $D push build/kernelray-50-v0.5.0.zip //data/local/tmp/kernelray.zip
+adb -s $D push build/kernelray-51-v0.5.1.zip //data/local/tmp/kernelray.zip
 ```
 
 > **Windows/MSYS 坑**：`/data/...` 会被改写成 `C:/Users/.../data/...`。两种写法都行：
