@@ -17,7 +17,7 @@ the next version, not this one.
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) |
 | outbound | `freedom` — direct, i.e. a plain tunnel you can point clients at |
 | action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop the core and watch its log from the KernelSU manager (`module/webroot/`) |
+| WebUI | start / stop the core, watch its log, see the currently selected node |
 | config | `/data/adb/kernelray/config.json`, plain Xray JSON, created once and never overwritten |
 | log | `/data/adb/kernelray/logs/xray.log` |
 
@@ -31,7 +31,7 @@ core really is forwarding traffic — a live pid alone proves nothing.
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, status; also the CLI used by the WebUI |
-| `module/webroot/index.html` | the WebUI: plain HTML/CSS/JS, no build step, no dependencies |
+| `module/webroot/index.html` | the WebUI: plain HTML/CSS/JS, no build step, no dependencies; reads `state.json` for the selected node |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | default config, copied to the data dir on first install |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
@@ -72,8 +72,13 @@ curl -sS -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:11080 http
 <p align="center"><img src="docs/webui.png" width="300" alt="KernelRay WebUI"></p>
 
 Open the module card in the KernelSU manager and tap **WebUI**. The page shows the state
-(running / stopped / failed), pid, uptime, core version and the last 200 log lines, with
-**Start** / **Stop** buttons.
+(running / stopped / failed), pid, uptime, core version, the selected node and the last 200
+log lines, with **Start** / **Stop** buttons.
+
+The node card is a read-only view of `state.json`: it resolves `selected` against the manual
+list and any subscription node lists, then says whether `config.json` actually carries a proxy
+outbound. It cannot switch nodes or apply anything — that is v1 work, so the wording never
+claims a node is in use when the config is still `freedom`.
 
 The page is a dumb client: every button runs the same CLI the shell uses, so behaviour cannot
 diverge between the two entry points.

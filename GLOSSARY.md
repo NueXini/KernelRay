@@ -37,3 +37,22 @@ _Avoid_: template, preset, profile
 The three files a reader consults to answer "what is the module doing": `runtime/status.json`
 (state/phase), `runtime/xray.pid`, `logs/xray.log`. Status is written, never inferred by callers.
 _Avoid_: health, heartbeat
+
+**节点 (Node)**:
+One proxy endpoint with everything needed to reach it: address, port, protocol and its
+transport/security parameters.
+_Avoid_: server, proxy (that is the role, not the thing), config
+
+**节点库 (Node store)**:
+The user's whole set of nodes — the ones added by hand plus the ones a subscription supplied.
+_Avoid_: list, pool, node list
+
+**订阅 (Subscription)**:
+A URL that yields nodes. Its nodes join the node store, but the store does not own them: a
+refresh replaces them wholesale, while manually added nodes are never touched.
+_Avoid_: feed, provider, source
+
+**当前节点 (Selected node)**:
+The one node in the store marked as in use. It is a pointer into the store, not a copy, so a
+node that disappears from the store leaves the selection dangling rather than stale.
+_Avoid_: active node, current proxy, main node

@@ -66,8 +66,7 @@
   dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 13px; }
   dt { color: var(--muted); white-space: nowrap; }
   dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-  .logcard { padding: 0; overflow: hidden; }
-  .logbar {
+  .logcard { padding: 0; overflow: hidden; }  .logbar {
     display: flex; align-items: center; gap: 12px; padding: 10px 12px;
     border-bottom: 1px solid var(--line); font-size: 13px;
   }
@@ -86,6 +85,17 @@
   }
   .banner.show { display: block; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .nodehead { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .nodehead > span:first-child { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+  .pill {
+    font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .nodename { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+  .nodemeta { color: var(--muted); font-size: 13px; margin-top: 3px; overflow-wrap: anywhere; }
+  .nodemeta code { font: inherit; }
+  .nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }
+  .nodehint.warn { color: var(--warn); }
   .toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: var(--card); border: 1px solid var(--line); color: var(--text);
@@ -109,6 +119,16 @@
     <button class="danger" id="stop" disabled>Stop</button>
   </div>
   <div class="hint" id="hint"></div>
+</section>
+
+<section class="card" id="nodecard">
+  <div class="nodehead">
+    <span id="l-node">Current node</span>
+    <span class="pill" id="n-src" hidden></span>
+  </div>
+  <div class="nodename" id="n-name">–</div>
+  <div class="nodemeta" id="n-meta"></div>
+  <div class="nodehint" id="n-hint"></div>
 </section>
 
 <section class="card">
@@ -139,6 +159,9 @@
 
   var MOD = "/data/adb/modules/kernelray";
   var CLI = MOD + "/scripts/kernelray.sh";
+  var DATA = "/data/adb/kernelray";
+  var STATE = DATA + "/state.json";
+  var CONF = DATA + "/config.json";
   var LOG_LINES = 200;
   var POLL_MS = 2000;
 
@@ -152,7 +175,14 @@
     startingMsg: "正在启动…", stoppingMsg: "正在停止…",
     actionFailed: "操作失败", noLog: "（还没有日志）",
     stoppedHint: "核心未运行，设备流量没有被接管。",
-    runningHint: "核心在空转：没有接管任何流量，需要客户端自己指向 127.0.0.1:10808。"
+    runningHint: "核心在空转：没有接管任何流量，需要客户端自己指向 127.0.0.1:10808。",
+    node: "当前节点", srcManual: "手动", srcSub: "订阅",
+    nodeNone: "还没有选中的节点（state.json 里 selected 为空）",
+    nodeMissing: "state.json 的 selected 指向了一个列表里不存在的 id",
+    nodeApplied: "配置里已有代理出站",
+    nodeNotApplied: "当前配置是直连（freedom），选中节点还没有写入配置",
+    nodeNoState: "没有 state.json，节点信息无从得知",
+    nodeSchema: "state.json 的 schema 版本未识别："
   } : {
     start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
     log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
@@ -162,7 +192,14 @@
     startingMsg: "Starting…", stoppingMsg: "Stopping…",
     actionFailed: "Action failed", noLog: "(no log yet)",
     stoppedHint: "Core is not running; device traffic is untouched.",
-    runningHint: "Idle run: no traffic is intercepted. Point your client at 127.0.0.1:10808."
+    runningHint: "Idle run: no traffic is intercepted. Point your client at 127.0.0.1:10808.",
+    node: "Current node", srcManual: "manual", srcSub: "subscription",
+    nodeNone: "No node selected (state.json has an empty selected field)",
+    nodeMissing: "state.json points selected at an id that is not in any list",
+    nodeApplied: "config.json already has a proxy outbound",
+    nodeNotApplied: "config.json is direct (freedom); the selected node is not applied",
+    nodeNoState: "No state.json, so the node is unknown",
+    nodeSchema: "Unrecognised state.json schema: "
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -172,7 +209,9 @@
     core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
     refresh: $("refresh"), toast: $("toast"),
     lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
-    lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow")
+    lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
+    lNode: $("l-node"), nSrc: $("n-src"), nName: $("n-name"),
+    nMeta: $("n-meta"), nHint: $("n-hint")
   };
 
   var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
@@ -192,6 +231,7 @@
     els.lPort.textContent = T.port;
     els.lCore.textContent = T.core;
     els.lConf.textContent = T.conf;
+    els.lNode.textContent = T.node;
   }
 
   function toast(msg) {
@@ -248,6 +288,88 @@
     els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
   }
 
+  function pickNode(state) {
+    var sel = state.selected;
+    var pools = [];
+    (state.manual || []).forEach(function (n) { if (n) { pools.push({ node: n, src: T.srcManual }); } });
+    (state.subscriptions || []).forEach(function (s) {
+      if (!s) { return; }
+      var src = s.name || s.title || s.url || T.srcSub;
+      (s.nodes || []).forEach(function (n) { if (n) { pools.push({ node: n, src: src }); } });
+    });
+    if (!sel) { return { kind: "none" }; }
+    for (var i = 0; i < pools.length; i++) {
+      if (pools[i].node.id === sel) { return { kind: "found", node: pools[i].node, src: pools[i].src }; }
+    }
+    return { kind: "missing" };
+  }
+
+  // Whether config.json actually points at a proxy. Kept deliberately weak: it
+  // proves an outbound exists, not that it is the selected node, so the wording
+  // never claims more than we know.
+  function configHasProxy(cfg) {
+    if (!cfg || !cfg.outbounds || !cfg.outbounds.length) { return false; }
+    return cfg.outbounds.some(function (o) {
+      var p = (o && o.protocol) || "";
+      return p && p !== "freedom" && p !== "blackhole" && p !== "dns";
+    });
+  }
+
+  function renderNode(state, cfg) {
+    els.nSrc.hidden = true;
+    els.nMeta.textContent = "";
+    els.nHint.className = "nodehint";
+    els.nHint.textContent = "";
+    if (!state) {
+      els.nName.textContent = "–";
+      els.nHint.textContent = T.nodeNoState;
+      return;
+    }
+    var picked = pickNode(state);
+    if (picked.kind === "none") {
+      els.nName.textContent = "–";
+      els.nHint.textContent = T.nodeNone;
+      return;
+    }
+    if (picked.kind === "missing") {
+      els.nName.textContent = "–";
+      els.nHint.textContent = T.nodeMissing;
+      els.nHint.className = "nodehint warn";
+      return;
+    }
+    var n = picked.node;
+    els.nName.textContent = n.name || n.protocol || "node";
+    var bits = [];
+    if (n.protocol) { bits.push(n.protocol); }
+    if (n.transport && n.transport !== "tcp") { bits.push(n.transport); }
+    if (n.security) { bits.push(n.security); }
+    if (n.address) { bits.push(n.address + (n.port ? ":" + n.port : "")); }
+    els.nMeta.textContent = bits.join(" · ");
+    els.nSrc.textContent = picked.src;
+    els.nSrc.hidden = false;
+    if (state.schema && state.schema !== 1) {
+      els.nHint.textContent = T.nodeSchema + state.schema;
+      els.nHint.className = "nodehint warn";
+      return;
+    }
+    var applied = configHasProxy(cfg);
+    els.nHint.textContent = applied ? T.nodeApplied : T.nodeNotApplied;
+    if (!applied) { els.nHint.className = "nodehint warn"; }
+  }
+
+  // One exec for both files: state.json is the intent, config.json is what the
+  // core actually runs, and the UI must never present one as the other.
+  function refreshNode() {
+    return exec("cat " + STATE + " 2>/dev/null; echo '@@CFG@@'; cat " + CONF + " 2>/dev/null")
+      .then(function (r) {
+        var parts = r.stdout.split("@@CFG@@");
+        var state = null, cfg = null;
+        try { state = JSON.parse((parts[0] || "").trim()); } catch (e) { state = null; }
+        try { cfg = JSON.parse((parts[1] || "").trim()); } catch (e) { cfg = null; }
+        renderNode(state, cfg);
+      }).catch(function () {});
+  }
+
   function renderStatus(kv) {
     var state = kv.state || "unknown";
     var phase = kv.phase || "";
@@ -299,6 +421,7 @@
   function refreshAll() {
     if (!hasBridge) { return; }
     refreshStatus();
+    refreshNode();
     refreshLog();
   }
 
