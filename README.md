@@ -36,9 +36,12 @@ core really is forwarding traffic — a live pid alone proves nothing.
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, status; also the CLI used by the WebUI |
-| `module/webroot/index.html` | the WebUI: plain HTML/CSS/JS, no build step, no dependencies; reads `state.json`, imports nodes |
+| `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
+| `module/webroot/app.css` | WebUI styles, including the light/dark palettes |
+| `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, drives the CLI |
 | `docs/state-schema.md` | what `state.json` contains — the authority the UI writes against |
-| `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped HTML |
+| `docs/dev-workflow.md` | the adb install / verify / drive-the-UI loop we actually use, plus its traps |
+| `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped `app.js` |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | default config, copied to `config.json` when absent |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
@@ -57,6 +60,11 @@ core really is forwarding traffic — a live pid alone proves nothing.
 scripts/pack.sh
 adb push build/kernelray-*.zip //data/local/tmp/ && adb shell su -c 'ksud module install /data/local/tmp/kernelray-*.zip'
 ```
+
+The install is only staged until the next reboot — KernelSU unpacks into
+`/data/adb/modules_update/` and swaps it in at boot. See
+[`docs/dev-workflow.md`](docs/dev-workflow.md) for the full loop (waiting for boot, verifying,
+opening the WebUI, simulating an update or an uninstall) and the traps that come with it.
 
 The module is arm64-only and ships one core at `bin/xray`. Install fails loudly if that
 binary is missing or cannot execute on the device; x86_64 emulators run it via ARM
@@ -98,7 +106,7 @@ Import only fills the node list; it does not change how traffic flows. The node 
 saying so until applying a node exists.
 
 The parser is tested without a browser: `node tests/parse.test.js` extracts the marked block
-from this very file and runs 22 cases against it.
+from the shipped `app.js` and runs 24 cases against it.
 
 The page is a dumb client: every button runs the same CLI the shell uses, so behaviour cannot
 diverge between the two entry points.
@@ -110,9 +118,9 @@ diverge between the two entry points.
 /data/adb/modules/kernelray/scripts/kernelray.sh stop
 ```
 
-No build step and no `npm install`: `webroot/index.html` is committed as-is and talks to the
-manager through the injected `ksu.exec` bridge. Opened outside the manager it says so instead
-of pretending to work.
+No build step and no `npm install`: `webroot/index.html`, `app.css` and `app.js` are committed
+as-is, and the page talks to the manager through the injected `ksu.exec` bridge. Opened outside
+the manager it says so instead of pretending to work.
 
 ## Deliberately out of scope (v0)
 
