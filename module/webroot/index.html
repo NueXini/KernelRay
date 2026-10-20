@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KernelRay</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #16181d;
+    --muted: #666c78;
+    --line: #e3e6ea;
+    --accent: #2f6df6;
+    --ok: #17803d;
+    --bad: #b42318;
+    --warn: #b54708;
+    --log-bg: #12141a;
+    --log-text: #d7dce5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1013;
+      --card: #171a1f;
+      --text: #e8ebf0;
+      --muted: #9aa3b2;
+      --line: #262b33;
+      --accent: #7aa2ff;
+      --ok: #4ade80;
+      --bad: #ff7b72;
+      --warn: #f0b429;
+      --log-bg: #0a0c10;
+      --log-text: #cfd6e2;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+    max-width: 760px; margin: 0 auto;
+  }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  h1 { font-size: 19px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .badge.running { color: var(--ok); border-color: currentColor; }
+  .badge.failed  { color: var(--bad); border-color: currentColor; }
+  .badge.starting, .badge.stopping { color: var(--warn); border-color: currentColor; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; margin-bottom: 12px;
+  }
+  .row { display: flex; gap: 10px; }
+  button {
+    flex: 1; font: inherit; font-weight: 600; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: transparent; color: var(--text);
+    transition: opacity .15s ease, transform .05s ease;
+  }
+  button:active:not(:disabled) { transform: scale(.985); }
+  button:disabled { opacity: .38; }
+  button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  button.danger { color: var(--bad); border-color: currentColor; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 13px; }
+  dt { color: var(--muted); white-space: nowrap; }
+  dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .logcard { padding: 0; overflow: hidden; }
+  .logbar {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+    border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .logbar .spacer { flex: 1; }
+  .logbar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .logbar input { accent-color: var(--accent); }
+  .logbar button { flex: 0 0 auto; padding: 5px 10px; font-size: 13px; font-weight: 500; }
+  pre {
+    margin: 0; padding: 12px; background: var(--log-bg); color: var(--log-text);
+    font: 12px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-height: 52vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .banner {
+    display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--bad); color: var(--bad); font-size: 13px;
+  }
+  .banner.show { display: block; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 14px; border-radius: 999px; font-size: 13px; opacity: 0;
+    transition: opacity .2s ease; pointer-events: none; max-width: 88vw;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="banner" id="banner"></div>
+
+<header>
+  <h1>KernelRay</h1>
+  <span class="badge" id="badge">…</span>
+</header>
+
+<section class="card">
+  <div class="row">
+    <button class="primary" id="start" disabled>Start</button>
+    <button class="danger" id="stop" disabled>Stop</button>
+  </div>
+  <div class="hint" id="hint"></div>
+</section>
+
+<section class="card">
+  <dl>
+    <dt id="l-pid">PID</dt><dd id="v-pid">–</dd>
+    <dt id="l-up">Uptime</dt><dd id="v-up">–</dd>
+    <dt id="l-port">Ports</dt><dd id="v-port">–</dd>
+    <dt id="l-core">Core</dt><dd id="v-core">–</dd>
+    <dt id="l-conf">Config</dt><dd id="v-conf">–</dd>
+  </dl>
+</section>
+
+<section class="card logcard">
+  <div class="logbar">
+    <span id="l-log">Log</span>
+    <span class="spacer"></span>
+    <label><input type="checkbox" id="follow" checked><span id="l-follow">Follow</span></label>
+    <button id="refresh">Refresh</button>
+  </div>
+  <pre id="log">…</pre>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var MOD = "/data/adb/modules/kernelray";
+  var CLI = MOD + "/scripts/kernelray.sh";
+  var LOG_LINES = 200;
+  var POLL_MS = 2000;
+
+  var ZH = navigator.language && navigator.language.toLowerCase().indexOf("zh") === 0;
+  var T = ZH ? {
+    start: "启动", stop: "停止", follow: "跟随", refresh: "刷新",
+    log: "日志", pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
+    running: "运行中", stopped: "已停止", starting: "启动中", stopping: "停止中",
+    failed: "启动失败", unknown: "未知",
+    noBridge: "没有检测到 KernelSU 桥接，请从 KernelSU 管理器的模块页面打开本页面。",
+    startingMsg: "正在启动…", stoppingMsg: "正在停止…",
+    actionFailed: "操作失败", noLog: "（还没有日志）",
+    stoppedHint: "核心未运行，设备流量没有被接管。",
+    runningHint: "核心在空转：没有接管任何流量，需要客户端自己指向 127.0.0.1:10808。"
+  } : {
+    start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
+    log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
+    running: "running", stopped: "stopped", starting: "starting", stopping: "stopping",
+    failed: "failed", unknown: "unknown",
+    noBridge: "KernelSU bridge not found. Open this page from the module card in the KernelSU manager.",
+    startingMsg: "Starting…", stoppingMsg: "Stopping…",
+    actionFailed: "Action failed", noLog: "(no log yet)",
+    stoppedHint: "Core is not running; device traffic is untouched.",
+    runningHint: "Idle run: no traffic is intercepted. Point your client at 127.0.0.1:10808."
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    banner: $("banner"), badge: $("badge"), start: $("start"), stop: $("stop"),
+    hint: $("hint"), pid: $("v-pid"), up: $("v-up"), port: $("v-port"),
+    core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
+    refresh: $("refresh"), toast: $("toast"),
+    lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
+    lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow")
+  };
+
+  var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
+  var lastLog = "";
+  var lastState = "unknown";
+  var busy = false;
+  var pending = null; // "start" | "stop" while the action is in flight
+
+  function label(key) {
+    els.start.textContent = T.start;
+    els.stop.textContent = T.stop;
+    els.refresh.textContent = T.refresh;
+    els.lFollow.textContent = T.follow;
+    els.lLog.textContent = T.log;
+    els.lPid.textContent = T.pid;
+    els.lUp.textContent = T.up;
+    els.lPort.textContent = T.port;
+    els.lCore.textContent = T.core;
+    els.lConf.textContent = T.conf;
+  }
+
+  function toast(msg) {
+    els.toast.textContent = msg;
+    els.toast.className = "toast show";
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { els.toast.className = "toast"; }, 2600);
+  }
+
+  // ksu.exec is callback-based: ksu.exec(cmd, optionsJson, callbackName) and the
+  // injected WebView calls window[callbackName](errno, stdout, stderr).
+  function exec(cmd) {
+    return new Promise(function (resolve, reject) {
+      if (!hasBridge) { reject(new Error("no bridge")); return; }
+      var name = "kc_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+      window[name] = function (errno, stdout, stderr) {
+        delete window[name];
+        resolve({ errno: errno, stdout: stdout || "", stderr: stderr || "" });
+      };
+      try {
+        window.ksu.exec(cmd, JSON.stringify({}), name);
+      } catch (e) {
+        delete window[name];
+        reject(e);
+      }
+    });
+  }
+
+  function parseKv(text) {
+    var out = {};
+    (text || "").split("\n").forEach(function (line) {
+      var i = line.indexOf("=");
+      if (i > 0) { out[line.slice(0, i).trim()] = line.slice(i + 1); }
+    });
+    return out;
+  }
+
+  function uptime(sec) {
+    sec = Number(sec) || 0;
+    if (sec <= 0) { return "–"; }
+    var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
+    var m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (d) { return d + "d " + h + "h"; }
+    if (h) { return h + "h " + m + "m"; }
+    if (m) { return m + "m " + s + "s"; }
+    return s + "s";
+  }
+
+  function setButtons() {
+    var running = lastState === "running";
+    els.start.disabled = busy || running;
+    els.stop.disabled = busy || !running;
+    els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
+    els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
+  }
+
+  function renderStatus(kv) {
+    var state = kv.state || "unknown";
+    var phase = kv.phase || "";
+    var failed = phase === "config-invalid" || phase === "no-core" || phase === "crashed" || phase === "no-config";
+    var cls = failed ? "failed" : state;
+    var text = T[state] || state;
+    if (failed) { text = T.failed + " · " + phase; }
+    els.badge.textContent = text;
+    els.badge.className = "badge " + cls;
+
+    if (document.visibilityState === "visible") { lastState = state; }
+    els.pid.textContent = kv.pid && kv.pid !== "-" ? kv.pid : "–";
+    els.up.textContent = state === "running" && kv.started
+      ? uptime(Math.floor(Date.now() / 1000) - Number(kv.started))
+      : "–";
+    els.port.textContent = kv.socks ? "socks " + kv.socks + " · http " + kv.http : "–";
+    els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
+    els.conf.textContent = kv.conf || "–";
+    els.hint.textContent = state === "running" ? T.runningHint : T.stoppedHint;
+
+    setButtons();
+  }
+
+  function renderLog(text) {
+    if (text === lastLog) { return; }
+    lastLog = text;
+    var atBottom = els.log.scrollTop + els.log.clientHeight >= els.log.scrollHeight - 24;
+    els.log.textContent = text || T.noLog;
+    if (els.follow.checked && atBottom) { els.log.scrollTop = els.log.scrollHeight; }
+  }
+
+  function refreshStatus() {
+    return exec(CLI + " status").then(function (r) {
+      if (r.errno !== 0 && !r.stdout) {
+        els.banner.textContent = r.stderr || (T.actionFailed + " (status)");
+        els.banner.className = "banner show";
+        return;
+      }
+      renderStatus(parseKv(r.stdout));
+    }).catch(function () { /* bridge error already reported at boot */ });
+  }
+
+  function refreshLog() {
+    return exec(CLI + " log " + LOG_LINES).then(function (r) {
+      renderLog(r.stdout || r.stderr);
+    }).catch(function () {});
+  }
+
+  function refreshAll() {
+    if (!hasBridge) { return; }
+    refreshStatus();
+    refreshLog();
+  }
+
+  function run(command, pendingLabel) {
+    if (busy) { return; }
+    busy = true;
+    pending = command;
+    setButtons();
+    toast(pendingLabel);
+    exec(CLI + " " + command).then(function (r) {
+      if (r.errno !== 0) { toast(T.actionFailed + ": " + (r.stderr || r.errno)); }
+    }).catch(function (e) {
+      toast(T.actionFailed + ": " + e.message);
+    }).then(function () {
+      busy = false;
+      pending = null;
+      refreshAll();
+    });
+  }
+
+  els.start.addEventListener("click", function () { run("start", T.startingMsg); });
+  els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
+  els.refresh.addEventListener("click", function () { refreshAll(); });
+
+  // Poll only while the page is actually visible; the WebView freezes timers in
+  // the background and a stale interval would otherwise pile up on resume.
+  var timer = null;
+  function startPolling() {
+    if (timer || !hasBridge) { return; }
+    refreshAll();
+    timer = setInterval(refreshAll, POLL_MS);
+  }
+  function stopPolling() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") { stopPolling(); } else { startPolling(); }
+  });
+
+  label();
+  if (!hasBridge) {
+    els.banner.textContent = T.noBridge;
+    els.banner.className = "banner show";
+    els.badge.textContent = T.unknown;
+    els.hint.textContent = "";
+    return;
+  }
+  setButtons();
+  startPolling();
+})();
+</script>
+</body>
+</html>

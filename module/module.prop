@@ -1,0 +1,7 @@
+id=kernelray
+name=KernelRay
+version=v0.2.0
+versionCode=20
+author=KernelRay
+description=Idle-run module: starts an Xray core on boot, with a WebUI to start/stop it and read its log. No traffic hijacking yet.
+updateJson=https://modules.kernelsu.org/api/v1/modules/kernelray/update.json

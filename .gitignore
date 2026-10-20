@@ -1,0 +1,8 @@
+*.zip
+node_modules/
+
+# Xray core is supplied by the maintainer, never committed:
+#   module/bin/xray   (arm64-v8a)
+module/bin/*
+!module/bin/README.md
+build/

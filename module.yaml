@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/KernelSU-Modules/tools/main/schemas/module.schema.json
+# KernelSU Modules metadata. Reference: https://developers.kernelsu.org/docs/module-yaml
+# version / versionCode come from module/module.prop inside the release ZIP, not from this file.
+schemaVersion: 1
+id: kernelray
+name: KernelRay
+summary: Runs an Xray core on boot as a KernelSU module
+description: README.md
+license: MIT
+# TODO: fill in once the repository has a public URL.
+# homepage: https://github.com/<owner>/KernelRay
+# support: https://github.com/<owner>/KernelRay/issues
+tags: [xray, proxy, network]
+icon: assets/icon.png
+metamodule: false
+
+authors:
+  - name: KernelRay
+
+compatibility:
+  androidMinApi: 29
+  architectures: [arm64-v8a, x86_64]
+
+release:
+  assetPattern: "kernelray-*.zip"
