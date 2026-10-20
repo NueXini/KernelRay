@@ -17,7 +17,7 @@ the next version, not this one.
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) |
 | outbound | `freedom` — direct, i.e. a plain tunnel you can point clients at |
 | action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop the core, watch its log, see the currently selected node |
+| WebUI | start / stop the core, watch its log, see the currently selected node, import nodes |
 | config | `config.json` in the module dir, plain Xray JSON, created from `config.example.json` when absent |
 | log | `logs/xray.log` in the module dir |
 
@@ -36,7 +36,9 @@ core really is forwarding traffic — a live pid alone proves nothing.
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, status; also the CLI used by the WebUI |
-| `module/webroot/index.html` | the WebUI: plain HTML/CSS/JS, no build step, no dependencies; reads `state.json` for the selected node |
+| `module/webroot/index.html` | the WebUI: plain HTML/CSS/JS, no build step, no dependencies; reads `state.json`, imports nodes |
+| `docs/state-schema.md` | what `state.json` contains — the authority the UI writes against |
+| `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped HTML |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | default config, copied to `config.json` when absent |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
@@ -85,6 +87,19 @@ list and any subscription node lists, then says whether `config.json` actually c
 outbound. It cannot switch nodes or apply anything — that is v1 work, so the wording never
 claims a node is in use when the config is still `freedom`.
 
+**Adding nodes.** Paste one link per line (or a whole base64 subscription blob) into the import
+card and hit *Parse*: every line is reported back individually, with parsed nodes ready to
+import and rejects showing why (`hysteria2` is not supported, an `ss://` link carrying a SIP003
+plugin is not supported, and so on). Supported: `vless`, `vmess` (base64 JSON), `trojan`, `ss`
+(SIP002 and the legacy form). *Import* merges into `state.json` — re-importing the same node
+updates it in place and keeps its id, so a rename does not create a duplicate.
+
+Import only fills the node list; it does not change how traffic flows. The node card keeps
+saying so until applying a node exists.
+
+The parser is tested without a browser: `node tests/parse.test.js` extracts the marked block
+from this very file and runs 22 cases against it.
+
 The page is a dumb client: every button runs the same CLI the shell uses, so behaviour cannot
 diverge between the two entry points.
 
@@ -101,9 +116,10 @@ of pretending to work.
 
 ## Deliberately out of scope (v0)
 
-Transparent proxy (TPROXY/iptables), DNS hijacking, routing/geo rules, subscription fetching,
-share-link import, switching or applying a node (the WebUI only *shows* the selected one),
-per-app proxying, TUN, watchdog/auto-restart, multi-core support (sing-box/mihomo/…).
+Transparent proxy (TPROXY/iptables), DNS hijacking, routing/geo rules, fetching a subscription
+URL (the page has no TLS-validating fetcher, and a subscription URL *is* a credential),
+switching or applying a node (the WebUI only *shows* and *imports* them), per-app proxying,
+TUN, watchdog/auto-restart, multi-core support (sing-box/mihomo/…).
 They are parked, not rejected — see `docs/adr/`.
 
 ## Releasing a new version

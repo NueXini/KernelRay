@@ -66,7 +66,8 @@
   dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 13px; }
   dt { color: var(--muted); white-space: nowrap; }
   dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-  .logcard { padding: 0; overflow: hidden; }  .logbar {
+  .logcard { padding: 0; overflow: hidden; }
+  .logbar {
     display: flex; align-items: center; gap: 12px; padding: 10px 12px;
     border-bottom: 1px solid var(--line); font-size: 13px;
   }
@@ -96,6 +97,31 @@
   .nodemeta code { font: inherit; }
   .nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }
   .nodehint.warn { color: var(--warn); }
+  textarea {
+    width: 100%; margin-top: 4px; padding: 10px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    resize: vertical; min-height: 76px;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row.mt { margin-top: 10px; }
+  .prow {
+    display: flex; gap: 9px; align-items: flex-start; padding: 8px 0;
+    border-top: 1px solid var(--line); font-size: 13px;
+  }
+  .prow input[type=radio] { margin: 3px 0 0; accent-color: var(--accent); flex: 0 0 auto; }
+  .prow .pnum {
+    color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+    min-width: 16px; text-align: right; flex: 0 0 auto;
+  }
+  .prow .pbody { flex: 1; min-width: 0; }
+  .prow .pname { font-weight: 600; overflow-wrap: anywhere; }
+  .prow .pmeta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .prow.bad { color: var(--bad); }
+  .prow.bad .pnum { color: var(--bad); }
+  .prow.bad .pmeta { color: var(--bad); opacity: .75; }
+  .prow.keep .pname { font-weight: 500; color: var(--muted); }
+  #i-preview:not(:empty) { margin-top: 10px; border-top: 1px solid var(--line); }
   .toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: var(--card); border: 1px solid var(--line); color: var(--text);
@@ -129,6 +155,21 @@
   <div class="nodename" id="n-name">–</div>
   <div class="nodemeta" id="n-meta"></div>
   <div class="nodehint" id="n-hint"></div>
+</section>
+
+<section class="card" id="importcard">
+  <div class="nodehead">
+    <span id="l-import">Add node</span>
+    <span class="pill" id="i-count" hidden></span>
+  </div>
+  <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
+            autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
+  <div class="row mt">
+    <button id="i-parse">Parse</button>
+    <button class="primary" id="i-apply" disabled>Import</button>
+  </div>
+  <div class="nodehint" id="i-hint"></div>
+  <div id="i-preview"></div>
 </section>
 
 <section class="card">
@@ -182,7 +223,19 @@
     nodeApplied: "配置里已有代理出站",
     nodeNotApplied: "当前配置是直连（freedom），选中节点还没有写入配置",
     nodeNoState: "没有 state.json，节点信息无从得知",
-    nodeSchema: "state.json 的 schema 版本未识别："
+    nodeSchema: "state.json 的 schema 版本未识别：",
+    addTitle: "添加节点",
+    addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
+    addPlaceholder: "vless://…",
+    parseBtn: "解析", importBtn: "导入",
+    keepCurrent: "保持当前节点不变",
+    readyCount: "可导入",
+    lineNo: "第 ", lineNoEnd: " 行",
+    dupOf: "与第 ", dupOfEnd: " 行重复，已合并",
+    importEmpty: "没有解析出可导入的节点",
+    importDone: "已导入",
+    importUpdated: "，更新",
+    notAppliedYet: "导入只写节点清单，不会改变流量走向。"
   } : {
     start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
     log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
@@ -199,7 +252,19 @@
     nodeApplied: "config.json already has a proxy outbound",
     nodeNotApplied: "config.json is direct (freedom); the selected node is not applied",
     nodeNoState: "No state.json, so the node is unknown",
-    nodeSchema: "Unrecognised state.json schema: "
+    nodeSchema: "Unrecognised state.json schema: ",
+    addTitle: "Add node",
+    addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
+    addPlaceholder: "vless://…",
+    parseBtn: "Parse", importBtn: "Import",
+    keepCurrent: "Keep the current node",
+    readyCount: "to import",
+    lineNo: "line ", lineNoEnd: "",
+    dupOf: "duplicate of line ", dupOfEnd: ", merged",
+    importEmpty: "No importable node in the input",
+    importDone: "Imported",
+    importUpdated: ", updated",
+    notAppliedYet: "Importing only fills the node list; it does not change how traffic flows."
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -211,7 +276,10 @@
     lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
     lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
     lNode: $("l-node"), nSrc: $("n-src"), nName: $("n-name"),
-    nMeta: $("n-meta"), nHint: $("n-hint")
+    nMeta: $("n-meta"), nHint: $("n-hint"),
+    lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
+    iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
+    iCount: $("i-count")
   };
 
   var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
@@ -232,6 +300,11 @@
     els.lCore.textContent = T.core;
     els.lConf.textContent = T.conf;
     els.lNode.textContent = T.node;
+    els.lImport.textContent = T.addTitle;
+    els.iParse.textContent = T.parseBtn;
+    els.iApply.textContent = T.importBtn;
+    els.iText.placeholder = T.addPlaceholder;
+    els.iHint.textContent = T.addHint;
   }
 
   function toast(msg) {
@@ -268,6 +341,278 @@
     });
     return out;
   }
+
+  // ---- node parsing ----
+  // Share link → node. Lives here rather than in the shell: there is no jq on the device and
+  // URI/JSON/base64 handling in awk would be a liability. tests/parse.test.js extracts this
+  // block from the shipped file, so keep the markers.
+
+  function parseFail(msg) { return { ok: false, error: msg }; }
+
+  function b64bytes(s) {
+    var t = String(s == null ? "" : s).replace(/-/g, "+").replace(/_/g, "/").replace(/\s+/g, "");
+    while (t.length % 4) { t += "="; }
+    try {
+      var bin = atob(t);
+      var out = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+      return out;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function b64text(s) {
+    var bytes = b64bytes(s);
+    if (!bytes) { return ""; }
+    if (typeof TextDecoder !== "undefined") {
+      try { return new TextDecoder("utf-8").decode(bytes); } catch (e) { return ""; }
+    }
+    var raw = "";
+    for (var i = 0; i < bytes.length; i++) { raw += String.fromCharCode(bytes[i]); }
+    try { return decodeURIComponent(escape(raw)); } catch (e) { return raw; }
+  }
+
+  function decodeName(s) {
+    if (!s) { return ""; }
+    try { return decodeURIComponent(s).trim(); } catch (e) { return String(s).trim(); }
+  }
+
+  function portOf(raw) {
+    var p = parseInt(raw, 10);
+    return p > 0 && p < 65536 ? p : 0;
+  }
+
+  // `new URL()` was the obvious way to split these links, and it is the wrong dependency: userinfo
+  // handling for a non-special scheme is exactly the sort of thing a WebView can differ on, and
+  // when it does, every vless/trojan link fails at once with "missing uuid". Splitting
+  // scheme://[userinfo@]host:port[?query][#frag] by hand is a dozen lines and predictable.
+  function splitUri(link) {
+    var m = /^([a-z0-9+.-]+):\/\/([\s\S]*)$/i.exec(String(link || "").trim());
+    if (!m) { return null; }
+    var rest = m[2];
+    var hash = "", query = "";
+    var i = rest.indexOf("#");
+    if (i >= 0) { hash = rest.slice(i + 1); rest = rest.slice(0, i); }
+    var q = rest.indexOf("?");
+    if (q >= 0) { query = rest.slice(q + 1); rest = rest.slice(0, q); }
+    var userinfo = "", hostport = rest;
+    var at = rest.lastIndexOf("@");
+    if (at >= 0) { userinfo = rest.slice(0, at); hostport = rest.slice(at + 1); }
+    var hp = /^(\[[^\]]*\]|[^:]*):?(\d*)$/.exec(hostport);
+    var host = hp ? hp[1].replace(/^\[|\]$/g, "") : hostport;
+    return {
+      scheme: m[1].toLowerCase(), userinfo: userinfo, host: host,
+      port: hp ? portOf(hp[2]) : 0, hash: hash, params: new URLSearchParams(query)
+    };
+  }
+
+  function setIf(obj, key, val) {
+    if (val !== null && val !== undefined && String(val) !== "") { obj[key] = String(val); }
+  }
+
+  // Link `type=` values are the v2ray/Xray `network` values, except that some clients write
+  // `http` for HTTP/2. Anything unrecognised is kept verbatim rather than guessed at.
+  function transportOf(raw) {
+    var t = String(raw || "").toLowerCase();
+    if (!t) { return "tcp"; }
+    if (t === "http") { return "h2"; }
+    return t;
+  }
+
+  function securityOf(raw) {
+    var s = String(raw || "").toLowerCase();
+    return s || "none";
+  }
+
+  function applyLinkParams(node, p) {
+    setIf(node, "sni", p.get("sni"));
+    setIf(node, "fingerprint", p.get("fp"));
+    setIf(node, "publicKey", p.get("pbk"));
+    setIf(node, "shortId", p.get("sid"));
+    setIf(node, "flow", p.get("flow"));
+    setIf(node, "path", p.get("path"));
+    setIf(node, "host", p.get("host"));
+    setIf(node, "serviceName", p.get("serviceName"));
+    var alpn = p.get("alpn");
+    if (alpn) { node.alpn = alpn.split(",").filter(function (x) { return x; }); }
+    var ai = p.get("allowInsecure");
+    if (ai === "1" || ai === "true") { node.allowInsecure = true; }
+  }
+
+  function parseVless(link) {
+    var u = splitUri(link);
+    if (!u) { return parseFail("链接格式不对"); }
+    var uuid = decodeName(u.userinfo);
+    if (!uuid) { return parseFail("缺少 uuid"); }
+    if (!u.host || !u.port) { return parseFail("缺少地址或端口"); }
+    var p = u.params;
+    var node = {
+      protocol: "vless", address: u.host, port: u.port, uuid: uuid, encryption: "none",
+      transport: transportOf(p.get("type")), security: securityOf(p.get("security"))
+    };
+    applyLinkParams(node, p);
+    node.name = decodeName(u.hash) || (node.address + ":" + node.port);
+    return { ok: true, node: node };
+  }
+
+  // vmess:// carries base64(JSON) — v2rayN's object, not a URI. The newer `vmess://uuid@host`
+  // form is a different spec and is reported as unsupported instead of mis-parsed.
+  function parseVmess(link) {
+    var body = link.slice("vmess://".length).split("#")[0];
+    var txt = b64text(body).trim();
+    if (!txt) { return parseFail("vmess 链接不是 base64"); }
+    var j;
+    try { j = JSON.parse(txt); } catch (e) { return parseFail("base64 里不是 JSON（新式 vmess URI 暂不支持）"); }
+    var addr = String(j.add || j.address || "").trim();
+    var port = portOf(j.port);
+    var uuid = String(j.id || "").trim();
+    if (!addr || !port) { return parseFail("缺少地址或端口"); }
+    if (!uuid) { return parseFail("缺少 uuid"); }
+    var node = {
+      protocol: "vmess", address: addr, port: port, uuid: uuid,
+      alterId: Number(j.aid || j.alterId || 0) || 0,
+      cipher: String(j.scy || j.cipher || "auto"),
+      transport: transportOf(j.net), security: securityOf(j.tls)
+    };
+    setIf(node, "sni", j.sni);
+    setIf(node, "host", j.host);
+    setIf(node, "path", j.path);
+    setIf(node, "fingerprint", j.fp);
+    if (j.alpn) { node.alpn = String(j.alpn).split(",").filter(function (x) { return x; }); }
+    node.name = String(j.ps || j.remarks || "").trim() || (addr + ":" + port);
+    return { ok: true, node: node };
+  }
+
+  function parseTrojan(link) {
+    var u = splitUri(link);
+    if (!u) { return parseFail("链接格式不对"); }
+    // `trojan://user:pass@host` appears in the wild; the password is the part after the colon.
+    var raw = u.userinfo;
+    var c = raw.indexOf(":");
+    var pw = decodeName(c >= 0 && raw.slice(c + 1) ? raw.slice(c + 1) : raw);
+    if (!pw) { return parseFail("缺少密码"); }
+    if (!u.host || !u.port) { return parseFail("缺少地址或端口"); }
+    var p = u.params;
+    var node = {
+      protocol: "trojan", address: u.host, port: u.port, password: pw,
+      transport: transportOf(p.get("type")), security: securityOf(p.get("security") || "tls")
+    };
+    applyLinkParams(node, p);
+    node.name = decodeName(u.hash) || (node.address + ":" + node.port);
+    return { ok: true, node: node };
+  }
+
+  // ss:// is two formats in one: SIP002 puts base64(method:password) in the userinfo, the
+  // legacy form base64s the whole method:password@host:port. A plain `method:password`
+  // userinfo is also legal and must not be fed to atob.
+  function parseSs(link) {
+    var rest = link.slice("ss://".length);
+    var hash = "", qs = "";
+    var h = rest.indexOf("#");
+    if (h >= 0) { hash = rest.slice(h + 1); rest = rest.slice(0, h); }
+    var q = rest.indexOf("?");
+    if (q >= 0) { qs = rest.slice(q + 1); rest = rest.slice(0, q); }
+    if (/plugin=/.test(qs)) { return parseFail("带 plugin 的 ss 链接不支持"); }
+
+    var method = "", password = "", host = "", port = 0;
+    var at = rest.lastIndexOf("@");
+    if (at >= 0) {
+      var user = rest.slice(0, at);
+      var dec = user.indexOf(":") >= 0 ? decodeName(user) : b64text(user);
+      var c = dec.indexOf(":");
+      if (c < 0) { return parseFail("userinfo 里没有 method:password"); }
+      method = dec.slice(0, c);
+      password = dec.slice(c + 1);
+      var m = /^(\[[^\]]+\]|[^:@]+):(\d+)$/.exec(rest.slice(at + 1));
+      if (!m) { return parseFail("服务器地址或端口不对"); }
+      host = m[1].replace(/^\[|\]$/g, "");
+      port = portOf(m[2]);
+    } else {
+      var all = b64text(rest);
+      var m2 = /^([^:]+):(.*)@(\[[^\]]+\]|[^:@]+):(\d+)$/.exec(all);
+      if (!m2) { return parseFail("ss 内容解不出来（base64 或格式不对）"); }
+      method = m2[1];
+      password = m2[2];
+      host = m2[3].replace(/^\[|\]$/g, "");
+      port = portOf(m2[4]);
+    }
+    if (!host || !port) { return parseFail("缺少地址或端口"); }
+    if (!method) { return parseFail("缺少加密方式"); }
+    return {
+      ok: true,
+      node: {
+        protocol: "ss", address: host, port: port, method: method, password: password,
+        name: decodeName(hash) || (host + ":" + port)
+      }
+    };
+  }
+
+  function parseLink(link) {
+    var l = String(link || "").trim();
+    var m = /^([a-z0-9+.-]+):\/\//i.exec(l);
+    if (!m) { return parseFail("不是分享链接"); }
+    var scheme = m[1].toLowerCase();
+    if (scheme === "vless") { return parseVless(l); }
+    if (scheme === "vmess") { return parseVmess(l); }
+    if (scheme === "trojan") { return parseTrojan(l); }
+    if (scheme === "ss") { return parseSs(l); }
+    return parseFail("不支持的协议：" + scheme);
+  }
+
+  // Identity decides deduplication: protocol + host + port + credential. Name, transport and
+  // TLS parameters are presentation, not identity (see docs/state-schema.md).
+  function identityOf(node) {
+    var cred;
+    if (node.protocol === "ss") { cred = [node.method, node.password]; }
+    else if (node.protocol === "trojan") { cred = [node.password]; }
+    else { cred = [node.uuid]; }
+    var parts = [node.protocol, String(node.address || "").toLowerCase(), node.port];
+    for (var i = 0; i < cred.length; i++) {
+      parts.push(cred[i] === null || cred[i] === undefined ? "" : String(cred[i]));
+    }
+    return parts.join("|");
+  }
+
+  function hash32(str, seed) {
+    var h = seed >>> 0;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i) & 255;
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return ("0000000" + h.toString(16)).slice(-8);
+  }
+
+  function idOf(node) {
+    var ident = identityOf(node);
+    return hash32(ident, 0x811c9dc5) + hash32(ident, 0x1b873593);
+  }
+
+  // A whole base64 blob (what airports hand out) is only decoded when the input has no link on
+  // any line, so a single malformed line can never turn the whole paste into garbage.
+  function parseInput(text) {
+    var lines = String(text || "").split(/\r?\n/);
+    var hasLink = lines.some(function (x) { return x.indexOf("://") >= 0; });
+    if (!hasLink) {
+      var whole = b64text(String(text || "").replace(/\s+/g, ""));
+      if (whole) { lines = whole.split(/\r?\n/); }
+    }
+    var out = [], seen = {};
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line || line.indexOf("//") === 0 || line.charAt(0) === "#") { continue; }
+      var res = parseLink(line);
+      if (res.ok) {
+        var ident = identityOf(res.node);
+        if (seen[ident]) { res.node.dupOf = seen[ident]; }
+        else { seen[ident] = i + 1; }
+        res.node.id = idOf(res.node);
+      }
+      out.push({ line: i + 1, ok: res.ok, node: res.node, error: res.error });
+    }
+    return out;
+  }
+  // ---- end node parsing ----
 
   function uptime(sec) {
     sec = Number(sec) || 0;
@@ -315,6 +660,14 @@
     });
   }
 
+  // IPv6 addresses are stored without brackets (that is what Xray wants), so the display has to
+  // put them back — otherwise "2001:db8::1:443" is unreadable.
+  function hostPort(n) {
+    var a = String(n.address || "");
+    if (a.indexOf(":") >= 0) { a = "[" + a + "]"; }
+    return a + (n.port ? ":" + n.port : "");
+  }
+
   function renderNode(state, cfg) {
     els.nSrc.hidden = true;
     els.nMeta.textContent = "";
@@ -343,7 +696,7 @@
     if (n.protocol) { bits.push(n.protocol); }
     if (n.transport && n.transport !== "tcp") { bits.push(n.transport); }
     if (n.security) { bits.push(n.security); }
-    if (n.address) { bits.push(n.address + (n.port ? ":" + n.port : "")); }
+    if (n.address) { bits.push(hostPort(n)); }
     els.nMeta.textContent = bits.join(" · ");
     els.nSrc.textContent = picked.src;
     els.nSrc.hidden = false;
@@ -366,8 +719,198 @@
         var state = null, cfg = null;
         try { state = JSON.parse((parts[0] || "").trim()); } catch (e) { state = null; }
         try { cfg = JSON.parse((parts[1] || "").trim()); } catch (e) { cfg = null; }
+        lastStateObj = state;
         renderNode(state, cfg);
       }).catch(function () {});
+  }
+
+  // ---- node import UI ----
+
+  var importRows = [];
+  var lastStateObj = null;
+
+  function findNodeByIdentity(state, ident) {
+    var pools = [state.manual || []];
+    (state.subscriptions || []).forEach(function (s) { if (s && s.nodes) { pools.push(s.nodes); } });
+    for (var i = 0; i < pools.length; i++) {
+      for (var j = 0; j < pools[i].length; j++) {
+        var n = pools[i][j];
+        if (n && n.protocol && n.address && identityOf(n) === ident) { return n; }
+      }
+    }
+    return null;
+  }
+
+  // Re-importing a node updates it in place and keeps its id, so the selection and any
+  // reference to it survive; only a genuinely new identity is appended.
+  function mergeNodes(state, nodes) {
+    if (!state.schema) { state.schema = 1; }
+    if (!Array.isArray(state.manual)) { state.manual = []; }
+    if (!Array.isArray(state.subscriptions)) { state.subscriptions = []; }
+    var added = 0, updated = 0;
+    nodes.forEach(function (n) {
+      delete n.dupOf;
+      var existing = findNodeByIdentity(state, identityOf(n));
+      if (existing) {
+        var keepId = existing.id || idOf(n);
+        Object.keys(n).forEach(function (k) { if (k !== "id") { existing[k] = n[k]; } });
+        existing.id = keepId;
+        updated++;
+      } else {
+        n.id = n.id || idOf(n);
+        state.manual.push(n);
+        added++;
+      }
+    });
+    return { added: added, updated: updated };
+  }
+
+  function writeState(state) {
+    var json = JSON.stringify(state, null, 2) + "\n";
+    var bytes = new TextEncoder().encode(json);
+    var bin = "";
+    for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
+    var b64 = btoa(bin);
+    // tmp + mv so a half-written file is impossible; state.json holds credentials, hence 0600.
+    var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + STATE + ".tmp && chmod 600 " + STATE +
+      ".tmp && mv " + STATE + ".tmp " + STATE;
+    return exec(cmd).then(function (r) {
+      if (r.errno !== 0) { throw new Error(r.stderr || ("exit " + r.errno)); }
+    });
+  }
+
+  function previewLine(text, cls) {
+    var row = document.createElement("div");
+    row.className = "prow " + cls;
+    var num = document.createElement("span");
+    num.className = "pnum";
+    num.textContent = text.num;
+    row.appendChild(num);
+    var body = document.createElement("div");
+    body.className = "pbody";
+    var name = document.createElement("div");
+    name.className = "pname";
+    name.textContent = text.name;
+    body.appendChild(name);
+    if (text.meta) {
+      var meta = document.createElement("div");
+      meta.className = "pmeta";
+      meta.textContent = text.meta;
+      body.appendChild(meta);
+    }
+    row.appendChild(body);
+    return row;
+  }
+
+  function previewRadio(value, label) {
+    var row = document.createElement("div");
+    row.className = "prow keep";
+    var input = document.createElement("input");
+    input.type = "radio";
+    input.name = "pick";
+    input.value = value;
+    var body = document.createElement("div");
+    body.className = "pbody";
+    var name = document.createElement("div");
+    name.className = "pname";
+    name.textContent = label;
+    body.appendChild(name);
+    row.appendChild(input);
+    row.appendChild(body);
+    return { row: row, input: input };
+  }
+
+  function renderPreview() {
+    var ok = importRows.filter(function (r) { return r.ok; });
+    els.iPreview.textContent = "";
+    els.iApply.disabled = busy || ok.length === 0;
+    els.iCount.hidden = ok.length === 0;
+    els.iCount.textContent = ok.length + " " + T.readyCount;
+    if (!importRows.length) { return; }
+
+    importRows.forEach(function (r) {
+      if (!r.ok) {
+        els.iPreview.appendChild(previewLine(
+          { num: r.line, name: r.error, meta: T.lineNo + r.line + T.lineNoEnd }, "bad"));
+        return;
+      }
+      var n = r.node;
+      var meta = [n.protocol, n.transport && n.transport !== "tcp" ? n.transport : "",
+        n.security || "", hostPort(n)].filter(Boolean).join(" · ");
+      if (n.dupOf) { meta += " — " + T.dupOf + n.dupOf + T.dupOfEnd; }
+      els.iPreview.appendChild(previewLine({ num: r.line, name: n.name, meta: meta }, "ok"));
+    });
+
+    var hasSelection = !!(lastStateObj && lastStateObj.selected);
+    var radios = [];
+    importRows.forEach(function (r, idx) {
+      if (!r.ok) { return; }
+      radios.push(previewRadio("" + idx, r.node.name));
+    });
+    radios.forEach(function (el) { els.iPreview.appendChild(el.row); });
+    if (hasSelection) {
+      var keep = previewRadio("", T.keepCurrent);
+      els.iPreview.appendChild(keep.row);
+      keep.input.checked = true;
+    } else if (radios.length) {
+      radios[0].input.checked = true;
+    }
+  }
+
+  function doParse() {
+    importRows = parseInput(els.iText.value);
+    if (!importRows.length) {
+      els.iPreview.textContent = "";
+      els.iApply.disabled = true;
+      els.iCount.hidden = true;
+      els.iHint.textContent = T.importEmpty;
+      els.iHint.className = "nodehint warn";
+      return;
+    }
+    els.iHint.textContent = T.notAppliedYet;
+    els.iHint.className = "nodehint";
+    renderPreview();
+  }
+
+  function doImport() {
+    if (busy || !hasBridge) { return; }
+    var ok = importRows.filter(function (r) { return r.ok; });
+    if (!ok.length) { return; }
+    var picked = els.iPreview.querySelector('input[name="pick"]:checked');
+    var pickIdx = picked && picked.value !== "" ? Number(picked.value) : -1;
+
+    busy = true;
+    setButtons();
+    els.iApply.disabled = true;
+    exec("cat " + STATE + " 2>/dev/null").then(function (r) {
+      var state = null;
+      try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
+      if (!state || typeof state !== "object") {
+        state = { schema: 1, revision: 0, manual: [], subscriptions: [], selected: "" };
+      }
+      var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
+      if (pickIdx >= 0 && importRows[pickIdx] && importRows[pickIdx].node) {
+        state.selected = importRows[pickIdx].node.id;
+      }
+      state.revision = (Number(state.revision) || 0) + 1;
+      return writeState(state).then(function () {
+        var msg = T.importDone + " " + res.added;
+        if (res.updated) { msg += T.importUpdated + " " + res.updated; }
+        toast(msg);
+        els.iText.value = "";
+        els.iPreview.textContent = "";
+        els.iCount.hidden = true;
+        els.iHint.textContent = T.addHint;
+        importRows = [];
+        refreshAll();
+      });
+    }).catch(function (e) {
+      toast(T.actionFailed + ": " + e.message);
+    }).then(function () {
+      busy = false;
+      setButtons();
+      els.iApply.disabled = importRows.filter(function (r) { return r.ok; }).length === 0;
+    });
   }
 
   function renderStatus(kv) {
@@ -445,6 +988,8 @@
   els.start.addEventListener("click", function () { run("start", T.startingMsg); });
   els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
   els.refresh.addEventListener("click", function () { refreshAll(); });
+  els.iParse.addEventListener("click", doParse);
+  els.iApply.addEventListener("click", doImport);
 
   // Poll only while the page is actually visible; the WebView freezes timers in
   // the background and a stale interval would otherwise pile up on resume.
