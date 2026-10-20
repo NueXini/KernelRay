@@ -1,0 +1,822 @@
+(function () {
+"use strict";
+
+var MOD = "/data/adb/modules/kernelray";
+var CLI = MOD + "/scripts/kernelray.sh";
+// Config, node store and logs sit in the module dir too — one root, nothing outside it.
+var STATE = MOD + "/state.json";
+var CONF = MOD + "/config.json";
+var LOG_LINES = 200;
+var POLL_MS = 2000;
+
+var ZH = navigator.language && navigator.language.toLowerCase().indexOf("zh") === 0;
+var T = ZH ? {
+  start: "启动", stop: "停止", follow: "跟随", refresh: "刷新",
+  log: "日志", pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
+  running: "运行中", stopped: "已停止", starting: "启动中", stopping: "停止中",
+  failed: "启动失败", unknown: "未知",
+  noBridge: "没有检测到 KernelSU 桥接，请从 KernelSU 管理器的模块页面打开本页面。",
+  startingMsg: "正在启动…", stoppingMsg: "正在停止…",
+  actionFailed: "操作失败", noLog: "（还没有日志）",
+  stoppedHint: "核心未运行，设备流量没有被接管。",
+  runningHint: "核心在空转：没有接管任何流量，需要客户端自己指向 127.0.0.1:10808。",
+  node: "当前节点", srcManual: "手动", srcSub: "订阅",
+  nodeNone: "还没有选中的节点（state.json 里 selected 为空）",
+  nodeMissing: "state.json 的 selected 指向了一个列表里不存在的 id",
+  nodeApplied: "配置里已有代理出站",
+  nodeNotApplied: "当前配置是直连（freedom），选中节点还没有写入配置",
+  nodeNoState: "没有 state.json，节点信息无从得知",
+  nodeSchema: "state.json 的 schema 版本未识别：",
+  addTitle: "添加节点",
+  addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
+  addPlaceholder: "vless://…",
+  parseBtn: "解析", importBtn: "导入",
+  keepCurrent: "保持当前节点不变",
+  readyCount: "可导入",
+  lineNo: "第 ", lineNoEnd: " 行",
+  dupOf: "与第 ", dupOfEnd: " 行重复，已合并",
+  importEmpty: "没有解析出可导入的节点",
+  importDone: "已导入",
+  importUpdated: "，更新",
+  notAppliedYet: "导入只写节点清单，不会改变流量走向。"
+} : {
+  start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
+  log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
+  running: "running", stopped: "stopped", starting: "starting", stopping: "stopping",
+  failed: "failed", unknown: "unknown",
+  noBridge: "KernelSU bridge not found. Open this page from the module card in the KernelSU manager.",
+  startingMsg: "Starting…", stoppingMsg: "Stopping…",
+  actionFailed: "Action failed", noLog: "(no log yet)",
+  stoppedHint: "Core is not running; device traffic is untouched.",
+  runningHint: "Idle run: no traffic is intercepted. Point your client at 127.0.0.1:10808.",
+  node: "Current node", srcManual: "manual", srcSub: "subscription",
+  nodeNone: "No node selected (state.json has an empty selected field)",
+  nodeMissing: "state.json points selected at an id that is not in any list",
+  nodeApplied: "config.json already has a proxy outbound",
+  nodeNotApplied: "config.json is direct (freedom); the selected node is not applied",
+  nodeNoState: "No state.json, so the node is unknown",
+  nodeSchema: "Unrecognised state.json schema: ",
+  addTitle: "Add node",
+  addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
+  addPlaceholder: "vless://…",
+  parseBtn: "Parse", importBtn: "Import",
+  keepCurrent: "Keep the current node",
+  readyCount: "to import",
+  lineNo: "line ", lineNoEnd: "",
+  dupOf: "duplicate of line ", dupOfEnd: ", merged",
+  importEmpty: "No importable node in the input",
+  importDone: "Imported",
+  importUpdated: ", updated",
+  notAppliedYet: "Importing only fills the node list; it does not change how traffic flows."
+};
+
+var $ = function (id) { return document.getElementById(id); };
+var els = {
+  banner: $("banner"), badge: $("badge"), start: $("start"), stop: $("stop"),
+  hint: $("hint"), pid: $("v-pid"), up: $("v-up"), port: $("v-port"),
+  core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
+  refresh: $("refresh"), toast: $("toast"),
+  lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
+  lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
+  lNode: $("l-node"), nSrc: $("n-src"), nName: $("n-name"),
+  nMeta: $("n-meta"), nHint: $("n-hint"),
+  lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
+  iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
+  iCount: $("i-count")
+};
+
+var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
+var lastLog = "";
+var lastState = "unknown";
+var busy = false;
+var pending = null; // "start" | "stop" while the action is in flight
+
+function label(key) {
+  els.start.textContent = T.start;
+  els.stop.textContent = T.stop;
+  els.refresh.textContent = T.refresh;
+  els.lFollow.textContent = T.follow;
+  els.lLog.textContent = T.log;
+  els.lPid.textContent = T.pid;
+  els.lUp.textContent = T.up;
+  els.lPort.textContent = T.port;
+  els.lCore.textContent = T.core;
+  els.lConf.textContent = T.conf;
+  els.lNode.textContent = T.node;
+  els.lImport.textContent = T.addTitle;
+  els.iParse.textContent = T.parseBtn;
+  els.iApply.textContent = T.importBtn;
+  els.iText.placeholder = T.addPlaceholder;
+  els.iHint.textContent = T.addHint;
+}
+
+function toast(msg) {
+  els.toast.textContent = msg;
+  els.toast.className = "toast show";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { els.toast.className = "toast"; }, 2600);
+}
+
+// ksu.exec is callback-based: ksu.exec(cmd, optionsJson, callbackName) and the
+// injected WebView calls window[callbackName](errno, stdout, stderr).
+function exec(cmd) {
+  return new Promise(function (resolve, reject) {
+    if (!hasBridge) { reject(new Error("no bridge")); return; }
+    var name = "kc_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+    window[name] = function (errno, stdout, stderr) {
+      delete window[name];
+      resolve({ errno: errno, stdout: stdout || "", stderr: stderr || "" });
+    };
+    try {
+      window.ksu.exec(cmd, JSON.stringify({}), name);
+    } catch (e) {
+      delete window[name];
+      reject(e);
+    }
+  });
+}
+
+function parseKv(text) {
+  var out = {};
+  (text || "").split("\n").forEach(function (line) {
+    var i = line.indexOf("=");
+    if (i > 0) { out[line.slice(0, i).trim()] = line.slice(i + 1); }
+  });
+  return out;
+}
+
+// ---- node parsing ----
+// Share link → node. Lives here rather than in the shell: there is no jq on the device and
+// URI/JSON/base64 handling in awk would be a liability. tests/parse.test.js extracts this
+// block from the shipped file, so keep the markers.
+
+function parseFail(msg) { return { ok: false, error: msg }; }
+
+function b64bytes(s) {
+  var t = String(s == null ? "" : s).replace(/-/g, "+").replace(/_/g, "/").replace(/\s+/g, "");
+  while (t.length % 4) { t += "="; }
+  try {
+    var bin = atob(t);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+    return out;
+  } catch (e) {
+    return null;
+  }
+}
+
+function b64text(s) {
+  var bytes = b64bytes(s);
+  if (!bytes) { return ""; }
+  if (typeof TextDecoder !== "undefined") {
+    try { return new TextDecoder("utf-8").decode(bytes); } catch (e) { return ""; }
+  }
+  var raw = "";
+  for (var i = 0; i < bytes.length; i++) { raw += String.fromCharCode(bytes[i]); }
+  try { return decodeURIComponent(escape(raw)); } catch (e) { return raw; }
+}
+
+function decodeName(s) {
+  if (!s) { return ""; }
+  try { return decodeURIComponent(s).trim(); } catch (e) { return String(s).trim(); }
+}
+
+function portOf(raw) {
+  var p = parseInt(raw, 10);
+  return p > 0 && p < 65536 ? p : 0;
+}
+
+// `new URL()` was the obvious way to split these links, and it is the wrong dependency: userinfo
+// handling for a non-special scheme is exactly the sort of thing a WebView can differ on, and
+// when it does, every vless/trojan link fails at once with "missing uuid". Splitting
+// scheme://[userinfo@]host:port[?query][#frag] by hand is a dozen lines and predictable.
+function splitUri(link) {
+  var m = /^([a-z0-9+.-]+):\/\/([\s\S]*)$/i.exec(String(link || "").trim());
+  if (!m) { return null; }
+  var rest = m[2];
+  var hash = "", query = "";
+  var i = rest.indexOf("#");
+  if (i >= 0) { hash = rest.slice(i + 1); rest = rest.slice(0, i); }
+  var q = rest.indexOf("?");
+  if (q >= 0) { query = rest.slice(q + 1); rest = rest.slice(0, q); }
+  var userinfo = "", hostport = rest;
+  var at = rest.lastIndexOf("@");
+  if (at >= 0) { userinfo = rest.slice(0, at); hostport = rest.slice(at + 1); }
+  var hp = /^(\[[^\]]*\]|[^:]*):?(\d*)$/.exec(hostport);
+  var host = hp ? hp[1].replace(/^\[|\]$/g, "") : hostport;
+  return {
+    scheme: m[1].toLowerCase(), userinfo: userinfo, host: host,
+    port: hp ? portOf(hp[2]) : 0, hash: hash, params: new URLSearchParams(query)
+  };
+}
+
+function setIf(obj, key, val) {
+  if (val !== null && val !== undefined && String(val) !== "") { obj[key] = String(val); }
+}
+
+// Link `type=` values are the v2ray/Xray `network` values, except that some clients write
+// `http` for HTTP/2. Anything unrecognised is kept verbatim rather than guessed at.
+function transportOf(raw) {
+  var t = String(raw || "").toLowerCase();
+  if (!t) { return "tcp"; }
+  if (t === "http") { return "h2"; }
+  return t;
+}
+
+function securityOf(raw) {
+  var s = String(raw || "").toLowerCase();
+  return s || "none";
+}
+
+function applyLinkParams(node, p) {
+  setIf(node, "sni", p.get("sni"));
+  setIf(node, "fingerprint", p.get("fp"));
+  setIf(node, "publicKey", p.get("pbk"));
+  setIf(node, "shortId", p.get("sid"));
+  setIf(node, "flow", p.get("flow"));
+  setIf(node, "path", p.get("path"));
+  setIf(node, "host", p.get("host"));
+  setIf(node, "serviceName", p.get("serviceName"));
+  var alpn = p.get("alpn");
+  if (alpn) { node.alpn = alpn.split(",").filter(function (x) { return x; }); }
+  var ai = p.get("allowInsecure");
+  if (ai === "1" || ai === "true") { node.allowInsecure = true; }
+}
+
+function parseVless(link) {
+  var u = splitUri(link);
+  if (!u) { return parseFail("链接格式不对"); }
+  var uuid = decodeName(u.userinfo);
+  if (!uuid) { return parseFail("缺少 uuid"); }
+  if (!u.host || !u.port) { return parseFail("缺少地址或端口"); }
+  var p = u.params;
+  var node = {
+    protocol: "vless", address: u.host, port: u.port, uuid: uuid, encryption: "none",
+    transport: transportOf(p.get("type")), security: securityOf(p.get("security"))
+  };
+  applyLinkParams(node, p);
+  node.name = decodeName(u.hash) || (node.address + ":" + node.port);
+  return { ok: true, node: node };
+}
+
+// vmess:// carries base64(JSON) — v2rayN's object, not a URI. The newer `vmess://uuid@host`
+// form is a different spec and is reported as unsupported instead of mis-parsed.
+function parseVmess(link) {
+  var body = link.slice("vmess://".length).split("#")[0];
+  var txt = b64text(body).trim();
+  if (!txt) { return parseFail("vmess 链接不是 base64"); }
+  var j;
+  try { j = JSON.parse(txt); } catch (e) { return parseFail("base64 里不是 JSON（新式 vmess URI 暂不支持）"); }
+  var addr = String(j.add || j.address || "").trim();
+  var port = portOf(j.port);
+  var uuid = String(j.id || "").trim();
+  if (!addr || !port) { return parseFail("缺少地址或端口"); }
+  if (!uuid) { return parseFail("缺少 uuid"); }
+  var node = {
+    protocol: "vmess", address: addr, port: port, uuid: uuid,
+    alterId: Number(j.aid || j.alterId || 0) || 0,
+    cipher: String(j.scy || j.cipher || "auto"),
+    transport: transportOf(j.net), security: securityOf(j.tls)
+  };
+  setIf(node, "sni", j.sni);
+  setIf(node, "host", j.host);
+  setIf(node, "path", j.path);
+  setIf(node, "fingerprint", j.fp);
+  if (j.alpn) { node.alpn = String(j.alpn).split(",").filter(function (x) { return x; }); }
+  node.name = String(j.ps || j.remarks || "").trim() || (addr + ":" + port);
+  return { ok: true, node: node };
+}
+
+function parseTrojan(link) {
+  var u = splitUri(link);
+  if (!u) { return parseFail("链接格式不对"); }
+  // `trojan://user:pass@host` appears in the wild; the password is the part after the colon.
+  var raw = u.userinfo;
+  var c = raw.indexOf(":");
+  var pw = decodeName(c >= 0 && raw.slice(c + 1) ? raw.slice(c + 1) : raw);
+  if (!pw) { return parseFail("缺少密码"); }
+  if (!u.host || !u.port) { return parseFail("缺少地址或端口"); }
+  var p = u.params;
+  var node = {
+    protocol: "trojan", address: u.host, port: u.port, password: pw,
+    transport: transportOf(p.get("type")), security: securityOf(p.get("security") || "tls")
+  };
+  applyLinkParams(node, p);
+  node.name = decodeName(u.hash) || (node.address + ":" + node.port);
+  return { ok: true, node: node };
+}
+
+// ss:// is two formats in one: SIP002 puts base64(method:password) in the userinfo, the
+// legacy form base64s the whole method:password@host:port. A plain `method:password`
+// userinfo is also legal and must not be fed to atob.
+function parseSs(link) {
+  var rest = link.slice("ss://".length);
+  var hash = "", qs = "";
+  var h = rest.indexOf("#");
+  if (h >= 0) { hash = rest.slice(h + 1); rest = rest.slice(0, h); }
+  var q = rest.indexOf("?");
+  if (q >= 0) { qs = rest.slice(q + 1); rest = rest.slice(0, q); }
+  if (/plugin=/.test(qs)) { return parseFail("带 plugin 的 ss 链接不支持"); }
+
+  var method = "", password = "", host = "", port = 0;
+  var at = rest.lastIndexOf("@");
+  if (at >= 0) {
+    var user = rest.slice(0, at);
+    var dec = user.indexOf(":") >= 0 ? decodeName(user) : b64text(user);
+    var c = dec.indexOf(":");
+    if (c < 0) { return parseFail("userinfo 里没有 method:password"); }
+    method = dec.slice(0, c);
+    password = dec.slice(c + 1);
+    var m = /^(\[[^\]]+\]|[^:@]+):(\d+)$/.exec(rest.slice(at + 1));
+    if (!m) { return parseFail("服务器地址或端口不对"); }
+    host = m[1].replace(/^\[|\]$/g, "");
+    port = portOf(m[2]);
+  } else {
+    var all = b64text(rest);
+    var m2 = /^([^:]+):(.*)@(\[[^\]]+\]|[^:@]+):(\d+)$/.exec(all);
+    if (!m2) { return parseFail("ss 内容解不出来（base64 或格式不对）"); }
+    method = m2[1];
+    password = m2[2];
+    host = m2[3].replace(/^\[|\]$/g, "");
+    port = portOf(m2[4]);
+  }
+  if (!host || !port) { return parseFail("缺少地址或端口"); }
+  if (!method) { return parseFail("缺少加密方式"); }
+  return {
+    ok: true,
+    node: {
+      protocol: "ss", address: host, port: port, method: method, password: password,
+      name: decodeName(hash) || (host + ":" + port)
+    }
+  };
+}
+
+function parseLink(link) {
+  var l = String(link || "").trim();
+  var m = /^([a-z0-9+.-]+):\/\//i.exec(l);
+  if (!m) { return parseFail("不是分享链接"); }
+  var scheme = m[1].toLowerCase();
+  if (scheme === "vless") { return parseVless(l); }
+  if (scheme === "vmess") { return parseVmess(l); }
+  if (scheme === "trojan") { return parseTrojan(l); }
+  if (scheme === "ss") { return parseSs(l); }
+  return parseFail("不支持的协议：" + scheme);
+}
+
+// Identity decides deduplication: protocol + host + port + credential. Name, transport and
+// TLS parameters are presentation, not identity (see docs/state-schema.md).
+function identityOf(node) {
+  var cred;
+  if (node.protocol === "ss") { cred = [node.method, node.password]; }
+  else if (node.protocol === "trojan") { cred = [node.password]; }
+  else { cred = [node.uuid]; }
+  var parts = [node.protocol, String(node.address || "").toLowerCase(), node.port];
+  for (var i = 0; i < cred.length; i++) {
+    parts.push(cred[i] === null || cred[i] === undefined ? "" : String(cred[i]));
+  }
+  return parts.join("|");
+}
+
+function hash32(str, seed) {
+  var h = seed >>> 0;
+  for (var i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i) & 255;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+
+function idOf(node) {
+  var ident = identityOf(node);
+  return hash32(ident, 0x811c9dc5) + hash32(ident, 0x1b873593);
+}
+
+// A whole base64 blob (what airports hand out) is only decoded when the input has no link on
+// any line, so a single malformed line can never turn the whole paste into garbage.
+function parseInput(text) {
+  var lines = String(text || "").split(/\r?\n/);
+  var hasLink = lines.some(function (x) { return x.indexOf("://") >= 0; });
+  if (!hasLink) {
+    var whole = b64text(String(text || "").replace(/\s+/g, ""));
+    if (whole) { lines = whole.split(/\r?\n/); }
+  }
+  var out = [], seen = {};
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line || line.indexOf("//") === 0 || line.charAt(0) === "#") { continue; }
+    var res = parseLink(line);
+    if (res.ok) {
+      var ident = identityOf(res.node);
+      if (seen[ident]) { res.node.dupOf = seen[ident]; }
+      else { seen[ident] = i + 1; }
+      res.node.id = idOf(res.node);
+    }
+    out.push({ line: i + 1, ok: res.ok, node: res.node, error: res.error });
+  }
+  return out;
+}
+// ---- end node parsing ----
+
+function uptime(sec) {
+  sec = Number(sec) || 0;
+  if (sec <= 0) { return "–"; }
+  var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
+  var m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (d) { return d + "d " + h + "h"; }
+  if (h) { return h + "h " + m + "m"; }
+  if (m) { return m + "m " + s + "s"; }
+  return s + "s";
+}
+
+function setButtons() {
+  var running = lastState === "running";
+  els.start.disabled = busy || running;
+  els.stop.disabled = busy || !running;
+  els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
+  els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
+}
+
+function pickNode(state) {
+  var sel = state.selected;
+  var pools = [];
+  (state.manual || []).forEach(function (n) { if (n) { pools.push({ node: n, src: T.srcManual }); } });
+  (state.subscriptions || []).forEach(function (s) {
+    if (!s) { return; }
+    var src = s.name || s.title || s.url || T.srcSub;
+    (s.nodes || []).forEach(function (n) { if (n) { pools.push({ node: n, src: src }); } });
+  });
+  if (!sel) { return { kind: "none" }; }
+  for (var i = 0; i < pools.length; i++) {
+    if (pools[i].node.id === sel) { return { kind: "found", node: pools[i].node, src: pools[i].src }; }
+  }
+  return { kind: "missing" };
+}
+
+// Whether config.json actually points at a proxy. Kept deliberately weak: it
+// proves an outbound exists, not that it is the selected node, so the wording
+// never claims more than we know.
+function configHasProxy(cfg) {
+  if (!cfg || !cfg.outbounds || !cfg.outbounds.length) { return false; }
+  return cfg.outbounds.some(function (o) {
+    var p = (o && o.protocol) || "";
+    return p && p !== "freedom" && p !== "blackhole" && p !== "dns";
+  });
+}
+
+// IPv6 addresses are stored without brackets (that is what Xray wants), so the display has to
+// put them back — otherwise "2001:db8::1:443" is unreadable.
+function hostPort(n) {
+  var a = String(n.address || "");
+  if (a.indexOf(":") >= 0) { a = "[" + a + "]"; }
+  return a + (n.port ? ":" + n.port : "");
+}
+
+function renderNode(state, cfg) {
+  els.nSrc.hidden = true;
+  els.nMeta.textContent = "";
+  els.nHint.className = "nodehint";
+  els.nHint.textContent = "";
+  if (!state) {
+    els.nName.textContent = "–";
+    els.nHint.textContent = T.nodeNoState;
+    return;
+  }
+  var picked = pickNode(state);
+  if (picked.kind === "none") {
+    els.nName.textContent = "–";
+    els.nHint.textContent = T.nodeNone;
+    return;
+  }
+  if (picked.kind === "missing") {
+    els.nName.textContent = "–";
+    els.nHint.textContent = T.nodeMissing;
+    els.nHint.className = "nodehint warn";
+    return;
+  }
+  var n = picked.node;
+  els.nName.textContent = n.name || n.protocol || "node";
+  var bits = [];
+  if (n.protocol) { bits.push(n.protocol); }
+  if (n.transport && n.transport !== "tcp") { bits.push(n.transport); }
+  if (n.security) { bits.push(n.security); }
+  if (n.address) { bits.push(hostPort(n)); }
+  els.nMeta.textContent = bits.join(" · ");
+  els.nSrc.textContent = picked.src;
+  els.nSrc.hidden = false;
+  if (state.schema && state.schema !== 1) {
+    els.nHint.textContent = T.nodeSchema + state.schema;
+    els.nHint.className = "nodehint warn";
+    return;
+  }
+  var applied = configHasProxy(cfg);
+  els.nHint.textContent = applied ? T.nodeApplied : T.nodeNotApplied;
+  if (!applied) { els.nHint.className = "nodehint warn"; }
+}
+
+// One exec for both files: state.json is the intent, config.json is what the
+// core actually runs, and the UI must never present one as the other.
+function refreshNode() {
+  return exec("cat " + STATE + " 2>/dev/null; echo '@@CFG@@'; cat " + CONF + " 2>/dev/null")
+    .then(function (r) {
+      var parts = r.stdout.split("@@CFG@@");
+      var state = null, cfg = null;
+      try { state = JSON.parse((parts[0] || "").trim()); } catch (e) { state = null; }
+      try { cfg = JSON.parse((parts[1] || "").trim()); } catch (e) { cfg = null; }
+      lastStateObj = state;
+      renderNode(state, cfg);
+    }).catch(function () {});
+}
+
+// ---- node import UI ----
+
+var importRows = [];
+var lastStateObj = null;
+
+function findNodeByIdentity(state, ident) {
+  var pools = [state.manual || []];
+  (state.subscriptions || []).forEach(function (s) { if (s && s.nodes) { pools.push(s.nodes); } });
+  for (var i = 0; i < pools.length; i++) {
+    for (var j = 0; j < pools[i].length; j++) {
+      var n = pools[i][j];
+      if (n && n.protocol && n.address && identityOf(n) === ident) { return n; }
+    }
+  }
+  return null;
+}
+
+// Re-importing a node updates it in place and keeps its id, so the selection and any
+// reference to it survive; only a genuinely new identity is appended.
+function mergeNodes(state, nodes) {
+  if (!state.schema) { state.schema = 1; }
+  if (!Array.isArray(state.manual)) { state.manual = []; }
+  if (!Array.isArray(state.subscriptions)) { state.subscriptions = []; }
+  var added = 0, updated = 0;
+  nodes.forEach(function (n) {
+    delete n.dupOf;
+    var existing = findNodeByIdentity(state, identityOf(n));
+    if (existing) {
+      var keepId = existing.id || idOf(n);
+      Object.keys(n).forEach(function (k) { if (k !== "id") { existing[k] = n[k]; } });
+      existing.id = keepId;
+      updated++;
+    } else {
+      n.id = n.id || idOf(n);
+      state.manual.push(n);
+      added++;
+    }
+  });
+  return { added: added, updated: updated };
+}
+
+function writeState(state) {
+  var json = JSON.stringify(state, null, 2) + "\n";
+  var bytes = new TextEncoder().encode(json);
+  var bin = "";
+  for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
+  var b64 = btoa(bin);
+  // tmp + mv so a half-written file is impossible; state.json holds credentials, hence 0600.
+  var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + STATE + ".tmp && chmod 600 " + STATE +
+    ".tmp && mv " + STATE + ".tmp " + STATE;
+  return exec(cmd).then(function (r) {
+    if (r.errno !== 0) { throw new Error(r.stderr || ("exit " + r.errno)); }
+  });
+}
+
+function previewLine(text, cls) {
+  var row = document.createElement("div");
+  row.className = "prow " + cls;
+  var num = document.createElement("span");
+  num.className = "pnum";
+  num.textContent = text.num;
+  row.appendChild(num);
+  var body = document.createElement("div");
+  body.className = "pbody";
+  var name = document.createElement("div");
+  name.className = "pname";
+  name.textContent = text.name;
+  body.appendChild(name);
+  if (text.meta) {
+    var meta = document.createElement("div");
+    meta.className = "pmeta";
+    meta.textContent = text.meta;
+    body.appendChild(meta);
+  }
+  row.appendChild(body);
+  return row;
+}
+
+function previewRadio(value, label) {
+  var row = document.createElement("div");
+  row.className = "prow keep";
+  var input = document.createElement("input");
+  input.type = "radio";
+  input.name = "pick";
+  input.value = value;
+  var body = document.createElement("div");
+  body.className = "pbody";
+  var name = document.createElement("div");
+  name.className = "pname";
+  name.textContent = label;
+  body.appendChild(name);
+  row.appendChild(input);
+  row.appendChild(body);
+  return { row: row, input: input };
+}
+
+function renderPreview() {
+  var ok = importRows.filter(function (r) { return r.ok; });
+  els.iPreview.textContent = "";
+  els.iApply.disabled = busy || ok.length === 0;
+  els.iCount.hidden = ok.length === 0;
+  els.iCount.textContent = ok.length + " " + T.readyCount;
+  if (!importRows.length) { return; }
+
+  importRows.forEach(function (r) {
+    if (!r.ok) {
+      els.iPreview.appendChild(previewLine(
+        { num: r.line, name: r.error, meta: T.lineNo + r.line + T.lineNoEnd }, "bad"));
+      return;
+    }
+    var n = r.node;
+    var meta = [n.protocol, n.transport && n.transport !== "tcp" ? n.transport : "",
+      n.security || "", hostPort(n)].filter(Boolean).join(" · ");
+    if (n.dupOf) { meta += " — " + T.dupOf + n.dupOf + T.dupOfEnd; }
+    els.iPreview.appendChild(previewLine({ num: r.line, name: n.name, meta: meta }, "ok"));
+  });
+
+  var hasSelection = !!(lastStateObj && lastStateObj.selected);
+  var radios = [];
+  importRows.forEach(function (r, idx) {
+    if (!r.ok) { return; }
+    radios.push(previewRadio("" + idx, r.node.name));
+  });
+  radios.forEach(function (el) { els.iPreview.appendChild(el.row); });
+  if (hasSelection) {
+    var keep = previewRadio("", T.keepCurrent);
+    els.iPreview.appendChild(keep.row);
+    keep.input.checked = true;
+  } else if (radios.length) {
+    radios[0].input.checked = true;
+  }
+}
+
+function doParse() {
+  importRows = parseInput(els.iText.value);
+  if (!importRows.length) {
+    els.iPreview.textContent = "";
+    els.iApply.disabled = true;
+    els.iCount.hidden = true;
+    els.iHint.textContent = T.importEmpty;
+    els.iHint.className = "nodehint warn";
+    return;
+  }
+  els.iHint.textContent = T.notAppliedYet;
+  els.iHint.className = "nodehint";
+  renderPreview();
+}
+
+function doImport() {
+  if (busy || !hasBridge) { return; }
+  var ok = importRows.filter(function (r) { return r.ok; });
+  if (!ok.length) { return; }
+  var picked = els.iPreview.querySelector('input[name="pick"]:checked');
+  var pickIdx = picked && picked.value !== "" ? Number(picked.value) : -1;
+
+  busy = true;
+  setButtons();
+  els.iApply.disabled = true;
+  exec("cat " + STATE + " 2>/dev/null").then(function (r) {
+    var state = null;
+    try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
+    if (!state || typeof state !== "object") {
+      state = { schema: 1, revision: 0, manual: [], subscriptions: [], selected: "" };
+    }
+    var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
+    if (pickIdx >= 0 && importRows[pickIdx] && importRows[pickIdx].node) {
+      state.selected = importRows[pickIdx].node.id;
+    }
+    state.revision = (Number(state.revision) || 0) + 1;
+    return writeState(state).then(function () {
+      var msg = T.importDone + " " + res.added;
+      if (res.updated) { msg += T.importUpdated + " " + res.updated; }
+      toast(msg);
+      els.iText.value = "";
+      els.iPreview.textContent = "";
+      els.iCount.hidden = true;
+      els.iHint.textContent = T.addHint;
+      importRows = [];
+      refreshAll();
+    });
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    setButtons();
+    els.iApply.disabled = importRows.filter(function (r) { return r.ok; }).length === 0;
+  });
+}
+
+function renderStatus(kv) {
+  var state = kv.state || "unknown";
+  var phase = kv.phase || "";
+  var failed = phase === "config-invalid" || phase === "no-core" || phase === "crashed" || phase === "no-config";
+  var cls = failed ? "failed" : state;
+  var text = T[state] || state;
+  if (failed) { text = T.failed + " · " + phase; }
+  els.badge.textContent = text;
+  els.badge.className = "badge " + cls;
+
+  if (document.visibilityState === "visible") { lastState = state; }
+  els.pid.textContent = kv.pid && kv.pid !== "-" ? kv.pid : "–";
+  els.up.textContent = state === "running" && kv.started
+    ? uptime(Math.floor(Date.now() / 1000) - Number(kv.started))
+    : "–";
+  els.port.textContent = kv.socks ? "socks " + kv.socks + " · http " + kv.http : "–";
+  els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
+  els.conf.textContent = kv.conf || "–";
+  els.hint.textContent = state === "running" ? T.runningHint : T.stoppedHint;
+
+  setButtons();
+}
+
+function renderLog(text) {
+  if (text === lastLog) { return; }
+  lastLog = text;
+  var atBottom = els.log.scrollTop + els.log.clientHeight >= els.log.scrollHeight - 24;
+  els.log.textContent = text || T.noLog;
+  if (els.follow.checked && atBottom) { els.log.scrollTop = els.log.scrollHeight; }
+}
+
+function refreshStatus() {
+  return exec(CLI + " status").then(function (r) {
+    if (r.errno !== 0 && !r.stdout) {
+      els.banner.textContent = r.stderr || (T.actionFailed + " (status)");
+      els.banner.className = "banner show";
+      return;
+    }
+    renderStatus(parseKv(r.stdout));
+  }).catch(function () { /* bridge error already reported at boot */ });
+}
+
+function refreshLog() {
+  return exec(CLI + " log " + LOG_LINES).then(function (r) {
+    renderLog(r.stdout || r.stderr);
+  }).catch(function () {});
+}
+
+function refreshAll() {
+  if (!hasBridge) { return; }
+  refreshStatus();
+  refreshNode();
+  refreshLog();
+}
+
+function run(command, pendingLabel) {
+  if (busy) { return; }
+  busy = true;
+  pending = command;
+  setButtons();
+  toast(pendingLabel);
+  exec(CLI + " " + command).then(function (r) {
+    if (r.errno !== 0) { toast(T.actionFailed + ": " + (r.stderr || r.errno)); }
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    pending = null;
+    refreshAll();
+  });
+}
+
+els.start.addEventListener("click", function () { run("start", T.startingMsg); });
+els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
+els.refresh.addEventListener("click", function () { refreshAll(); });
+els.iParse.addEventListener("click", doParse);
+els.iApply.addEventListener("click", doImport);
+
+// Poll only while the page is actually visible; the WebView freezes timers in
+// the background and a stale interval would otherwise pile up on resume.
+var timer = null;
+function startPolling() {
+  if (timer || !hasBridge) { return; }
+  refreshAll();
+  timer = setInterval(refreshAll, POLL_MS);
+}
+function stopPolling() {
+  if (timer) { clearInterval(timer); timer = null; }
+}
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "hidden") { stopPolling(); } else { startPolling(); }
+});
+
+label();
+if (!hasBridge) {
+  els.banner.textContent = T.noBridge;
+  els.banner.className = "banner show";
+  els.badge.textContent = T.unknown;
+  els.hint.textContent = "";
+  return;
+}
+setButtons();
+startPolling();
+})();

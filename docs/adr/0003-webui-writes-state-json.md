@@ -31,8 +31,8 @@ Rules that keep this honest:
 - **The UI mutates what it read.** It parses the existing file, merges into that object and
   serialises it back, so fields it does not understand survive a write from an older build.
 - **The parser is tested against the shipped file.** `tests/parse.test.js` extracts the marked
-  block out of `module/webroot/index.html` and runs it; there is no second copy of the parser
-  to drift. This is why the WebUI can stay a single hand-written HTML file with no build step.
+  block out of `module/webroot/app.js` and runs it; there is no second copy of the parser
+  to drift. This is why the WebUI can stay hand-written HTML/CSS/JS with no build step.
 
 ## Consequences
 

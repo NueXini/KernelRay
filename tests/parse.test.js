@@ -1,8 +1,8 @@
 // Parser tests for the WebUI.
 //
-// The parser lives inside module/webroot/index.html (the WebUI is a single hand-written file,
-// no build step), so this harness extracts the marked block from the shipped file and runs it.
-// That way the tests exercise exactly what ships — there is no second copy to drift.
+// The parser lives inside module/webroot/app.js (the WebUI is hand-written, no build step), so
+// this harness extracts the marked block from the shipped file and runs it. That way the tests
+// exercise exactly what ships — there is no second copy to drift.
 //
 //   node tests/parse.test.js
 
@@ -11,19 +11,19 @@
 const fs = require("fs");
 const path = require("path");
 
-const htmlPath = path.join(__dirname, "..", "module", "webroot", "index.html");
-const html = fs.readFileSync(htmlPath, "utf8");
+const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
+const js = fs.readFileSync(jsPath, "utf8");
 
 const START = "// ---- node parsing ----";
 const END = "// ---- end node parsing ----";
-const from = html.indexOf(START);
-const to = html.indexOf(END);
+const from = js.indexOf(START);
+const to = js.indexOf(END);
 if (from < 0 || to < 0) {
-  console.error("could not find the parser block markers in index.html");
+  console.error("could not find the parser block markers in app.js");
   process.exit(1);
 }
 
-const block = html.slice(from, to);
+const block = js.slice(from, to);
 const P = new Function(
   block + "\nreturn { parseLink: parseLink, parseInput: parseInput, identityOf: identityOf, idOf: idOf };"
 )();
