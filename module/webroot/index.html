@@ -14,58 +14,95 @@
   <span class="badge" id="badge">…</span>
 </header>
 
-<section class="card">
-  <div class="row">
-    <button class="primary" id="start" disabled>Start</button>
-    <button class="danger" id="stop" disabled>Stop</button>
-  </div>
-  <div class="hint" id="hint"></div>
-</section>
+<main>
+  <section class="page" id="page-status">
+    <section class="card">
+      <div class="row">
+        <button class="primary" id="start" disabled>Start</button>
+        <button class="danger" id="stop" disabled>Stop</button>
+      </div>
+      <div class="hint" id="hint"></div>
+    </section>
 
-<section class="card" id="nodecard">
-  <div class="nodehead">
-    <span id="l-node">Current node</span>
-    <span class="pill" id="n-src" hidden></span>
-  </div>
-  <div class="nodename" id="n-name">–</div>
-  <div class="nodemeta" id="n-meta"></div>
-  <div class="nodehint" id="n-hint"></div>
-</section>
+    <section class="card">
+      <dl>
+        <dt id="l-pid">PID</dt><dd id="v-pid">–</dd>
+        <dt id="l-up">Uptime</dt><dd id="v-up">–</dd>
+        <dt id="l-port">Ports</dt><dd id="v-port">–</dd>
+        <dt id="l-core">Core</dt><dd id="v-core">–</dd>
+        <dt id="l-conf">Config</dt><dd id="v-conf">–</dd>
+      </dl>
+    </section>
+  </section>
 
-<section class="card" id="importcard">
-  <div class="nodehead">
-    <span id="l-import">Add node</span>
-    <span class="pill" id="i-count" hidden></span>
-  </div>
-  <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
-            autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
-  <div class="row mt">
-    <button id="i-parse">Parse</button>
-    <button class="primary" id="i-apply" disabled>Import</button>
-  </div>
-  <div class="nodehint" id="i-hint"></div>
-  <div id="i-preview"></div>
-</section>
+  <section class="page" id="page-nodes" hidden>
+    <section class="card" id="nodecard">
+      <div class="nodehead">
+        <span id="l-node">Current node</span>
+        <span class="pill" id="n-src" hidden></span>
+      </div>
+      <div class="nodename" id="n-name">–</div>
+      <div class="nodemeta" id="n-meta"></div>
+      <div class="nodehint" id="n-hint"></div>
+    </section>
 
-<section class="card">
-  <dl>
-    <dt id="l-pid">PID</dt><dd id="v-pid">–</dd>
-    <dt id="l-up">Uptime</dt><dd id="v-up">–</dd>
-    <dt id="l-port">Ports</dt><dd id="v-port">–</dd>
-    <dt id="l-core">Core</dt><dd id="v-core">–</dd>
-    <dt id="l-conf">Config</dt><dd id="v-conf">–</dd>
-  </dl>
-</section>
+    <section class="card" id="importcard">
+      <div class="nodehead">
+        <span id="l-import">Add node</span>
+        <span class="pill" id="i-count" hidden></span>
+      </div>
+      <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
+                autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
+      <div class="row mt">
+        <button id="i-parse">Parse</button>
+        <button class="primary" id="i-apply" disabled>Import</button>
+      </div>
+      <div class="nodehint" id="i-hint"></div>
+      <div id="i-preview"></div>
+    </section>
+  </section>
 
-<section class="card logcard">
-  <div class="logbar">
-    <span id="l-log">Log</span>
-    <span class="spacer"></span>
-    <label><input type="checkbox" id="follow" checked><span id="l-follow">Follow</span></label>
-    <button id="refresh">Refresh</button>
+  <section class="page" id="page-log" hidden>
+    <section class="card logcard">
+      <div class="logbar">
+        <span id="l-log">Log</span>
+        <span class="spacer"></span>
+        <label><input type="checkbox" id="follow" checked><span id="l-follow">Follow</span></label>
+        <button id="refresh">Refresh</button>
+      </div>
+      <pre id="log">…</pre>
+    </section>
+  </section>
+</main>
+
+<nav class="tabbar" id="tabbar" aria-label="Sections">
+  <div class="tabbar-inner">
+    <a class="tab" href="#/status" data-route="status" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>
+      </svg>
+      <span class="tab-label" id="l-tab-status">Status</span>
+    </a>
+    <a class="tab" href="#/nodes" data-route="nodes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="7" rx="2"/>
+        <rect x="3" y="13" width="18" height="7" rx="2"/>
+        <path d="M7 7.5h.01M7 16.5h.01"/>
+      </svg>
+      <span class="tab-label" id="l-tab-nodes">Nodes</span>
+    </a>
+    <a class="tab" href="#/log" data-route="log">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2"/>
+        <path d="M7 9l3 3-3 3M13 15h4"/>
+      </svg>
+      <span class="tab-label" id="l-tab-log">Log</span>
+    </a>
   </div>
-  <pre id="log">…</pre>
-</section>
+</nav>
 
 <div class="toast" id="toast"></div>
 

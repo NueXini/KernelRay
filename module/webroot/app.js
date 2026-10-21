@@ -27,6 +27,7 @@ var T = ZH ? {
   nodeNotApplied: "当前配置是直连（freedom），选中节点还没有写入配置",
   nodeNoState: "没有 state.json，节点信息无从得知",
   nodeSchema: "state.json 的 schema 版本未识别：",
+  tabStatus: "状态", tabNodes: "节点", tabLog: "日志", navLabel: "页面",
   addTitle: "添加节点",
   addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
   addPlaceholder: "vless://…",
@@ -56,6 +57,7 @@ var T = ZH ? {
   nodeNotApplied: "config.json is direct (freedom); the selected node is not applied",
   nodeNoState: "No state.json, so the node is unknown",
   nodeSchema: "Unrecognised state.json schema: ",
+  tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", navLabel: "Sections",
   addTitle: "Add node",
   addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
   addPlaceholder: "vless://…",
@@ -82,8 +84,11 @@ var els = {
   nMeta: $("n-meta"), nHint: $("n-hint"),
   lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
-  iCount: $("i-count")
+  iCount: $("i-count"), tabbar: $("tabbar"),
+  lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log")
 };
+var tabs = [].slice.call(document.querySelectorAll(".tab"));
+var pages = { status: $("page-status"), nodes: $("page-nodes"), log: $("page-log") };
 
 var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
 var lastLog = "";
@@ -108,6 +113,10 @@ function label(key) {
   els.iApply.textContent = T.importBtn;
   els.iText.placeholder = T.addPlaceholder;
   els.iHint.textContent = T.addHint;
+  els.lTabStatus.textContent = T.tabStatus;
+  els.lTabNodes.textContent = T.tabNodes;
+  els.lTabLog.textContent = T.tabLog;
+  els.tabbar.setAttribute("aria-label", T.navLabel);
 }
 
 function toast(msg) {
@@ -705,7 +714,7 @@ function doImport() {
       els.iCount.hidden = true;
       els.iHint.textContent = T.addHint;
       importRows = [];
-      refreshAll();
+      refreshPage();
     });
   }).catch(function (e) {
     toast(T.actionFailed + ": " + e.message);
@@ -764,11 +773,91 @@ function refreshLog() {
   }).catch(function () {});
 }
 
-function refreshAll() {
+// ---- navigation ----
+// Hash routes are the only navigation state: a reload lands on the same tab and
+// a link can deep-link into one. Taps replace rather than push, so a long-lived
+// WebView does not accumulate history for every tab switch.
+var DEFAULT_ROUTE = "status";
+var currentRoute = null;
+var scrollByRoute = { status: 0, nodes: 0, log: 0 };
+
+function routeOf(value) {
+  var route = String(value == null ? "" : value)
+    .replace(/^#\/?/, "").replace(/\/+$/, "").toLowerCase();
+  if (route === "status" || route === "nodes" || route === "log") { return route; }
+  return DEFAULT_ROUTE;
+}
+
+function routeHash(route) { return "#/" + route; }
+
+function showRoute(route, opts) {
+  route = routeOf(route);
+  if (currentRoute && currentRoute !== route) {
+    scrollByRoute[currentRoute] = window.scrollY || window.pageYOffset || 0;
+  }
+  currentRoute = route;
+  Object.keys(pages).forEach(function (key) { pages[key].hidden = key !== route; });
+  tabs.forEach(function (tab) {
+    var active = tab.getAttribute("data-route") === route;
+    tab.classList.toggle("active", active);
+    if (active) { tab.setAttribute("aria-current", "page"); }
+    else { tab.removeAttribute("aria-current"); }
+  });
+  // Hidden pages have no layout, so restore the scroll after the chosen page exists.
+  var y = scrollByRoute[route] || 0;
+  window.scrollTo(0, y);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(function () { window.scrollTo(0, y); });
+  }
+  // Entering the log page with Follow on should land on the newest lines even
+  // when the text itself did not change since the last visit.
+  if (route === "log" && els.follow.checked) {
+    var toBottom = function () { els.log.scrollTop = els.log.scrollHeight; };
+    if (typeof requestAnimationFrame === "function") { requestAnimationFrame(toBottom); }
+    else { toBottom(); }
+  }
+  if (!opts || opts.refresh !== false) { refreshPage(); }
+}
+
+function go(route) {
+  route = routeOf(route);
+  if (route === currentRoute) { refreshPage(); return; }
+  var hash = routeHash(route);
+  var replaced = false;
+  try { history.replaceState(null, "", hash); replaced = true; } catch (e) { /* fall back below */ }
+  if (replaced) { showRoute(route, { refresh: true }); }
+  else { location.hash = hash; }
+}
+
+function initNav() {
+  var start = routeOf(location.hash);
+  var hash = routeHash(start);
+  if (location.hash !== hash) {
+    try { history.replaceState(null, "", hash); } catch (e) { /* routeOf still handles the odd hash */ }
+  }
+  showRoute(start, { refresh: false });
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function (e) {
+      e.preventDefault();
+      go(tab.getAttribute("data-route"));
+    });
+  });
+  window.addEventListener("hashchange", function () {
+    var route = routeOf(location.hash);
+    var normalized = routeHash(route);
+    if (location.hash !== normalized) {
+      try { history.replaceState(null, "", normalized); } catch (e) {}
+    }
+    if (route === currentRoute) { return; }
+    showRoute(route, { refresh: true });
+  });
+}
+
+function refreshPage() {
   if (!hasBridge) { return; }
   refreshStatus();
-  refreshNode();
-  refreshLog();
+  if (currentRoute === "nodes") { refreshNode(); }
+  else if (currentRoute === "log") { refreshLog(); }
 }
 
 function run(command, pendingLabel) {
@@ -784,13 +873,13 @@ function run(command, pendingLabel) {
   }).then(function () {
     busy = false;
     pending = null;
-    refreshAll();
+    refreshPage();
   });
 }
 
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
-els.refresh.addEventListener("click", function () { refreshAll(); });
+els.refresh.addEventListener("click", function () { refreshPage(); });
 els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);
 
@@ -799,8 +888,8 @@ els.iApply.addEventListener("click", doImport);
 var timer = null;
 function startPolling() {
   if (timer || !hasBridge) { return; }
-  refreshAll();
-  timer = setInterval(refreshAll, POLL_MS);
+  refreshPage();
+  timer = setInterval(refreshPage, POLL_MS);
 }
 function stopPolling() {
   if (timer) { clearInterval(timer); timer = null; }
@@ -810,6 +899,7 @@ document.addEventListener("visibilitychange", function () {
 });
 
 label();
+initNav();
 if (!hasBridge) {
   els.banner.textContent = T.noBridge;
   els.banner.className = "banner show";

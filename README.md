@@ -86,9 +86,16 @@ curl -sS -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:11080 http
 
 <p align="center"><img src="docs/webui.png" width="300" alt="KernelRay WebUI"></p>
 
-Open the module card in the KernelSU manager and tap **WebUI**. The page shows the state
-(running / stopped / failed), pid, uptime, core version, the selected node and the last 200
-log lines, with **Start** / **Stop** buttons.
+Open the module card in the KernelSU manager and tap **WebUI**. The page has three tabs —
+**Status**, **Nodes** and **Log** — with the title and runtime badge pinned above them:
+
+- **Status** — start / stop the core and read pid, uptime, ports, core version and config path.
+- **Nodes** — the selected node and the import card.
+- **Log** — the last 200 lines, with a follow toggle.
+
+Tabs are hash routes (`#/status`, `#/nodes`, `#/log`): a reload or a deep link lands on the same
+tab, and anything else falls back to `#/status`. Only the visible tab is polled, plus the status
+badge; switching tabs keeps each tab's scroll position and any half-typed import.
 
 The node card is a read-only view of `state.json`: it resolves `selected` against the manual
 list and any subscription node lists, then says whether `config.json` actually carries a proxy
