@@ -4,7 +4,7 @@
 
 SKIPUNZIP=0
 
-ui_print "- KernelRay (idle run)"
+ui_print "- KernelRay (apply a node)"
 
 if [ "$API" -lt 29 ]; then
   abort "! Android 10 (API 29) or newer is required (found API $API)"
@@ -35,8 +35,11 @@ kr_dirs
 kr_ensure_config
 kr_status_write installed idle
 
-ui_print "- Installed. Core starts in idle mode on boot (socks 127.0.0.1:10808, http 127.0.0.1:10809)."
-ui_print "- Config: /data/adb/modules/$KR_ID/config.json (from config.example.json when absent)"
+ui_print "- Installed. Core starts on boot; until a node is applied it runs direct on"
+ui_print "  socks 127.0.0.1:10808 and http 127.0.0.1:10809."
+ui_print "- Select a node in the WebUI (Nodes -> Apply node) to derive the core config."
+ui_print "- Config: /data/adb/modules/$KR_ID/config.json (generated; do not hand-edit)"
 ui_print "- Log:    /data/adb/modules/$KR_ID/logs/xray.log"
 ui_print "! Everything lives in this module dir. A module update replaces it whole,"
-ui_print "! so config.json, state.json and logs are reset by upgrading."
+ui_print "! so config.json, state.json, outbound.json, outbound.meta and logs are reset by"
+ui_print "! upgrading. Re-import and apply the node after an update."

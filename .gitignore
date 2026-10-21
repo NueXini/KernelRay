@@ -6,3 +6,11 @@ node_modules/
 module/bin/*
 !module/bin/README.md
 build/
+
+# Runtime files written on the device (or by a local test run); never ship them.
+module/config.json
+module/state.json
+module/outbound.json
+module/outbound.meta
+module/logs/
+module/runtime/

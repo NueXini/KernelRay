@@ -97,6 +97,8 @@ pre {
 .nodemeta code { font: inherit; }
 .nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }
 .nodehint.warn { color: var(--warn); }
+.nodehint.ok { color: var(--ok); }
+.row[hidden] { display: none; }
 textarea {
   width: 100%; margin-top: 4px; padding: 10px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--bg); color: var(--text);

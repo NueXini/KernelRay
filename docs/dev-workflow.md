@@ -16,13 +16,20 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 | 核心 | `module/bin/xray`（arm64）已就位，否则打包会失败 |
 | 管理器 | 只有要看 WebUI 时才需要；装/卸/验证全都能在 adb 里完成 |
 
-## 1. 先跑单测（改了解析器就一定要跑）
+## 1. 先跑单测（改了解析器、渲染器、模板或脚本就一定要跑）
 
 ```sh
-node tests/parse.test.js      # 24 parser tests passing
+node --check module/webroot/app.js     # 页面语法（不执行）
+bash -n module/scripts/kernelray.sh    # 脚本语法
+node tests/parse.test.js               # 24 parser tests passing
+node tests/outbound.test.js            # 17 outbound tests passing
+node tests/config.test.js              # 16 config tests passing（需要 bash 和 /proc）
 ```
 
-测试是从 `module/webroot/index.html` 里抽出解析器跑的，测的就是要发布的那个文件。
+前两个测试从 `module/webroot/app.js` 里抽出带标记的代码块跑，测的就是要发布的那个文件。
+`config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
+特殊字符转义、apply 的失败路径和启动回滚；假核心只在回滚用例里运行，用 `/proc` 识别
+进程，不碰 iptables。
 
 ## 2. 打包
 
@@ -31,12 +38,13 @@ bash scripts/pack.sh          # → build/kernelray-<versionCode>-<version>.zip
 ls -l build/                  # 确认时间戳是刚才的，别推了旧包
 ```
 
-有核心时约 12 MB。ZIP 内容是 `module/` 的**根**，并排除 `config.json`/`state.json`/`logs/`/`runtime/`。
+有核心时约 12 MB。ZIP 内容是 `module/` 的**根**，并排除 `config.json`/`state.json`/
+`outbound.json`/`outbound.meta`/`logs/`/`runtime/`（都是设备上的运行数据）。
 
 ## 3. 推包到设备
 
 ```sh
-adb -s $D push build/kernelray-51-v0.5.1.zip //data/local/tmp/kernelray.zip
+adb -s $D push build/kernelray-60-v0.6.0.zip //data/local/tmp/kernelray.zip
 ```
 
 > **Windows/MSYS 坑**：`/data/...` 会被改写成 `C:/Users/.../data/...`。两种写法都行：
@@ -82,12 +90,13 @@ sleep 10    # service.sh 在 late_start 阶段才跑；模拟器上核心还要�
 adb -s $D shell 'ps -A -o PID,ARGS | grep "[x]ray run"'
 #  houdini64 /data/adb/modules/kernelray/bin/xray ... run -c /data/adb/modules/kernelray/config.json
 
-# 2) 模块自报状态
+# 2) 模块自报状态；node= 是已应用节点（没应用时为空）
 adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status'
-#  state=running  phase=idle  pid=...  conf=...  log=...
+#  state=running  phase=idle  pid=...  node=...  conf=...  log=...
 
 # 3) 文件都在模块目录里，权限正确
-adb -s $D shell 'ls -l /data/adb/modules/kernelray/{state.json,logs,runtime}'
+adb -s $D shell 'ls -l /data/adb/modules/kernelray/{state.json,config.json,outbound.json,outbound.meta,logs,runtime}'
+adb -s $D shell 'cat /data/adb/modules/kernelray/runtime/applied 2>/dev/null'   # 空 = 直连
 
 # 4) 真的在转发（不是只看进程活着）
 adb -s $D forward tcp:11080 tcp:10808
@@ -113,11 +122,29 @@ adb -s $D shell uiautomator dump //sdcard/ui.xml
 adb -s $D exec-out cat //sdcard/ui.xml > build/ui.xml   # 找 text="..." 的 bounds="[x1,y1][x2,y2]"
 ```
 
-不用 UI 也能操作：
+不用 UI 也能启停：
 
 ```sh
 adb -s $D shell 'su -c "ksud module action kernelray"'   # = 点 ▶，跑 action.sh（启停切换）
 ```
+
+**应用节点（v0.6）**：在 Nodes 页导入节点、选中它，然后点节点卡里的 **Apply**。
+选中/导入只改 `state.json`，只有 Apply 才会改核心配置。Apply 成功后验证：
+
+```sh
+adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status' | grep node=
+adb -s $D shell 'cat /data/adb/modules/kernelray/runtime/applied'
+adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第一个 outbound 是节点
+```
+
+Apply 的失败语义：`xray -test` 失败时旧配置和运行中的核心**都不动**，只在 UI 里弹错误；
+候选配置测试通过但启动失败时，脚本会恢复上一份配置和上一个已应用节点并重启旧配置。
+如果恢复的旧配置也起不来，核心保持停止（`failed/crashed`），不会假装成功。详细过程见
+`docs/config-derivation.md`。
+
+**选中 ≠ 已应用**：节点卡会显示“已应用：核心通过这个节点转发”“选中的节点还没有应用”
+或“已应用的是另一个节点：…”。重新导入保留 id 时还会显示“应用后有改动”，这同样
+不是“已应用”。`state.json` 的 `selected` 是意图，`runtime/applied` 是事实。
 
 ## 8. 在 WebUI 里输入文字（最容易上当的一步）
 
@@ -136,7 +163,8 @@ adb -s $D shell 'su -c "ksud module action kernelray"'   # = 点 ▶，跑 actio
 
 ```sh
 # 升级 = 提高 versionCode → 重打包 → 重复 2~6 步
-#   注意：模块目录被整体替换，state.json / config.json / logs 会被清空（docs/adr/0002）
+#   注意：模块目录被整体替换，state.json / config.json / outbound.json /
+#   outbound.meta / logs / runtime 会被清空（docs/adr/0002）
 
 # 卸载（只是打标记，重启才真正删）
 adb -s $D shell 'su -c "ksud module uninstall kernelray"'
@@ -157,12 +185,22 @@ adb -s $D shell 'ls -d /data/adb/modules/kernelray; ps -A -o PID,ARGS | grep -c 
 | `push` 报错、路径变成 `C:/...` | MSYS 路径改写，用 `//data/...` 或 `MSYS_NO_PATHCONV=1` |
 | `logcat` 里搜不到 kernelray | `service.sh` 的 stdout 不进 logcat；看 `logs/xray.log` 或 `kernelray.sh log 50` |
 | 端口测试 000/超时 | 忘了 `adb forward`，或没用 `--socks5-hostname`（域名解析也走代理才叫真通） |
+| Apply 报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是 UI 点 Apply 时写的 |
+| Apply 报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |
+| Apply 报 `does not belong to node` | `outbound.meta` 的 id 不是请求的节点；UI 重新点 Apply 会重写两个文件 |
+| 节点卡说“选中的节点还没有应用” | 正常：选中只写 `state.json`；点 Apply 才写配置 |
+| 节点卡说“应用后有改动” | 重新导入保留了 id，但运行配置还是旧的；点 Apply 重新渲染并重启 |
+| `node=` 为空但配置里有代理 | `runtime/applied` 丢了或没写；重新 Apply，别手改 `config.json` |
 
 ## 11. 一条命令走完（复制粘贴用）
 
 ```sh
 D=127.0.0.1:5555
+node --check module/webroot/app.js || exit 1
+bash -n module/scripts/kernelray.sh || exit 1
 node tests/parse.test.js || exit 1
+node tests/outbound.test.js || exit 1
+node tests/config.test.js || exit 1
 bash scripts/pack.sh || exit 1
 zip=$(ls -t build/kernelray-*.zip | head -1)
 adb -s $D push "$zip" //data/local/tmp/kernelray.zip || exit 1

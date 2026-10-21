@@ -4,11 +4,14 @@ Location: `/data/adb/modules/kernelray/state.json`, mode `0600`, owner `root`.
 
 `state.json` is the **intent**: which nodes the user has, and which one they want in use.
 `config.json` is the **derived artifact** the core actually runs. They are not the same file and
-the UI must never present one as the other. (Today nothing derives `config.json` from
-`state.json` yet — applying the selected node is still open work, see the README.)
+the UI must never present one as the other. Selecting a node changes only `state.json`; the
+selected node reaches `config.json` when the user presses **Apply** (see
+[`config-derivation.md`](config-derivation.md)).
 
-Written by: the WebUI importer. Read by: the WebUI node card.
-Ownership note: the shell writes runtime facts (`runtime/status.json`, pid), the UI writes intent.
+Written by: the WebUI importer, and the apply success path when it clears a node's `dirty`
+flag. Read by: the WebUI node card.
+Ownership note: the shell writes runtime facts (`runtime/status.json`, `runtime/applied`, pid),
+the UI writes intent and the rendered outbound (`outbound.json` + `outbound.meta`).
 
 ## Top level
 
@@ -21,6 +24,11 @@ Ownership note: the shell writes runtime facts (`runtime/status.json`, pid), the
 | `subscriptions` | `{name,url,nodes:Node[]}[]` | Nodes that came from a subscription. Nothing fills these yet. |
 | `selected` | string | `id` of the node considered current. `""` when nothing is selected. |
 | `group` | string | Free-form label; no behaviour attached. |
+
+`selected` is a wish. The node the current core config was actually built from is
+`runtime/applied`, written by `kernelray.sh apply <id>`; the node card shows both and says when
+they differ. `outbound.json` / `outbound.meta` hold the last rendered candidate; only
+`runtime/applied` says whether the swap actually succeeded.
 
 Unknown top-level fields are preserved: the writer parses the file, mutates the object and
 serialises it back, so nothing is dropped by an older UI.
@@ -43,6 +51,7 @@ Common fields:
 | `fingerprint` | string? | uTLS fingerprint (`fp`), e.g. `edge`, `chrome`. |
 | `allowInsecure` | bool? | Present only when the link asked for it. |
 | `path`, `host`, `serviceName` | string? | Transport parameters (`ws` path, `Host` header, `grpc` service name). |
+| `dirty` | bool? | UI-only: set when an import/update changes a node with the same `id`; cleared after a successful apply. Means "the running config may predate these fields", not "not applied". The shell ignores it. |
 
 Protocol-specific fields:
 
@@ -69,7 +78,8 @@ Consequences, all deliberate:
 - Re-importing the same node replaces it in place and keeps the original `id`; renaming a node
   and importing it again does not create a second entry.
 - Changing a node's SNI or transport in the URI produces the same identity, so *that* edit is
-  applied to the existing entry rather than creating a new one.
+  applied to the existing entry rather than creating a new one. The entry is marked `dirty`,
+  because the id alone would otherwise make the applied config look current.
 - `id` values written by older builds (md5-style) are kept as-is when a node is matched by
   identity — the identity, not the hash, is what decides.
 

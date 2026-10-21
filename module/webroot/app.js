@@ -5,7 +5,9 @@ var MOD = "/data/adb/modules/kernelray";
 var CLI = MOD + "/scripts/kernelray.sh";
 // Config, node store and logs sit in the module dir too — one root, nothing outside it.
 var STATE = MOD + "/state.json";
-var CONF = MOD + "/config.json";
+var APPLIED = MOD + "/runtime/applied";
+var OUTBOUND = MOD + "/outbound.json";
+var OUTBOUND_META = MOD + "/outbound.meta";
 var LOG_LINES = 200;
 var POLL_MS = 2000;
 
@@ -18,13 +20,19 @@ var T = ZH ? {
   noBridge: "没有检测到 KernelSU 桥接，请从 KernelSU 管理器的模块页面打开本页面。",
   startingMsg: "正在启动…", stoppingMsg: "正在停止…",
   actionFailed: "操作失败", noLog: "（还没有日志）",
-  stoppedHint: "核心未运行，设备流量没有被接管。",
-  runningHint: "核心在空转：没有接管任何流量，需要客户端自己指向 127.0.0.1:10808。",
-  node: "当前节点", srcManual: "手动", srcSub: "订阅",
+  stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
+  stoppedHintNone: "核心未运行，也没有应用节点；下次启动会直连。",
+  runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:10808 就会走已应用的节点。",
+  runningHintNone: "核心在运行，但还没有应用节点：客户端指向 127.0.0.1:10808 时是直连。",
+  node: "选中节点", srcManual: "手动", srcSub: "订阅",
   nodeNone: "还没有选中的节点（state.json 里 selected 为空）",
   nodeMissing: "state.json 的 selected 指向了一个列表里不存在的 id",
-  nodeApplied: "配置里已有代理出站",
-  nodeNotApplied: "当前配置是直连（freedom），选中节点还没有写入配置",
+  nodeApplied: "已应用：核心通过这个节点转发",
+  nodeModified: "这个节点在应用后有改动；再应用一次才会更新运行中的配置",
+  nodeNotApplied: "选中的节点还没有应用；核心当前按直连（freedom）运行",
+  nodeAppliedOther: "已应用的是另一个节点：",
+  apply: "应用节点", reapply: "重新应用",
+  applyingMsg: "正在应用节点…", appliedMsg: "节点已应用",
   nodeNoState: "没有 state.json，节点信息无从得知",
   nodeSchema: "state.json 的 schema 版本未识别：",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", navLabel: "页面",
@@ -39,7 +47,7 @@ var T = ZH ? {
   importEmpty: "没有解析出可导入的节点",
   importDone: "已导入",
   importUpdated: "，更新",
-  notAppliedYet: "导入只写节点清单，不会改变流量走向。"
+  notAppliedYet: "导入只写节点清单，不会改变流量走向；导入后在节点卡里点“应用节点”。"
 } : {
   start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
   log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
@@ -48,13 +56,19 @@ var T = ZH ? {
   noBridge: "KernelSU bridge not found. Open this page from the module card in the KernelSU manager.",
   startingMsg: "Starting…", stoppingMsg: "Stopping…",
   actionFailed: "Action failed", noLog: "(no log yet)",
-  stoppedHint: "Core is not running; device traffic is untouched.",
-  runningHint: "Idle run: no traffic is intercepted. Point your client at 127.0.0.1:10808.",
-  node: "Current node", srcManual: "manual", srcSub: "subscription",
+  stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
+  stoppedHintNone: "The core is stopped and no node is applied; the next start runs direct.",
+  runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:10808 to use the applied node.",
+  runningHintNone: "The core is running direct: no node is applied yet. Clients pointed at 127.0.0.1:10808 go out directly.",
+  node: "Selected node", srcManual: "manual", srcSub: "subscription",
   nodeNone: "No node selected (state.json has an empty selected field)",
   nodeMissing: "state.json points selected at an id that is not in any list",
-  nodeApplied: "config.json already has a proxy outbound",
-  nodeNotApplied: "config.json is direct (freedom); the selected node is not applied",
+  nodeApplied: "Applied: the core forwards through this node",
+  nodeModified: "This node changed after it was applied; apply again to update the running config",
+  nodeNotApplied: "The selected node is not applied; the core runs direct (freedom)",
+  nodeAppliedOther: "The applied node is a different one: ",
+  apply: "Apply node", reapply: "Re-apply",
+  applyingMsg: "Applying node…", appliedMsg: "Node applied",
   nodeNoState: "No state.json, so the node is unknown",
   nodeSchema: "Unrecognised state.json schema: ",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", navLabel: "Sections",
@@ -69,7 +83,7 @@ var T = ZH ? {
   importEmpty: "No importable node in the input",
   importDone: "Imported",
   importUpdated: ", updated",
-  notAppliedYet: "Importing only fills the node list; it does not change how traffic flows."
+  notAppliedYet: "Importing only fills the node list; use Apply on the node card afterwards."
 };
 
 var $ = function (id) { return document.getElementById(id); };
@@ -82,6 +96,7 @@ var els = {
   lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
   lNode: $("l-node"), nSrc: $("n-src"), nName: $("n-name"),
   nMeta: $("n-meta"), nHint: $("n-hint"),
+  nActions: $("n-actions"), nApply: $("n-apply"),
   lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
   iCount: $("i-count"), tabbar: $("tabbar"),
@@ -111,6 +126,7 @@ function label(key) {
   els.lImport.textContent = T.addTitle;
   els.iParse.textContent = T.parseBtn;
   els.iApply.textContent = T.importBtn;
+  els.nApply.textContent = T.apply;
   els.iText.placeholder = T.addPlaceholder;
   els.iHint.textContent = T.addHint;
   els.lTabStatus.textContent = T.tabStatus;
@@ -426,6 +442,98 @@ function parseInput(text) {
 }
 // ---- end node parsing ----
 
+// ---- outbound rendering ----
+// state.json's selected node → the one Xray outbound the shell splices into the config
+// template. The shell cannot parse nested JSON (there is no jq on the device), so the
+// protocol knowledge lives here and tests/outbound.test.js runs this exact block.
+//
+// The node outbound deliberately has no sockopt.mark. On Android an arbitrary SO_MARK
+// with no matching ip rule loses routing: the node's Reality handshake failed until the
+// mark was removed. v0.7 must add the mark and the bypass ip rule as one change; the
+// template's fixed direct outbound already carries the mark for that future DNS
+// bootstrap.
+
+function tlsSettingsOf(n) {
+  var t = {};
+  if (n.sni) { t.serverName = String(n.sni); }
+  var alpn = n.alpn;
+  if (typeof alpn === "string") { alpn = alpn.split(","); }
+  if (alpn && alpn.length) { t.alpn = alpn; }
+  if (n.fingerprint) { t.fingerprint = String(n.fingerprint); }
+  if (n.allowInsecure) { t.allowInsecure = true; }
+  return t;
+}
+
+function realitySettingsOf(n) {
+  var r = {};
+  if (n.sni) { r.serverName = String(n.sni); }
+  if (n.fingerprint) { r.fingerprint = String(n.fingerprint); }
+  if (n.publicKey) { r.publicKey = String(n.publicKey); }
+  if (n.shortId) { r.shortId = String(n.shortId); }
+  return r;
+}
+
+function streamSettingsOf(n) {
+  var net = n.transport || "tcp";
+  var sec = n.security || "none";
+  var s = { network: net, security: sec };
+  if (sec === "tls") {
+    var tls = tlsSettingsOf(n);
+    if (Object.keys(tls).length) { s.tlsSettings = tls; }
+  } else if (sec === "reality") {
+    var reality = realitySettingsOf(n);
+    if (Object.keys(reality).length) { s.realitySettings = reality; }
+  }
+  if (net === "ws") {
+    var ws = {};
+    if (n.path) { ws.path = String(n.path); }
+    if (n.host) { ws.headers = { Host: String(n.host) }; }
+    if (Object.keys(ws).length) { s.wsSettings = ws; }
+  } else if (net === "grpc") {
+    if (n.serviceName) { s.grpcSettings = { serviceName: String(n.serviceName) }; }
+  } else if (net === "h2") {
+    var h2 = {};
+    if (n.path) { h2.path = String(n.path); }
+    if (n.host) { h2.host = [String(n.host)]; }
+    if (Object.keys(h2).length) { s.httpSettings = h2; }
+  } else if (net === "httpupgrade") {
+    var hu = {};
+    if (n.path) { hu.path = String(n.path); }
+    if (n.host) { hu.host = String(n.host); }
+    if (Object.keys(hu).length) { s.httpupgradeSettings = hu; }
+  }
+  return s;
+}
+
+function outboundOf(n) {
+  if (!n || !n.address || !n.port) { throw new Error("node has no address or port"); }
+  var port = Number(n.port);
+  if (!(port > 0 && port < 65536)) { throw new Error("node port is invalid"); }
+  var o = { tag: "proxy", protocol: n.protocol };
+  if (n.protocol === "vless") {
+    if (!n.uuid) { throw new Error("vless node has no uuid"); }
+    var vu = { id: n.uuid, encryption: n.encryption || "none" };
+    if (n.flow) { vu.flow = String(n.flow); }
+    o.settings = { vnext: [{ address: n.address, port: port, users: [vu] }] };
+  } else if (n.protocol === "vmess") {
+    if (!n.uuid) { throw new Error("vmess node has no uuid"); }
+    o.settings = { vnext: [{ address: n.address, port: port, users: [{
+      id: n.uuid, alterId: Number(n.alterId) || 0, security: n.cipher || "auto"
+    }] }] };
+  } else if (n.protocol === "trojan") {
+    if (!n.password) { throw new Error("trojan node has no password"); }
+    o.settings = { servers: [{ address: n.address, port: port, password: n.password }] };
+  } else if (n.protocol === "ss") {
+    if (!n.method || !n.password) { throw new Error("ss node has no method/password"); }
+    o.settings = { servers: [{ address: n.address, port: port, method: n.method, password: n.password }] };
+  } else {
+    throw new Error("unsupported protocol: " + n.protocol);
+  }
+  o.streamSettings = streamSettingsOf(n);
+  return o;
+}
+// ---- end outbound rendering ----
+
 function uptime(sec) {
   sec = Number(sec) || 0;
   if (sec <= 0) { return "–"; }
@@ -443,6 +551,7 @@ function setButtons() {
   els.stop.disabled = busy || !running;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
+  syncApply();
 }
 
 function pickNode(state) {
@@ -461,15 +570,36 @@ function pickNode(state) {
   return { kind: "missing" };
 }
 
-// Whether config.json actually points at a proxy. Kept deliberately weak: it
-// proves an outbound exists, not that it is the selected node, so the wording
-// never claims more than we know.
-function configHasProxy(cfg) {
-  if (!cfg || !cfg.outbounds || !cfg.outbounds.length) { return false; }
-  return cfg.outbounds.some(function (o) {
-    var p = (o && o.protocol) || "";
-    return p && p !== "freedom" && p !== "blackhole" && p !== "dns";
-  });
+function findNodeById(state, id) {
+  if (!state || !id) { return null; }
+  var pools = [state.manual || []];
+  (state.subscriptions || []).forEach(function (s) { if (s && s.nodes) { pools.push(s.nodes); } });
+  for (var i = 0; i < pools.length; i++) {
+    for (var j = 0; j < pools[i].length; j++) {
+      if (pools[i][j] && pools[i][j].id === id) { return pools[i][j]; }
+    }
+  }
+  return null;
+}
+
+function appliedName(state) {
+  var n = findNodeById(state, lastApplied);
+  return n ? (n.name || n.id) : lastApplied;
+}
+
+// Keep the Apply button in step with busy, the selection and what the shell says is
+// actually applied. It says Re-apply only when the applied id matches and the node is
+// not dirty.
+function syncApply() {
+  if (!els.nApply) { return; }
+  var picked = lastStateObj ? pickNode(lastStateObj) : { kind: "none" };
+  var found = picked.kind === "found";
+  els.nActions.hidden = !found;
+  els.nApply.disabled = busy || !found;
+  if (found) {
+    var same = lastApplied && lastApplied === picked.node.id && !picked.node.dirty;
+    els.nApply.textContent = same ? T.reapply : T.apply;
+  }
 }
 
 // IPv6 addresses are stored without brackets (that is what Xray wants), so the display has to
@@ -480,11 +610,12 @@ function hostPort(n) {
   return a + (n.port ? ":" + n.port : "");
 }
 
-function renderNode(state, cfg) {
+function renderNode(state) {
   els.nSrc.hidden = true;
   els.nMeta.textContent = "";
   els.nHint.className = "nodehint";
   els.nHint.textContent = "";
+  els.nActions.hidden = true;
   if (!state) {
     els.nName.textContent = "–";
     els.nHint.textContent = T.nodeNoState;
@@ -517,22 +648,37 @@ function renderNode(state, cfg) {
     els.nHint.className = "nodehint warn";
     return;
   }
-  var applied = configHasProxy(cfg);
-  els.nHint.textContent = applied ? T.nodeApplied : T.nodeNotApplied;
-  if (!applied) { els.nHint.className = "nodehint warn"; }
+  els.nActions.hidden = false;
+  syncApply();
+  if (!lastApplied) {
+    els.nHint.textContent = T.nodeNotApplied;
+    els.nHint.className = "nodehint warn";
+  } else if (lastApplied === n.id) {
+    if (n.dirty) {
+      els.nHint.textContent = T.nodeModified;
+      els.nHint.className = "nodehint warn";
+    } else {
+      els.nHint.textContent = T.nodeApplied;
+      els.nHint.className = "nodehint ok";
+    }
+  } else {
+    els.nHint.textContent = T.nodeAppliedOther + appliedName(state);
+    els.nHint.className = "nodehint warn";
+  }
 }
 
-// One exec for both files: state.json is the intent, config.json is what the
-// core actually runs, and the UI must never present one as the other.
+// state.json is the intent; runtime/applied is the node the current config was
+// built from. Read both in one exec: the card must show "selected but not applied"
+// instead of pretending the selection already changed the traffic.
 function refreshNode() {
-  return exec("cat " + STATE + " 2>/dev/null; echo '@@CFG@@'; cat " + CONF + " 2>/dev/null")
+  return exec("cat " + STATE + " 2>/dev/null; echo '@@APPLIED@@'; cat " + APPLIED + " 2>/dev/null")
     .then(function (r) {
-      var parts = r.stdout.split("@@CFG@@");
-      var state = null, cfg = null;
+      var parts = r.stdout.split("@@APPLIED@@");
+      var state = null;
       try { state = JSON.parse((parts[0] || "").trim()); } catch (e) { state = null; }
-      try { cfg = JSON.parse((parts[1] || "").trim()); } catch (e) { cfg = null; }
       lastStateObj = state;
-      renderNode(state, cfg);
+      lastApplied = (parts[1] || "").trim().split("\n")[0];
+      renderNode(state);
     }).catch(function () {});
 }
 
@@ -540,6 +686,7 @@ function refreshNode() {
 
 var importRows = [];
 var lastStateObj = null;
+var lastApplied = "";
 
 function findNodeByIdentity(state, ident) {
   var pools = [state.manual || []];
@@ -567,6 +714,9 @@ function mergeNodes(state, nodes) {
       var keepId = existing.id || idOf(n);
       Object.keys(n).forEach(function (k) { if (k !== "id") { existing[k] = n[k]; } });
       existing.id = keepId;
+      // Same id, possibly new credentials/transport: the applied config is now stale.
+      // The card says so until the next successful apply clears the flag.
+      existing.dirty = true;
       updated++;
     } else {
       n.id = n.id || idOf(n);
@@ -577,17 +727,86 @@ function mergeNodes(state, nodes) {
   return { added: added, updated: updated };
 }
 
-function writeState(state) {
-  var json = JSON.stringify(state, null, 2) + "\n";
-  var bytes = new TextEncoder().encode(json);
+function writeFile(path, text, mode) {
+  var bytes = new TextEncoder().encode(text);
   var bin = "";
   for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
   var b64 = btoa(bin);
-  // tmp + mv so a half-written file is impossible; state.json holds credentials, hence 0600.
-  var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + STATE + ".tmp && chmod 600 " + STATE +
-    ".tmp && mv " + STATE + ".tmp " + STATE;
+  // tmp + mv so a half-written file is impossible; these files hold credentials, hence 0600.
+  var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + path + ".tmp && chmod " + mode +
+    " " + path + ".tmp && mv " + path + ".tmp " + path;
   return exec(cmd).then(function (r) {
     if (r.errno !== 0) { throw new Error(r.stderr || ("exit " + r.errno)); }
+  });
+}
+
+function writeState(state) {
+  return writeFile(STATE, JSON.stringify(state, null, 2) + "\n", "600");
+}
+
+// Apply is two writes and one CLI call. The meta goes first: if the second write
+// fails or the app dies between them, the meta names a node that is not the applied
+// one, so boot falls back to idle instead of pairing a new outbound with an old id.
+// (A settings edit keeps the same id; there boot rebuilds the old outbound, and the
+// node's dirty flag keeps the card from calling it current.) Only after both writes
+// does the shell run. A failed apply leaves the files in place; the applied id (owned
+// by the shell) still names the old node, and the card keeps showing the difference.
+function applySelected() {
+  if (busy || !hasBridge) { return; }
+  if (!lastStateObj) { toast(T.nodeNoState); return; }
+  var picked = pickNode(lastStateObj);
+  if (picked.kind !== "found") {
+    toast(picked.kind === "missing" ? T.nodeMissing : T.nodeNone);
+    return;
+  }
+  var n = picked.node;
+  if (!n.id || !/^[0-9A-Za-z_-]+$/.test(n.id)) {
+    toast(T.actionFailed + ": node has no usable id");
+    return;
+  }
+  var out;
+  try {
+    out = outboundOf(n);
+  } catch (e) {
+    toast(T.actionFailed + ": " + e.message);
+    return;
+  }
+  busy = true;
+  setButtons();
+  toast(T.applyingMsg);
+  var meta = "id=" + n.id + "\nhost=" + String(n.address || "") + "\n";
+  writeFile(OUTBOUND_META, meta, "600").then(function () {
+    return writeFile(OUTBOUND, JSON.stringify(out), "600");
+  }).then(function () {
+    return exec(CLI + " apply " + n.id);
+  }).then(function (r) {
+    if (r.errno !== 0) {
+      throw new Error((r.stderr || "").trim() || ("exit " + r.errno));
+    }
+    if (n.dirty) {
+      // The state may have been re-read by the poll while apply was running. Clear the
+      // flag only if the node still renders to the exact outbound we just applied;
+      // a newer edit must stay marked as not applied.
+      var cur = findNodeById(lastStateObj, n.id);
+      var current = "";
+      if (cur) {
+        try { current = JSON.stringify(outboundOf(cur)); } catch (e) { current = ""; }
+      }
+      if (cur && current === JSON.stringify(out)) {
+        cur.dirty = false;
+        lastStateObj.revision = (Number(lastStateObj.revision) || 0) + 1;
+        return writeState(lastStateObj).catch(function () {}).then(function () {
+          toast(T.appliedMsg);
+        });
+      }
+    }
+    toast(T.appliedMsg);
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    setButtons();
+    refreshPage();
   });
 }
 
@@ -702,7 +921,11 @@ function doImport() {
     }
     var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
     if (pickIdx >= 0 && importRows[pickIdx] && importRows[pickIdx].node) {
-      state.selected = importRows[pickIdx].node.id;
+      // An update keeps the stored id (possibly an older one), so select by identity
+      // rather than trusting the imported node's freshly computed id.
+      var wanted = importRows[pickIdx].node;
+      var stored = findNodeByIdentity(state, identityOf(wanted));
+      state.selected = stored ? stored.id : wanted.id;
     }
     state.revision = (Number(state.revision) || 0) + 1;
     return writeState(state).then(function () {
@@ -743,7 +966,11 @@ function renderStatus(kv) {
   els.port.textContent = kv.socks ? "socks " + kv.socks + " · http " + kv.http : "–";
   els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
   els.conf.textContent = kv.conf || "–";
-  els.hint.textContent = state === "running" ? T.runningHint : T.stoppedHint;
+  if (state === "running") {
+    els.hint.textContent = kv.node ? T.runningHint : T.runningHintNone;
+  } else {
+    els.hint.textContent = kv.node ? T.stoppedHint : T.stoppedHintNone;
+  }
 
   setButtons();
 }
@@ -880,6 +1107,7 @@ function run(command, pendingLabel) {
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });
+els.nApply.addEventListener("click", applySelected);
 els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);
 

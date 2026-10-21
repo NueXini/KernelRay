@@ -25,9 +25,20 @@
     }
   ],
   "outbounds": [
+    "__KERNELRAY_OUTBOUND__",
     {
       "tag": "direct",
       "protocol": "freedom",
+      "settings": {},
+      "streamSettings": {
+        "sockopt": {
+          "mark": 19283
+        }
+      }
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
       "settings": {}
     }
   ]

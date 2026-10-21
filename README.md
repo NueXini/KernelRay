@@ -3,31 +3,33 @@
 A [KernelSU](https://kernelsu.org) module that runs an [Xray-core](https://github.com/XTLS/Xray-core)
 on an Android device.
 
-**v0 scope — idle run.** The core starts on boot and exposes local `socks` / `http` inbounds
-on `127.0.0.1`. Nothing else happens: no transparent proxy, no DNS hijacking, no TUN, no
-routing rules, no UI. If you are looking for "install it and all apps are proxied", that is
-the next version, not this one.
+**v0.6 — apply a node, still no transparent proxy.** The core starts on boot and exposes local
+`socks` / `http` inbounds on `127.0.0.1`. The WebUI imports nodes and applies one: clients
+pointed at the socks port go through that node. System traffic is not intercepted yet — no
+TPROXY, DNS hijacking, TUN or routing rules. That is v0.7.
 
 ## What it does
 
 | | |
 | --- | --- |
-| starts on boot | `service.sh` (late_start service) launches the core and records pid + status |
+| starts on boot | `service.sh` (late_start service) launches the core with the applied config, or direct when none is applied |
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) |
-| outbound | `freedom` — direct, i.e. a plain tunnel you can point clients at |
+| outbound | the applied node; `freedom` (direct) until a node is applied |
+| applies a node | WebUI renders `outbound.meta` + `outbound.json`, the shell renders/tests/swaps `config.json` and restarts a running core |
 | action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop the core, watch its log, see the currently selected node, import nodes |
-| config | `config.json` in the module dir, plain Xray JSON, created from `config.example.json` when absent |
+| WebUI | start / stop, log, import nodes, apply the selected node |
+| config | `config.json`, generated from `config.example.json`; never hand-edited |
 | log | `logs/xray.log` in the module dir |
 
 > **Everything lives in the module dir.** Nothing is written outside it, so uninstalling leaves no
 > residue. The flip side: a module update replaces that directory wholesale, so `config.json`,
-> `state.json` and the logs are reset when you upgrade (see
+> `state.json`, `outbound.json`, `outbound.meta` and the logs are reset when you upgrade (see
 > [`docs/adr/0002`](docs/adr/0002-everything-lives-in-the-module-dir.md)).
 
 Point any app, Termux command or adb-forwarded client at the socks port to check that the
-core really is forwarding traffic — a live pid alone proves nothing.
+core really is forwarding traffic — a live pid alone proves nothing. Without an applied node
+the core forwards direct; after **Apply** the same request exits through the node.
 
 ## Layout
 
@@ -35,15 +37,18 @@ core really is forwarding traffic — a live pid alone proves nothing.
 | --- | --- |
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
-| `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, status; also the CLI used by the WebUI |
+| `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, apply, status; also the CLI used by the WebUI |
 | `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
 | `module/webroot/app.css` | WebUI styles, including the light/dark palettes |
-| `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, drives the CLI |
+| `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, renders the selected node as an Xray outbound, drives the CLI |
 | `docs/state-schema.md` | what `state.json` contains — the authority the UI writes against |
+| `docs/config-derivation.md` | how `config.json` is generated, applied and rolled back |
 | `docs/dev-workflow.md` | the adb install / verify / drive-the-UI loop we actually use, plus its traps |
 | `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped `app.js` |
+| `tests/outbound.test.js` | node → Xray outbound renderer tests, run against the shipped block |
+| `tests/config.test.js` | template assembly, apply failure paths and start rollback, run against the shipped shell + a fake core |
 | `docs/webui.png` | screenshot of the WebUI |
-| `module/config.example.json` | default config, copied to `config.json` when absent |
+| `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
 | `module.yaml` | KernelSU Modules display metadata (name, summary, icon, tags, …) |
 | `scripts/pack.sh` | builds `build/kernelray-<versionCode>-<version>.zip` from `module/` |
@@ -75,32 +80,47 @@ translation.
 ```sh
 # core alive, one instance only
 ps -A -o PID,ARGS | grep 'xray run'
-cat /data/adb/modules/kernelray/runtime/status.json     # {"state":"running",...}
+cat /data/adb/modules/kernelray/runtime/status.json     # {"state":"running","node":"…"}
+cat /data/adb/modules/kernelray/runtime/applied         # empty until Apply, then the node id
 
 # the core really forwards traffic
 adb forward tcp:11080 tcp:10808
 curl -sS -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:11080 https://www.gstatic.com/generate_204
 ```
 
+After **Apply**, the same `curl` exits through the applied node; before that it is a direct
+freedom connection. The socks request proves the core works either way, so check
+`runtime/applied` when the question is which path it took.
+
 ## WebUI
 
 <p align="center"><img src="docs/webui.png" width="300" alt="KernelRay WebUI"></p>
+
+*The screenshot predates the Apply button; the Nodes card now has one.*
 
 Open the module card in the KernelSU manager and tap **WebUI**. The page has three tabs —
 **Status**, **Nodes** and **Log** — with the title and runtime badge pinned above them:
 
 - **Status** — start / stop the core and read pid, uptime, ports, core version and config path.
-- **Nodes** — the selected node and the import card.
+- **Nodes** — the selected node, what is actually applied, the Apply button and the import card.
 - **Log** — the last 200 lines, with a follow toggle.
 
 Tabs are hash routes (`#/status`, `#/nodes`, `#/log`): a reload or a deep link lands on the same
 tab, and anything else falls back to `#/status`. Only the visible tab is polled, plus the status
 badge; switching tabs keeps each tab's scroll position and any half-typed import.
 
-The node card is a read-only view of `state.json`: it resolves `selected` against the manual
-list and any subscription node lists, then says whether `config.json` actually carries a proxy
-outbound. It cannot switch nodes or apply anything — that is v1 work, so the wording never
-claims a node is in use when the config is still `freedom`.
+The node card resolves `state.selected` against the manual list and any subscription node
+lists, then reads `runtime/applied` — the id the current `config.json` was built from. It says
+whether the selection is applied, not applied yet, whether a **different** node is applied, or
+whether this node changed after it was applied (a re-import that keeps the id). Selecting or
+importing a node changes only the wish; only **Apply** changes the traffic.
+
+**Applying a node.** *Apply* renders the selected node to `outbound.json` + `outbound.meta` and
+runs `kernelray.sh apply <id>`. The shell checks that `outbound.meta` names that id, renders a
+candidate from the template, runs `xray -test`, swaps it in atomically and restarts a
+running core. A failed test leaves the old config and the running core untouched; a candidate that
+tests but does not start is rolled back to the previous config. See
+[`docs/config-derivation.md`](docs/config-derivation.md).
 
 **Adding nodes.** Paste one link per line (or a whole base64 subscription blob) into the import
 card and hit *Parse*: every line is reported back individually, with parsed nodes ready to
@@ -109,33 +129,39 @@ plugin is not supported, and so on). Supported: `vless`, `vmess` (base64 JSON), 
 (SIP002 and the legacy form). *Import* merges into `state.json` — re-importing the same node
 updates it in place and keeps its id, so a rename does not create a duplicate.
 
-Import only fills the node list; it does not change how traffic flows. The node card keeps
-saying so until applying a node exists.
+Import only fills the node list (and may change the selection); it does not change how traffic
+flows. Press **Apply** on the node card afterwards.
 
-The parser is tested without a browser: `node tests/parse.test.js` extracts the marked block
-from the shipped `app.js` and runs 24 cases against it.
+The parser and the outbound renderer are tested without a browser: `node tests/parse.test.js`
+and `node tests/outbound.test.js` extract the marked blocks from the shipped `app.js`.
+`node tests/config.test.js` sources the shipped shell against a fake core and checks template
+assembly, escaping, apply's failure paths and the start-rollback path.
 
-The page is a dumb client: every button runs the same CLI the shell uses, so behaviour cannot
-diverge between the two entry points.
+The page is a dumb client: every core action runs the same CLI the shell uses, so behaviour
+cannot diverge between the two entry points.
 
 ```sh
 /data/adb/modules/kernelray/scripts/kernelray.sh status   # key=value, consumed by the WebUI
 /data/adb/modules/kernelray/scripts/kernelray.sh log 50
 /data/adb/modules/kernelray/scripts/kernelray.sh start
 /data/adb/modules/kernelray/scripts/kernelray.sh stop
+/data/adb/modules/kernelray/scripts/kernelray.sh apply <node-id>
 ```
+
+`apply` is the last step of the WebUI flow: it expects `outbound.json` and `outbound.meta` to
+have been written by the UI for that id. It is not a node selector; the UI is.
 
 No build step and no `npm install`: `webroot/index.html`, `app.css` and `app.js` are committed
 as-is, and the page talks to the manager through the injected `ksu.exec` bridge. Opened outside
 the manager it says so instead of pretending to work.
 
-## Deliberately out of scope (v0)
+## Deliberately out of scope (v0.6)
 
 Transparent proxy (TPROXY/iptables), DNS hijacking, routing/geo rules, fetching a subscription
 URL (the page has no TLS-validating fetcher, and a subscription URL *is* a credential),
-switching or applying a node (the WebUI only *shows* and *imports* them), per-app proxying,
-TUN, watchdog/auto-restart, multi-core support (sing-box/mihomo/…).
-They are parked, not rejected — see `docs/adr/`.
+hand-editing `config.json`, per-app proxying, TUN, watchdog/auto-restart, multi-core support
+(sing-box/mihomo/…). The transparent proxy is the next slice (v0.7); the rest are parked, not
+rejected — see `docs/adr/`.
 
 ## Releasing a new version
 
@@ -144,7 +170,7 @@ They are parked, not rejected — see `docs/adr/`.
 3. Commit, then tag and push:
 
    ```sh
-   git tag v0.1.1 && git push origin v0.1.1
+   git tag v0.6.0 && git push origin v0.6.0
    ```
 
 4. The workflow zips `module/`, prechecks it with the KernelSU Modules validator and publishes

@@ -9,11 +9,18 @@ permissions:
   contents: read
 
 jobs:
-  parser:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Node ships with ubuntu-latest, so no setup action is needed for a test this small.
-      # The parser is extracted from module/webroot/app.js, i.e. the file that ships.
-      - run: node --version && node tests/parse.test.js
+      # Node ships with ubuntu-latest, so no setup action is needed for tests this small.
+      # The parser and outbound renderer are extracted from module/webroot/app.js, i.e. the
+      # file that ships; the config test sources the shipped shell against a fake core.
+      - run: |
+          node --version
+          node --check module/webroot/app.js
+          bash -n module/scripts/kernelray.sh
+          node tests/parse.test.js
+          node tests/outbound.test.js
+          node tests/config.test.js

@@ -19,6 +19,10 @@ KR_PIDFILE=$KR_RUNDIR/xray.pid
 KR_STARTED=$KR_RUNDIR/started
 KR_STATUS=$KR_RUNDIR/status.json
 KR_VERFILE=$KR_RUNDIR/version
+KR_TMPL=$KR_MODDIR/config.example.json
+KR_OUTBOUND=$KR_MODDIR/outbound.json
+KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
+KR_APPLIED=$KR_RUNDIR/applied
 
 kr_now() { date +%s; }
 
@@ -28,7 +32,8 @@ kr_dirs() {
   mkdir -p "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
   # The module dir itself keeps its installed mode; only our own subdirs are tightened.
   chmod 700 "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
-  chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" 2>/dev/null
+  chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" \
+    "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" 2>/dev/null
 }
 
 # There is exactly one core: bin/xray. A core is usable only if it executes here.
@@ -101,7 +106,7 @@ kr_kill_strays() { # <pid to keep, may be empty>
   done
 }
 
-# Serialise concurrent starts. mkdir is atomic; a lock older than 30s is stale.
+# Serialise concurrent starts. mkdir is atomic; a lock older than ~10s is stale.
 kr_lock() {
   _i=0
   while ! mkdir "$KR_RUNDIR/start.lock" 2>/dev/null; do
@@ -122,30 +127,225 @@ kr_cleanup_legacy() {
   rm -f "$KR_RUNDIR/arch" "$KR_RUNDIR/watch.lock" 2>/dev/null
 }
 
+# Applied node id: the node the current config was built from. Empty when the core
+# runs the idle (freedom) config. Only hex/alphanumeric ids (plus _ and -) are
+# accepted, so the value is safe to splice into paths, status JSON and the UI.
+kr_applied_id() {
+  [ -s "$KR_APPLIED" ] || return 1
+  _a=$(sed -n '1p' "$KR_APPLIED" 2>/dev/null)
+  case "$_a" in '' | *[!0-9A-Za-z_-]*) return 1 ;; esac
+  printf '%s\n' "$_a"
+}
+
+kr_meta_get() { # <key: id|host>
+  [ -f "$KR_OUTBOUND_META" ] || return 1
+  sed -n "s/^$1=//p" "$KR_OUTBOUND_META" 2>/dev/null | head -n 1
+}
+
 kr_status_write() { # <state> <phase>
   _s=$(cat "$KR_STARTED" 2>/dev/null)
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
+  _n=$(kr_applied_id) || _n=""
   kr_dirs
-  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":""}\n' \
-    "$1" "$2" "$_s" >"$KR_STATUS" 2>/dev/null
+  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s"}\n' \
+    "$1" "$2" "$_s" "$_n" >"$KR_STATUS" 2>/dev/null
 }
 
-kr_ensure_config() {
-  if [ -f "$KR_CONF" ]; then return 0; fi
-  if [ ! -f "$KR_MODDIR/config.example.json" ]; then
-    kr_log "missing $KR_MODDIR/config.example.json"
+# Render the template with one outbound. The outbound is passed through the
+# environment, not interpolated into awk's program or a shell string: JSON contains
+# backslashes, quotes and `$`, all of which an awk -v value or a double-quoted shell
+# expansion would reinterpret. The placeholder is a quoted string so the template stays
+# valid JSON for tooling, but replacing the whole string leaves a runnable config only
+# after the module renders it.
+kr_render_config() { # <outbound-file|"" for idle>
+  _ob=${1:-}
+  if [ ! -f "$KR_TMPL" ]; then
+    kr_log "missing config template $KR_TMPL"
     return 1
   fi
+  if ! grep -q '__KERNELRAY_OUTBOUND__' "$KR_TMPL"; then
+    kr_log "config template $KR_TMPL has no outbound placeholder"
+    return 1
+  fi
+  if [ -n "$_ob" ] && [ -s "$_ob" ]; then
+    _line=$(cat "$_ob") || return 1
+  else
+    _line='{"tag":"proxy","protocol":"freedom","settings":{}}'
+  fi
+  KR_OUT_LINE=$_line awk -v ph='"__KERNELRAY_OUTBOUND__"' '
+    BEGIN { out = ENVIRON["KR_OUT_LINE"] }
+    {
+      p = index($0, ph)
+      if (p > 0) print substr($0, 1, p - 1) out substr($0, p + length(ph))
+      else print
+    }
+  ' "$KR_TMPL"
+}
+
+# Generate config.json only when it is absent. The normal boot path never calls this:
+# apply already wrote the config. It exists so a deleted config falls back to the
+# applied node when it can still be reconstructed, and to idle (clearing the applied
+# id) when it cannot -- claiming a node is applied when the config is direct would be
+# worse than admitting the fallback.
+kr_ensure_config() {
+  if [ -f "$KR_CONF" ]; then return 0; fi
   kr_dirs
-  cp "$KR_MODDIR/config.example.json" "$KR_CONF" || return 1
+  _ob=""
+  _n=$(kr_applied_id) || _n=""
+  if [ -n "$_n" ]; then
+    if [ "$(kr_meta_get id 2>/dev/null)" = "$_n" ] && [ -s "$KR_OUTBOUND" ]; then
+      _ob=$KR_OUTBOUND
+    else
+      kr_log "applied id $_n has no matching outbound; falling back to idle"
+      rm -f "$KR_APPLIED"
+    fi
+  fi
+  # Keep the .json suffix: xray -test picks the format from the file name.
+  _tmp=$KR_RUNDIR/config.new.json
+  if ! kr_render_config "$_ob" >"$_tmp"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  chmod 600 "$_tmp" 2>/dev/null
+  if ! mv -f "$_tmp" "$KR_CONF"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  if [ -n "$_ob" ]; then
+    kr_log "created config $KR_CONF from applied node $_n"
+  else
+    kr_log "created idle config $KR_CONF"
+  fi
+}
+
+# apply <id>: the UI has already rendered outbound.json + outbound.meta. Verify they
+# belong to this id, render a candidate config, let the core validate it, then swap.
+# The candidate is tested before the running core is touched; a test failure never
+# stops it and never replaces config.json.
+kr_apply() { # <node id>
+  _id=${1:-}
+  case "$_id" in
+    '')
+      echo "usage: kernelray.sh apply <node-id>" >&2
+      return 2
+      ;;
+    *[!0-9A-Za-z_-]*)
+      echo "invalid node id: $_id" >&2
+      return 2
+      ;;
+  esac
+  kr_dirs
+  if ! kr_core_works; then
+    kr_log "apply $_id: core missing or not executable"
+    echo "core missing or not executable" >&2
+    return 1
+  fi
+  if [ ! -s "$KR_OUTBOUND" ]; then
+    kr_log "apply $_id: no outbound.json"
+    echo "no rendered outbound (apply from the WebUI first)" >&2
+    return 1
+  fi
+  _meta=$(kr_meta_get id) || _meta=""
+  if [ "$_meta" != "$_id" ]; then
+    kr_log "apply $_id: outbound.meta belongs to '$_meta'"
+    echo "outbound.json does not belong to node $_id" >&2
+    return 1
+  fi
+
+  # Keep the .json suffix: xray -test picks the format from the file name.
+  _tmp=$KR_RUNDIR/config.new.json
+  if ! kr_render_config "$KR_OUTBOUND" >"$_tmp"; then
+    rm -f "$_tmp"
+    echo "could not render config" >&2
+    return 1
+  fi
+  chmod 600 "$_tmp" 2>/dev/null
+  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
+    rm -f "$_tmp"
+    kr_log "apply $_id: xray -test rejected the generated config"
+    echo "config test failed (see $KR_LOG)" >&2
+    return 1
+  fi
+
+  _was=0
+  kr_running && _was=1
+  _old=$(kr_applied_id) || _old=""
+  _prev=$KR_RUNDIR/config.json.prev
+  if [ -f "$KR_CONF" ]; then
+    if ! cp -f "$KR_CONF" "$_prev" 2>/dev/null; then
+      rm -f "$_prev" "$_tmp"
+      kr_log "apply $_id: could not back up the current config"
+      echo "could not back up the current config" >&2
+      return 1
+    fi
+  else
+    rm -f "$_prev"
+  fi
+  if [ "$_was" = 1 ]; then
+    kr_stop
+  else
+    # A core we do not track may still hold the old config (duplicate service.sh).
+    # Stop it rather than leaving it running while status says stopped.
+    kr_kill_strays ""
+  fi
+
+  if ! mv -f "$_tmp" "$KR_CONF"; then
+    rm -f "$_tmp"
+    [ "$_was" = 1 ] && kr_start
+    kr_log "apply $_id: could not replace config"
+    echo "could not replace config" >&2
+    return 1
+  fi
   chmod 600 "$KR_CONF" 2>/dev/null
-  kr_log "created default config $KR_CONF"
+  printf '%s\n' "$_id" >"$KR_APPLIED"
+  chmod 600 "$KR_APPLIED" 2>/dev/null
+
+  if [ "$_was" = 1 ]; then
+    if ! kr_start; then
+      kr_log "apply $_id: new config did not start; restoring previous config"
+      if [ -f "$_prev" ]; then
+        mv -f "$_prev" "$KR_CONF"
+        chmod 600 "$KR_CONF" 2>/dev/null
+      else
+        # The old config disappeared while the core was running. Removing the failed
+        # candidate lets kr_start fall back to idle (and clear the applied id) instead
+        # of starting a config that just failed.
+        rm -f "$KR_CONF"
+      fi
+      if [ -n "$_old" ]; then
+        printf '%s\n' "$_old" >"$KR_APPLIED"
+      else
+        rm -f "$KR_APPLIED"
+      fi
+      if kr_start; then
+        echo "new config failed to start; previous config restored" >&2
+      else
+        echo "new config failed to start; previous config restored but the core did not start" >&2
+      fi
+      return 1
+    fi
+  else
+    kr_status_write stopped idle
+  fi
+  rm -f "$_prev"
+  kr_log "applied node $_id"
+  return 0
 }
 
 kr_start() {
   kr_dirs
   kr_cleanup_legacy
   kr_lock || { kr_log "could not acquire start lock"; return 1; }
+  kr_start_locked
+  _rc=$?
+  # Release on return, not only via the EXIT trap: apply can start twice (new config,
+  # then a rollback) and a lock held until process exit would make the second start
+  # wait for the stale-lock timeout.
+  rmdir "$KR_RUNDIR/start.lock" 2>/dev/null
+  return "$_rc"
+}
+
+kr_start_locked() {
   if kr_running; then
     kr_kill_strays "$(kr_pid)"
     kr_log "already running (pid $(kr_pid))"
@@ -224,6 +424,8 @@ kr_report() {
     echo "core:  $_core (missing or not executable here)"
   fi
   echo "conf:  $KR_CONF"
+  _node=$(kr_applied_id) || _node="(none)"
+  echo "node:  $_node"
   echo "log:   $KR_LOG"
   if kr_running; then
     echo "pid:   $(kr_pid)"
@@ -247,6 +449,7 @@ kr_status_kv() {
   fi
   _phase=$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)
   [ -n "$_phase" ] || _phase=unknown
+  _node=$(kr_applied_id) || _node=""
   _ver=-
   [ -x "$(kr_core)" ] && _ver=$(kr_version_cached)
   [ -n "$_ver" ] || _ver=-
@@ -258,6 +461,7 @@ kr_status_kv() {
   echo "core=$(kr_core)"
   echo "conf=$KR_CONF"
   echo "log=$KR_LOG"
+  echo "node=$_node"
   echo "socks=10808"
   echo "http=10809"
 }
@@ -279,10 +483,11 @@ kr_cli() {
   case "$_cmd" in
     start) kr_start ;;
     stop) kr_stop ;;
+    apply) kr_apply "${1:-}" ;;
     status) kr_status_kv ;;
     log) kr_tail "${1:-200}" ;;
     *)
-      echo "usage: kernelray.sh {start|stop|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|status|log [lines]}" >&2
       return 2
       ;;
   esac

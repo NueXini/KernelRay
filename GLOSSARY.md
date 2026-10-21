@@ -14,8 +14,8 @@ The Xray executable itself, taken from an upstream `Xray-android-<arch>` release
 _Avoid_: binary, engine, xray-core (that is the upstream project, not our file)
 
 **模块目录 (Module directory)**:
-`/data/adb/modules/kernelray` — the one root: mechanism, core binary, default config template,
-user config, node store, logs and runtime state. It is also all we ever write to, so removing
+`/data/adb/modules/kernelray` — the one root: mechanism, core binary, config template, generated
+core config, node store, logs and runtime state. It is also all we ever write to, so removing
 the module leaves nothing behind. Replaced wholesale on update, which resets the user data
 inside it; that cost is deliberate (see `docs/adr/0002`).
 _Avoid_: install dir, app dir, data dir, storage, work dir
@@ -25,15 +25,76 @@ The core is up and listening on its own local inbounds, and no device traffic is
 into it. The opposite of transparent proxying.
 _Avoid_: running, normal mode, passive mode
 
-**默认配置 (Default config)**:
-`module/config.example.json` as copied to `config.json` in the module directory when that file
-is absent. It is a plain Xray config with no KernelRay-specific keys; after the copy the user
-owns that file.
-_Avoid_: template, preset, profile
+**透明代理 (Transparent proxy)**:
+Device traffic entering the core without any app being configured with a proxy address. It is a
+behaviour the user can observe, not a mechanism.
+_Avoid_: tproxy, hijack, redirection
+
+**TPROXY**:
+The Linux netfilter and policy-routing mechanism the module uses to reach transparent proxying.
+_Avoid_: transparent proxy (that is the behaviour), tproxy mode
+
+**接管 (Takeover)**:
+The module's act of making device traffic enter the core instead of going out directly. An idle
+run is the absence of takeover.
+_Avoid_: hijack, capture, redirect
+
+**旁路 (Bypass)**:
+Traffic the module deliberately leaves outside takeover: loopback, the local network ranges, and
+the core's own connections.
+_Avoid_: whitelist, exception list (a per-app list is a different, later feature)
+
+**冲突 (Conflict)**:
+A foreign VPN/TUN or TPROXY setup already running on the device. Takeover refuses to start
+until it is gone, rather than fighting it for the same traffic.
+_Avoid_: overlap, interference
+
+**DNS 接管 (DNS takeover)**:
+Answering device DNS through the module's own resolver and sending those lookups through the
+proxy, instead of letting the network's resolver answer them.
+_Avoid_: DNS hijack, fake DNS (that is a technique the module does not use)
+
+**失败关闭 (Fail-closed)**:
+While takeover is on, a core that dies leaves the rules in place, so traffic is dropped rather
+than going out directly.
+_Avoid_: kill switch, safe mode
+
+**接管开关 (Takeover switch)**:
+The persisted user choice that device traffic be taken over. Off is the default and leaves the
+module in an idle run.
+_Avoid_: enabled flag, mode, tproxy on/off (that is the command)
+
+**应用节点 (Apply a node)**:
+Deriving the core's configuration from the selected node and, if the core is running, restarting
+it. Until a node is applied, the node store records only what the user wants, not what the core
+runs.
+_Avoid_: switch, select
+
+**已应用节点 (Applied node)**:
+The node the current core config was derived from. It can differ from the selected node when the
+user has selected another one without applying it, or lag behind that node's fields when a
+re-import kept the id; the UI marks the latter as changed until it is applied again.
+_Avoid_: active node, running node
+
+**节点出站 (Node outbound)**:
+The applied node rendered as one Xray outbound: data the WebUI writes and the module assembles
+into the core config.
+_Avoid_: node config, proxy JSON
+
+**配置模板 (Config template)**:
+`config.example.json`, the fixed Xray config skeleton — inbounds, the fixed outbounds and, from
+v0.7, routing and DNS — from which the core config is generated.
+_Avoid_: default config, preset, profile
+
+**核心配置 (Core config)**:
+`config.json`, the config the core actually runs, generated from the template, the applied node
+and (from v0.7) the takeover switch. Never hand-edited.
+_Avoid_: user config, settings
 
 **运行状态 (Runtime status)**:
-The three files a reader consults to answer "what is the module doing": `runtime/status.json`
-(state/phase), `runtime/xray.pid`, `logs/xray.log`. Status is written, never inferred by callers.
+The files a reader consults to answer "what is the module doing": `runtime/status.json`
+(state/phase/node), `runtime/xray.pid`, `runtime/applied`, `logs/xray.log` and (from v0.7)
+`logs/kernelray.log`, the module's own log. Status is written, never inferred by callers.
 _Avoid_: health, heartbeat
 
 **节点 (Node)**:
