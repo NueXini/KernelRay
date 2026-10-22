@@ -2,14 +2,18 @@
 
 Location: `/data/adb/modules/kernelray/state.json`, mode `0600`, owner `root`.
 
-`state.json` is the **intent**: which nodes the user has, and which one they want in use.
+`state.json` is the **intent**: which nodes the user has, and which one the user asked for.
 `config.json` is the **derived artifact** the core actually runs. They are not the same file and
-the UI must never present one as the other. Selecting a node changes only `state.json`; the
-selected node reaches `config.json` when the user presses **Apply** (see
-[`config-derivation.md`](config-derivation.md)).
+the UI must never present one as the other.
 
-Written by: the WebUI importer, and the apply success path when it clears a node's `dirty`
-flag. Read by: the WebUI node card.
+In the WebUI's node list one gesture does both: tapping a row writes `selected`, renders the
+node to `outbound.json`/`outbound.meta` and calls `kernelray.sh apply <id>` (see
+[`config-derivation.md`](config-derivation.md)). `selected` is written first, so a failed switch
+leaves the wish pointing at the attempted node while `runtime/applied` still names the node the
+core runs.
+
+Written by: the WebUI importer, the node list (switch and delete), and the apply success path
+when it clears a node's `dirty` flag. Read by: the WebUI node list.
 Ownership note: the shell writes runtime facts (`runtime/status.json`, `runtime/applied`, pid),
 the UI writes intent and the rendered outbound (`outbound.json` + `outbound.meta`).
 
@@ -20,15 +24,33 @@ the UI writes intent and the rendered outbound (`outbound.json` + `outbound.meta
 | `schema` | int | Schema version. Currently `1`; the UI refuses to interpret anything else. |
 | `revision` | int | Bumped on every write, so a stale reader can notice it changed. |
 | `settings` | object | Reserved for routing/DNS settings. Preserved verbatim, not interpreted yet. |
-| `manual` | `Node[]` | Nodes added by hand (import) — the only list the UI appends to. |
-| `subscriptions` | `{name,url,nodes:Node[]}[]` | Nodes that came from a subscription. Nothing fills these yet. |
-| `selected` | string | `id` of the node considered current. `""` when nothing is selected. |
+| `manual` | `Node[]` | Nodes added by hand (import) — the only list the UI appends to, renders and deletes from. |
+| `subscriptions` | `{name,url,nodes:Node[]}[]` | Nodes that came from a subscription. Preserved verbatim; nothing fills or renders them in this version. |
+| `selected` | string | `id` of the node the user last chose. Normally the applied node; a failed switch leaves it on the attempted node. `""` when nothing is selected. |
 | `group` | string | Free-form label; no behaviour attached. |
 
 `selected` is a wish. The node the current core config was actually built from is
-`runtime/applied`, written by `kernelray.sh apply <id>`; the node card shows both and says when
-they differ. `outbound.json` / `outbound.meta` hold the last rendered candidate; only
-`runtime/applied` says whether the swap actually succeeded.
+`runtime/applied`, written by `kernelray.sh apply <id>`; the node list marks both and says when
+they differ (a failed switch). `outbound.json` / `outbound.meta` hold the last rendered
+candidate; only `runtime/applied` says whether the swap actually succeeded.
+
+## Node list actions
+
+The Nodes page renders `manual` only. It writes `state.json`; it never writes `config.json` or
+`runtime/applied`.
+
+- **Import** appends new identities and updates existing ones in place (keeping the id). It never
+  changes `selected`; the user switches by tapping a row afterwards.
+- **Tap a node** writes `selected`, renders the node to `outbound.json` + `outbound.meta`, and
+  calls `apply <id>`. Tapping the **applied** node whose fields have not changed does nothing to
+  the core (it only re-syncs `selected` if a failed switch left it elsewhere). Tapping the
+  applied node after a re-import changed it (`dirty`) re-applies it.
+- **Delete** is refused for the applied node. Deleting the selected node clears `selected`;
+  deleting a node whose rendered outbound is on disk (its id is in `outbound.meta`) also removes
+  `outbound.json` and `outbound.meta`, so credentials do not outlive the node. Deletion needs a
+  second tap to confirm.
+- A **failed switch** leaves `selected` on the attempted node. The list marks it `not applied`
+  and keeps the old node marked `applied`; tapping the attempted node retries.
 
 Unknown top-level fields are preserved: the writer parses the file, mutates the object and
 serialises it back, so nothing is dropped by an older UI.
@@ -51,7 +73,7 @@ Common fields:
 | `fingerprint` | string? | uTLS fingerprint (`fp`), e.g. `edge`, `chrome`. |
 | `allowInsecure` | bool? | Present only when the link asked for it. |
 | `path`, `host`, `serviceName` | string? | Transport parameters (`ws` path, `Host` header, `grpc` service name). |
-| `dirty` | bool? | UI-only: set when an import/update changes a node with the same `id`; cleared after a successful apply. Means "the running config may predate these fields", not "not applied". The shell ignores it. |
+| `dirty` | bool? | UI-only: set when an import/update changes a node with the same `id`; cleared after a successful apply. Means "the running config may predate these fields", not "not applied". Tapping the applied dirty node re-applies it. The shell ignores it. |
 
 Protocol-specific fields:
 

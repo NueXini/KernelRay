@@ -67,14 +67,19 @@ _Avoid_: enabled flag, mode, tproxy on/off (that is the command)
 **应用节点 (Apply a node)**:
 Deriving the core's configuration from the selected node and, if the core is running, restarting
 it. Until a node is applied, the node store records only what the user wants, not what the core
-runs.
-_Avoid_: switch, select
+runs. From the node list the user triggers it by tapping a row (see 切换节点).
+_Avoid_: select (that only moves the pointer)
 
 **已应用节点 (Applied node)**:
-The node the current core config was derived from. It can differ from the selected node when the
-user has selected another one without applying it, or lag behind that node's fields when a
-re-import kept the id; the UI marks the latter as changed until it is applied again.
+The node the current core config was derived from. It can differ from the selected node when a
+switch failed, or lag behind that node's fields when a re-import kept the id; the UI marks the
+latter as changed until it is applied again.
 _Avoid_: active node, running node
+
+**切换节点 (Switch node)**:
+Tapping a node in the node list: it becomes the selected node and is applied, so the core runs
+it, restarting a running core. The one gesture that changes which node carries traffic.
+_Avoid_: select, choose (those move the pointer, not the traffic)
 
 **节点出站 (Node outbound)**:
 The applied node rendered as one Xray outbound: data the WebUI writes and the module assembles
@@ -104,7 +109,13 @@ _Avoid_: server, proxy (that is the role, not the thing), config
 
 **节点库 (Node store)**:
 The user's whole set of nodes — the ones added by hand plus the ones a subscription supplied.
-_Avoid_: list, pool, node list
+_Avoid_: pool, node list (that is its form on the Nodes page; see 节点列表)
+
+**节点列表 (Node list)**:
+The Nodes page's rendering of the node store: one row per node, with the applied node marked and
+a selected-but-unapplied node marked too. This version renders the manually added nodes;
+subscription nodes await a subscription feature.
+_Avoid_: node store (that is the data), pool
 
 **订阅 (Subscription)**:
 A URL that yields nodes. Its nodes join the node store, but the store does not own them: a
@@ -112,6 +123,8 @@ refresh replaces them wholesale, while manually added nodes are never touched.
 _Avoid_: feed, provider, source
 
 **当前节点 (Selected node)**:
-The one node in the store marked as in use. It is a pointer into the store, not a copy, so a
-node that disappears from the store leaves the selection dangling rather than stale.
+The node the user last chose to use: the pointer `state.json` records. It normally equals the
+applied node; a failed switch leaves it on the attempted node. It is a pointer, not a copy, so
+a node that disappears from the store without being deleted (a subscription refresh) leaves the
+selection dangling rather than stale; deleting the selected node clears it.
 _Avoid_: active node, current proxy, main node

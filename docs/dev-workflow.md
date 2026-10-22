@@ -23,10 +23,11 @@ node --check module/webroot/app.js     # 页面语法（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 parser tests passing
 node tests/outbound.test.js            # 17 outbound tests passing
+node tests/nodelist.test.js            # 12 node list tests passing
 node tests/config.test.js              # 16 config tests passing（需要 bash 和 /proc）
 ```
 
-前两个测试从 `module/webroot/app.js` 里抽出带标记的代码块跑，测的就是要发布的那个文件。
+前三个测试从 `module/webroot/app.js` 里抽出带标记的代码块跑，测的就是要发布的那个文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、apply 的失败路径和启动回滚；假核心只在回滚用例里运行，用 `/proc` 识别
 进程，不碰 iptables。
@@ -128,8 +129,8 @@ adb -s $D exec-out cat //sdcard/ui.xml > build/ui.xml   # 找 text="..." 的 bou
 adb -s $D shell 'su -c "ksud module action kernelray"'   # = 点 ▶，跑 action.sh（启停切换）
 ```
 
-**应用节点（v0.6）**：在 Nodes 页导入节点、选中它，然后点节点卡里的 **Apply**。
-选中/导入只改 `state.json`，只有 Apply 才会改核心配置。Apply 成功后验证：
+**切换节点（v0.6）**：在 Nodes 页导入节点，然后直接点列表里的一行 —— 点行就是选中 + 应用。
+导入只写节点库，不改 `selected`。切换成功后验证：
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status' | grep node=
@@ -137,14 +138,15 @@ adb -s $D shell 'cat /data/adb/modules/kernelray/runtime/applied'
 adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第一个 outbound 是节点
 ```
 
-Apply 的失败语义：`xray -test` 失败时旧配置和运行中的核心**都不动**，只在 UI 里弹错误；
+切换的失败语义：`xray -test` 失败时旧配置和运行中的核心**都不动**，只在 UI 里弹错误；
+`selected` 会留在刚点的节点上（列表显示“未应用”），再点一次就是重试。
 候选配置测试通过但启动失败时，脚本会恢复上一份配置和上一个已应用节点并重启旧配置。
 如果恢复的旧配置也起不来，核心保持停止（`failed/crashed`），不会假装成功。详细过程见
 `docs/config-derivation.md`。
 
-**选中 ≠ 已应用**：节点卡会显示“已应用：核心通过这个节点转发”“选中的节点还没有应用”
-或“已应用的是另一个节点：…”。重新导入保留 id 时还会显示“应用后有改动”，这同样
-不是“已应用”。`state.json` 的 `selected` 是意图，`runtime/applied` 是事实。
+**选中 ≠ 已应用（只在切换失败时）**：正常路径下点一行就同时改了 `selected` 和
+`runtime/applied`。切换失败时列表会把刚点的行标成“未应用”、原节点仍显示“已应用”。
+重新导入保留 id 时该行会显示“有改动”，再点一次它就重新应用。
 
 ## 8. 在 WebUI 里输入文字（最容易上当的一步）
 
@@ -185,12 +187,13 @@ adb -s $D shell 'ls -d /data/adb/modules/kernelray; ps -A -o PID,ARGS | grep -c 
 | `push` 报错、路径变成 `C:/...` | MSYS 路径改写，用 `//data/...` 或 `MSYS_NO_PATHCONV=1` |
 | `logcat` 里搜不到 kernelray | `service.sh` 的 stdout 不进 logcat；看 `logs/xray.log` 或 `kernelray.sh log 50` |
 | 端口测试 000/超时 | 忘了 `adb forward`，或没用 `--socks5-hostname`（域名解析也走代理才叫真通） |
-| Apply 报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是 UI 点 Apply 时写的 |
-| Apply 报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |
-| Apply 报 `does not belong to node` | `outbound.meta` 的 id 不是请求的节点；UI 重新点 Apply 会重写两个文件 |
-| 节点卡说“选中的节点还没有应用” | 正常：选中只写 `state.json`；点 Apply 才写配置 |
-| 节点卡说“应用后有改动” | 重新导入保留了 id，但运行配置还是旧的；点 Apply 重新渲染并重启 |
-| `node=` 为空但配置里有代理 | `runtime/applied` 丢了或没写；重新 Apply，别手改 `config.json` |
+| 点节点报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是 UI 切换节点时写的 |
+| 点节点报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |
+| 点节点报 `does not belong to node` | `outbound.meta` 的 id 不是请求的节点；再点一次该行会重写两个文件 |
+| 列表某行显示“未应用” | 上次切换失败，`selected` 留在那一行；再点它就是重试 |
+| 列表某行显示“有改动” | 重新导入保留了 id，但运行配置还是旧的；点这一行重新渲染并重启 |
+| 点了“已应用”的行但没反应 | 正常：没有任何字段变化，不会为一次点按重启核心 |
+| `node=` 为空但配置里有代理 | `runtime/applied` 丢了或没写；在列表里再点一次节点，别手改 `config.json` |
 
 ## 11. 一条命令走完（复制粘贴用）
 
@@ -200,6 +203,7 @@ node --check module/webroot/app.js || exit 1
 bash -n module/scripts/kernelray.sh || exit 1
 node tests/parse.test.js || exit 1
 node tests/outbound.test.js || exit 1
+node tests/nodelist.test.js || exit 1
 node tests/config.test.js || exit 1
 bash scripts/pack.sh || exit 1
 zip=$(ls -t build/kernelray-*.zip | head -1)

@@ -4,15 +4,16 @@
 the module may regenerate it when it is missing. The template is the extension point.
 
 This implements [ADR 0005](adr/0005-core-config-is-derived.md) (the UI renders data, the shell
-owns the layout) and [ADR 0006](adr/0006-dns-goes-through-the-core.md) (the fixed `direct`
-outbound carries the v0.7 bypass mark).
+owns the layout), [ADR 0006](adr/0006-dns-goes-through-the-core.md) (the fixed `direct`
+outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-the-node.md)
+(tapping a node row is the switch gesture).
 
 ## Files and owners
 
 | Path | Writer | Kind |
 | --- | --- | --- |
 | `state.json` | WebUI | user intent: the node store and `selected` |
-| `outbound.json` | WebUI | the selected node rendered as **one** Xray outbound |
+| `outbound.json` | WebUI | the node being applied rendered as **one** Xray outbound |
 | `outbound.meta` | WebUI | `id=<node-id>` and `host=<address>` for that outbound |
 | `config.example.json` | repo | the config template (not runnable on its own) |
 | `config.json` | shell | the config the core actually runs |
@@ -57,12 +58,17 @@ knowledge stays in the tested JS renderer (`tests/outbound.test.js`).
 
 ## Applying a node
 
-The UI renders the selected node, writes `outbound.meta` first and then `outbound.json`, then
-calls:
+Tapping a node row in the UI is one gesture: it writes `state.selected`, renders that node,
+writes `outbound.meta` and then `outbound.json`, and calls:
 
 ```sh
 scripts/kernelray.sh apply <node-id>
 ```
+
+`selected` goes first so a crash between writes leaves the honest "wants this node, runs the
+old one" state instead of a config newer than the pointer. `outbound.meta` goes before
+`outbound.json` so a crash between those two leaves an id mismatch (boot falls back to idle)
+rather than a new outbound paired with an old id.
 
 The shell:
 
@@ -91,10 +97,11 @@ A failed `-test` does **not** write a failed `phase`: the old core is still runn
 The CLI returns the error; the WebUI shows it in a toast. Only a failed **start** makes the
 status failed, and the restore path clears it if the old config starts.
 
-Applying always restarts a running core. The node card distinguishes the selected node from the
-applied one; selecting or importing a node changes nothing until **Apply** is pressed. A
-re-import that keeps the same id marks the node `dirty`, and the card says it changed since it
-was applied until the next successful apply.
+Applying always restarts a running core. The node list marks the applied node and, after a
+failed switch, the selected-but-unapplied node. Tapping the applied node with no changes does
+nothing to the core; tapping it after a re-import kept its id and marked it `dirty` re-applies
+it, and the `dirty` flag clears on success. Importing a node changes nothing until a row is
+tapped.
 
 ## Why the shell does not read `state.json`
 
@@ -116,9 +123,9 @@ password containing quotes, backslashes, `$`, backticks, `&`, `<>` and a newline
 runs when the file is missing:
 
 - if `runtime/applied` exists, `outbound.meta` names the same id, and `outbound.json` is
-  present, the config is rebuilt from that outbound. The UI writes the meta first, so a crash
-  between its two writes leaves a different id and falls through to idle; a same-id settings
-  edit can rebuild the older outbound, which is why the node is marked `dirty`;
+  present, the config is rebuilt from that outbound. The UI writes the meta before the outbound,
+  so a crash between its writes leaves a different id and falls through to idle; a same-id
+  settings edit can rebuild the older outbound, which is why the node is marked `dirty`;
 - otherwise the config is rebuilt as idle and `runtime/applied` is cleared, so the UI never
   claims a node is applied when the config is direct.
 

@@ -24,30 +24,30 @@ var T = ZH ? {
   stoppedHintNone: "核心未运行，也没有应用节点；下次启动会直连。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:10808 就会走已应用的节点。",
   runningHintNone: "核心在运行，但还没有应用节点：客户端指向 127.0.0.1:10808 时是直连。",
-  node: "选中节点", srcManual: "手动", srcSub: "订阅",
-  nodeNone: "还没有选中的节点（state.json 里 selected 为空）",
-  nodeMissing: "state.json 的 selected 指向了一个列表里不存在的 id",
-  nodeApplied: "已应用：核心通过这个节点转发",
-  nodeModified: "这个节点在应用后有改动；再应用一次才会更新运行中的配置",
-  nodeNotApplied: "选中的节点还没有应用；核心当前按直连（freedom）运行",
-  nodeAppliedOther: "已应用的是另一个节点：",
-  apply: "应用节点", reapply: "重新应用",
   applyingMsg: "正在应用节点…", appliedMsg: "节点已应用",
   nodeNoState: "没有 state.json，节点信息无从得知",
   nodeSchema: "state.json 的 schema 版本未识别：",
+  listTitle: "节点列表",
+  listHint: "点一个节点即可切换并应用；「已应用」是核心正在使用的节点。",
+  emptyNodes: "节点库还是空的；在下面导入分享链接。",
+  nodeApplied: "已应用", nodeDirty: "有改动", nodePending: "未应用",
+  nodeReapply: "这个节点应用后有改动；点一下重新应用。",
+  selectedMissing: "state.json 的 selected 指向了一个不存在的节点。",
+  appliedMissing: "runtime/applied 指向的节点不在节点库里。",
+  delete: "删除", deleteApplied: "已应用的节点不能删除；先切换到别的节点。",
+  deleteConfirm: "删除这个节点？", cancel: "取消", deleted: "已删除",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", navLabel: "页面",
   addTitle: "添加节点",
   addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
   addPlaceholder: "vless://…",
   parseBtn: "解析", importBtn: "导入",
-  keepCurrent: "保持当前节点不变",
   readyCount: "可导入",
   lineNo: "第 ", lineNoEnd: " 行",
   dupOf: "与第 ", dupOfEnd: " 行重复，已合并",
   importEmpty: "没有解析出可导入的节点",
   importDone: "已导入",
   importUpdated: "，更新",
-  notAppliedYet: "导入只写节点清单，不会改变流量走向；导入后在节点卡里点“应用节点”。"
+  notAppliedYet: "导入只写入节点库，不会切换；点列表里的节点即可切换并应用。"
 } : {
   start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
   log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
@@ -60,30 +60,30 @@ var T = ZH ? {
   stoppedHintNone: "The core is stopped and no node is applied; the next start runs direct.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:10808 to use the applied node.",
   runningHintNone: "The core is running direct: no node is applied yet. Clients pointed at 127.0.0.1:10808 go out directly.",
-  node: "Selected node", srcManual: "manual", srcSub: "subscription",
-  nodeNone: "No node selected (state.json has an empty selected field)",
-  nodeMissing: "state.json points selected at an id that is not in any list",
-  nodeApplied: "Applied: the core forwards through this node",
-  nodeModified: "This node changed after it was applied; apply again to update the running config",
-  nodeNotApplied: "The selected node is not applied; the core runs direct (freedom)",
-  nodeAppliedOther: "The applied node is a different one: ",
-  apply: "Apply node", reapply: "Re-apply",
   applyingMsg: "Applying node…", appliedMsg: "Node applied",
-  nodeNoState: "No state.json, so the node is unknown",
+  nodeNoState: "No state.json, so the nodes are unknown",
   nodeSchema: "Unrecognised state.json schema: ",
+  listTitle: "Node list",
+  listHint: "Tap a node to switch and apply it; “Applied” is what the core runs.",
+  emptyNodes: "No nodes yet; import a share link below.",
+  nodeApplied: "Applied", nodeDirty: "Changed", nodePending: "Not applied",
+  nodeReapply: "This node changed after it was applied; tap to re-apply.",
+  selectedMissing: "state.json points selected at a node that is not in the store.",
+  appliedMissing: "runtime/applied points at a node that is not in the store.",
+  delete: "Delete", deleteApplied: "The applied node cannot be deleted; switch to another node first.",
+  deleteConfirm: "Delete this node?", cancel: "Cancel", deleted: "Deleted",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", navLabel: "Sections",
   addTitle: "Add node",
   addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
   addPlaceholder: "vless://…",
   parseBtn: "Parse", importBtn: "Import",
-  keepCurrent: "Keep the current node",
   readyCount: "to import",
   lineNo: "line ", lineNoEnd: "",
   dupOf: "duplicate of line ", dupOfEnd: ", merged",
   importEmpty: "No importable node in the input",
   importDone: "Imported",
   importUpdated: ", updated",
-  notAppliedYet: "Importing only fills the node list; use Apply on the node card afterwards."
+  notAppliedYet: "Importing only fills the node list; tap a node there to switch and apply it."
 };
 
 var $ = function (id) { return document.getElementById(id); };
@@ -94,9 +94,7 @@ var els = {
   refresh: $("refresh"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
   lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
-  lNode: $("l-node"), nSrc: $("n-src"), nName: $("n-name"),
-  nMeta: $("n-meta"), nHint: $("n-hint"),
-  nActions: $("n-actions"), nApply: $("n-apply"),
+  nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
   lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
   iCount: $("i-count"), tabbar: $("tabbar"),
@@ -110,6 +108,11 @@ var lastLog = "";
 var lastState = "unknown";
 var busy = false;
 var pending = null; // "start" | "stop" while the action is in flight
+var lastStateObj = null;
+var lastApplied = "";
+var lastMetaId = "";
+var confirmId = null;
+var listSig = "";
 
 function label(key) {
   els.start.textContent = T.start;
@@ -122,11 +125,10 @@ function label(key) {
   els.lPort.textContent = T.port;
   els.lCore.textContent = T.core;
   els.lConf.textContent = T.conf;
-  els.lNode.textContent = T.node;
+  els.lList.textContent = T.listTitle;
   els.lImport.textContent = T.addTitle;
   els.iParse.textContent = T.parseBtn;
   els.iApply.textContent = T.importBtn;
-  els.nApply.textContent = T.apply;
   els.iText.placeholder = T.addPlaceholder;
   els.iHint.textContent = T.addHint;
   els.lTabStatus.textContent = T.tabStatus;
@@ -551,55 +553,16 @@ function setButtons() {
   els.stop.disabled = busy || !running;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
-  syncApply();
-}
-
-function pickNode(state) {
-  var sel = state.selected;
-  var pools = [];
-  (state.manual || []).forEach(function (n) { if (n) { pools.push({ node: n, src: T.srcManual }); } });
-  (state.subscriptions || []).forEach(function (s) {
-    if (!s) { return; }
-    var src = s.name || s.title || s.url || T.srcSub;
-    (s.nodes || []).forEach(function (n) { if (n) { pools.push({ node: n, src: src }); } });
-  });
-  if (!sel) { return { kind: "none" }; }
-  for (var i = 0; i < pools.length; i++) {
-    if (pools[i].node.id === sel) { return { kind: "found", node: pools[i].node, src: pools[i].src }; }
-  }
-  return { kind: "missing" };
+  if (els.nList) { els.nList.classList.toggle("busy", busy); }
 }
 
 function findNodeById(state, id) {
-  if (!state || !id) { return null; }
-  var pools = [state.manual || []];
-  (state.subscriptions || []).forEach(function (s) { if (s && s.nodes) { pools.push(s.nodes); } });
-  for (var i = 0; i < pools.length; i++) {
-    for (var j = 0; j < pools[i].length; j++) {
-      if (pools[i][j] && pools[i][j].id === id) { return pools[i][j]; }
-    }
+  if (!state || !id || !Array.isArray(state.manual)) { return null; }
+  for (var i = 0; i < state.manual.length; i++) {
+    var n = state.manual[i];
+    if (n && String(n.id) === String(id)) { return n; }
   }
   return null;
-}
-
-function appliedName(state) {
-  var n = findNodeById(state, lastApplied);
-  return n ? (n.name || n.id) : lastApplied;
-}
-
-// Keep the Apply button in step with busy, the selection and what the shell says is
-// actually applied. It says Re-apply only when the applied id matches and the node is
-// not dirty.
-function syncApply() {
-  if (!els.nApply) { return; }
-  var picked = lastStateObj ? pickNode(lastStateObj) : { kind: "none" };
-  var found = picked.kind === "found";
-  els.nActions.hidden = !found;
-  els.nApply.disabled = busy || !found;
-  if (found) {
-    var same = lastApplied && lastApplied === picked.node.id && !picked.node.dirty;
-    els.nApply.textContent = same ? T.reapply : T.apply;
-  }
 }
 
 // IPv6 addresses are stored without brackets (that is what Xray wants), so the display has to
@@ -610,92 +573,320 @@ function hostPort(n) {
   return a + (n.port ? ":" + n.port : "");
 }
 
-function renderNode(state) {
-  els.nSrc.hidden = true;
-  els.nMeta.textContent = "";
-  els.nHint.className = "nodehint";
-  els.nHint.textContent = "";
-  els.nActions.hidden = true;
-  if (!state) {
-    els.nName.textContent = "–";
-    els.nHint.textContent = T.nodeNoState;
-    return;
+// ---- node list model ----
+// state.json + runtime/applied → the rows the Nodes page shows. Pure and free of DOM so
+// tests/nodelist.test.js can run it without a browser. Subscription nodes are out of scope
+// for this version: the list renders the manual store only.
+function nodeListModel(state, appliedId) {
+  var rows = [];
+  var selectedId = state && typeof state.selected === "string" ? state.selected : "";
+  var applied = appliedId ? String(appliedId) : "";
+  var manual = state && Array.isArray(state.manual) ? state.manual : [];
+  var selectedKnown = selectedId === "";
+  var appliedKnown = applied === "";
+  for (var i = 0; i < manual.length; i++) {
+    var n = manual[i];
+    if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") {
+      continue;
+    }
+    var id = String(n.id);
+    var row = {
+      node: n, id: id,
+      applied: applied !== "" && id === applied,
+      selected: selectedId !== "" && id === selectedId,
+      dirty: !!n.dirty
+    };
+    row.unapplied = row.selected && !row.applied;
+    // Tapping the applied node does no core work unless a re-import changed its fields.
+    row.noop = row.applied && !row.dirty;
+    if (row.applied) { appliedKnown = true; }
+    if (row.selected) { selectedKnown = true; }
+    rows.push(row);
   }
-  var picked = pickNode(state);
-  if (picked.kind === "none") {
-    els.nName.textContent = "–";
-    els.nHint.textContent = T.nodeNone;
-    return;
-  }
-  if (picked.kind === "missing") {
-    els.nName.textContent = "–";
-    els.nHint.textContent = T.nodeMissing;
-    els.nHint.className = "nodehint warn";
-    return;
-  }
-  var n = picked.node;
-  els.nName.textContent = n.name || n.protocol || "node";
+  return {
+    rows: rows, appliedId: applied, selectedId: selectedId,
+    appliedKnown: appliedKnown, selectedKnown: selectedKnown, empty: rows.length === 0
+  };
+}
+// ---- end node list model ----
+
+function nodeMeta(n) {
   var bits = [];
   if (n.protocol) { bits.push(n.protocol); }
   if (n.transport && n.transport !== "tcp") { bits.push(n.transport); }
   if (n.security) { bits.push(n.security); }
   if (n.address) { bits.push(hostPort(n)); }
-  els.nMeta.textContent = bits.join(" · ");
-  els.nSrc.textContent = picked.src;
-  els.nSrc.hidden = false;
-  if (state.schema && state.schema !== 1) {
-    els.nHint.textContent = T.nodeSchema + state.schema;
-    els.nHint.className = "nodehint warn";
-    return;
-  }
-  els.nActions.hidden = false;
-  syncApply();
-  if (!lastApplied) {
-    els.nHint.textContent = T.nodeNotApplied;
-    els.nHint.className = "nodehint warn";
-  } else if (lastApplied === n.id) {
-    if (n.dirty) {
-      els.nHint.textContent = T.nodeModified;
-      els.nHint.className = "nodehint warn";
-    } else {
-      els.nHint.textContent = T.nodeApplied;
-      els.nHint.className = "nodehint ok";
-    }
-  } else {
-    els.nHint.textContent = T.nodeAppliedOther + appliedName(state);
-    els.nHint.className = "nodehint warn";
-  }
+  return bits.join(" · ");
 }
 
-// state.json is the intent; runtime/applied is the node the current config was
-// built from. Read both in one exec: the card must show "selected but not applied"
-// instead of pretending the selection already changed the traffic.
-function refreshNode() {
-  return exec("cat " + STATE + " 2>/dev/null; echo '@@APPLIED@@'; cat " + APPLIED + " 2>/dev/null")
+function pill(text, cls) {
+  var el = document.createElement("span");
+  el.className = "pill " + cls;
+  el.textContent = text;
+  return el;
+}
+
+function listHint(model, state) {
+  if (!state) { return { text: T.nodeNoState, cls: "" }; }
+  if (state.schema && state.schema !== 1) {
+    return { text: T.nodeSchema + state.schema, cls: "warn" };
+  }
+  if (!model.appliedKnown) { return { text: T.appliedMissing, cls: "warn" }; }
+  if (!model.selectedKnown) { return { text: T.selectedMissing, cls: "warn" }; }
+  for (var i = 0; i < model.rows.length; i++) {
+    if (model.rows[i].applied && model.rows[i].dirty) {
+      return { text: T.nodeReapply, cls: "warn" };
+    }
+  }
+  if (model.empty) { return { text: T.emptyNodes, cls: "" }; }
+  return { text: T.listHint, cls: "" };
+}
+
+function rowSig(row) {
+  var n = row.node;
+  return [row.id, n.name || "", n.protocol || "", n.transport || "", n.security || "",
+    n.address || "", n.port || "", row.applied ? 1 : 0, row.selected ? 1 : 0,
+    row.dirty ? 1 : 0].join("|");
+}
+
+// Every row is built with createElement/textContent: node names come from imported links and
+// must never reach innerHTML.
+function renderRow(row) {
+  var el = document.createElement("div");
+  el.className = "nrow" + (row.applied ? " applied" : "") +
+    (confirmId === row.id ? " confirming" : "");
+  el.setAttribute("data-id", row.id);
+
+  var main = document.createElement("div");
+  main.className = "nrow-main";
+  var name = document.createElement("div");
+  name.className = "nrow-name";
+  name.textContent = row.node.name || row.node.protocol || "node";
+  main.appendChild(name);
+  var meta = document.createElement("div");
+  meta.className = "nrow-meta";
+  meta.textContent = nodeMeta(row.node);
+  main.appendChild(meta);
+  el.appendChild(main);
+
+  if (confirmId === row.id) {
+    var q = document.createElement("div");
+    q.className = "nrow-q";
+    q.textContent = T.deleteConfirm;
+    main.appendChild(q);
+    var actions = document.createElement("div");
+    actions.className = "nactions";
+    var yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "small danger";
+    yes.setAttribute("data-action", "confirm");
+    yes.textContent = T.delete;
+    var no = document.createElement("button");
+    no.type = "button";
+    no.className = "small";
+    no.setAttribute("data-action", "cancel");
+    no.textContent = T.cancel;
+    actions.appendChild(yes);
+    actions.appendChild(no);
+    el.appendChild(actions);
+    return el;
+  }
+
+  el.setAttribute("role", "button");
+  el.tabIndex = 0;
+  var pills = document.createElement("div");
+  pills.className = "npills";
+  if (row.applied) { pills.appendChild(pill(T.nodeApplied, "ok")); }
+  else if (row.unapplied) { pills.appendChild(pill(T.nodePending, "warn")); }
+  if (row.dirty) { pills.appendChild(pill(T.nodeDirty, "warn")); }
+  el.appendChild(pills);
+
+  var del = document.createElement("button");
+  del.type = "button";
+  del.className = "ndel" + (row.applied ? " muted" : "");
+  del.setAttribute("data-action", "delete");
+  del.setAttribute("aria-label", T.delete);
+  del.textContent = "✕";
+  el.appendChild(del);
+  return el;
+}
+
+function renderNodeList() {
+  var state = lastStateObj;
+  var model = nodeListModel(state, lastApplied);
+  var sig = [String(state && state.schema), lastApplied, confirmId || ""];
+  model.rows.forEach(function (row) { sig.push(rowSig(row)); });
+  var signature = sig.join("\n");
+  if (signature !== listSig) {
+    listSig = signature;
+    els.nList.textContent = "";
+    model.rows.forEach(function (row) { els.nList.appendChild(renderRow(row)); });
+  }
+  var hint = listHint(model, state);
+  els.nHint.textContent = hint.text;
+  els.nHint.className = "nodehint" + (hint.cls ? " " + hint.cls : "");
+  if (els.nList) { els.nList.classList.toggle("busy", busy); }
+}
+
+// selected is written before outbound.meta/outbound.json/CLI: a crash or a failed apply then
+// leaves the honest "selected B, applied A" state instead of a config newer than the pointer.
+function writeSelected(id) {
+  if (!lastStateObj || lastStateObj.selected === id) { return Promise.resolve(false); }
+  lastStateObj.selected = id;
+  lastStateObj.revision = (Number(lastStateObj.revision) || 0) + 1;
+  return writeState(lastStateObj).then(function () { return true; });
+}
+
+function switchTo(n) {
+  if (busy || !hasBridge) { return; }
+  if (!lastStateObj) { toast(T.nodeNoState); return; }
+  if (lastStateObj.schema && lastStateObj.schema !== 1) {
+    toast(T.nodeSchema + lastStateObj.schema);
+    return;
+  }
+  if (!n || !n.id || !/^[0-9A-Za-z_-]+$/.test(n.id)) {
+    toast(T.actionFailed + ": node has no usable id");
+    return;
+  }
+
+  // Already the applied node: no core work. A failed switch may still point selected here.
+  if (lastApplied && lastApplied === n.id && !n.dirty) {
+    busy = true;
+    setButtons();
+    renderNodeList();
+    writeSelected(n.id).catch(function (e) { toast(T.actionFailed + ": " + e.message); }).then(function () {
+      busy = false;
+      setButtons();
+      refreshPage();
+    });
+    return;
+  }
+
+  var out;
+  try {
+    out = outboundOf(n);
+  } catch (e) {
+    toast(T.actionFailed + ": " + e.message);
+    return;
+  }
+
+  confirmId = null;
+  busy = true;
+  setButtons();
+  renderNodeList();
+  toast(T.applyingMsg);
+
+  writeSelected(n.id).then(function () {
+    var meta = "id=" + n.id + "\nhost=" + String(n.address || "") + "\n";
+    return writeFile(OUTBOUND_META, meta, "600");
+  }).then(function () {
+    return writeFile(OUTBOUND, JSON.stringify(out), "600");
+  }).then(function () {
+    return exec(CLI + " apply " + n.id);
+  }).then(function (r) {
+    if (r.errno !== 0) {
+      throw new Error((r.stderr || "").trim() || ("exit " + r.errno));
+    }
+    if (n.dirty) {
+      // Clear the flag only if the node still renders to the exact outbound that was just
+      // applied; a newer edit must stay marked as not applied.
+      var cur = findNodeById(lastStateObj, n.id);
+      var current = "";
+      if (cur) {
+        try { current = JSON.stringify(outboundOf(cur)); } catch (e) { current = ""; }
+      }
+      if (cur && current === JSON.stringify(out)) {
+        cur.dirty = false;
+        lastStateObj.revision = (Number(lastStateObj.revision) || 0) + 1;
+        return writeState(lastStateObj);
+      }
+    }
+  }).then(function () {
+    toast(T.appliedMsg);
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    setButtons();
+    refreshPage();
+  });
+}
+
+function askDelete(n) {
+  if (busy || !hasBridge || !lastStateObj) { return; }
+  if (lastApplied && lastApplied === n.id) { toast(T.deleteApplied); return; }
+  confirmId = n.id;
+  renderNodeList();
+}
+
+function confirmDelete(n) {
+  if (busy || !hasBridge || !lastStateObj) { return; }
+  if (lastApplied && lastApplied === n.id) {
+    confirmId = null;
+    renderNodeList();
+    toast(T.deleteApplied);
+    return;
+  }
+  var state = lastStateObj;
+  state.manual = (Array.isArray(state.manual) ? state.manual : []).filter(function (x) {
+    return !x || x.id !== n.id;
+  });
+  if (state.selected === n.id) { state.selected = ""; }
+  state.revision = (Number(state.revision) || 0) + 1;
+  busy = true;
+  setButtons();
+  renderNodeList();
+  // Remove the rendered outbound first: it carries the deleted node's credentials, and a
+  // failed rm must leave the node in the store so the removal can be retried.
+  var removeRendered = lastMetaId && lastMetaId === n.id;
+  var chain = removeRendered ? exec("rm -f " + OUTBOUND + " " + OUTBOUND_META).then(function (r) {
+    if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
+    lastMetaId = "";
+  }) : Promise.resolve();
+  chain.then(function () {
+    return writeState(state);
+  }).then(function () {
+    confirmId = null;
+    toast(T.deleted);
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    setButtons();
+    refreshPage();
+  });
+}
+
+// state.json is the intent; runtime/applied is the node the current config was built from.
+// Read state, the applied id and the rendered outbound's meta in one exec; the list must show
+// "selected but not applied" after a failed switch instead of pretending it already switched.
+function refreshNodes() {
+  return exec("cat " + STATE + " 2>/dev/null; echo '@@APPLIED@@'; cat " + APPLIED +
+    " 2>/dev/null; echo '@@META@@'; cat " + OUTBOUND_META + " 2>/dev/null")
     .then(function (r) {
       var parts = r.stdout.split("@@APPLIED@@");
       var state = null;
       try { state = JSON.parse((parts[0] || "").trim()); } catch (e) { state = null; }
+      if (!state || typeof state !== "object" || Array.isArray(state)) { state = null; }
+      var rest = (parts[1] || "").split("@@META@@");
       lastStateObj = state;
-      lastApplied = (parts[1] || "").trim().split("\n")[0];
-      renderNode(state);
+      lastApplied = (rest[0] || "").trim().split("\n")[0];
+      lastMetaId = parseKv(rest[1] || "").id || "";
+      renderNodeList();
     }).catch(function () {});
 }
 
 // ---- node import UI ----
 
 var importRows = [];
-var lastStateObj = null;
-var lastApplied = "";
 
+// Import dedupes inside the manual store: subscriptions are out of scope in this version and
+// an update must never land on a node the list cannot show.
 function findNodeByIdentity(state, ident) {
-  var pools = [state.manual || []];
-  (state.subscriptions || []).forEach(function (s) { if (s && s.nodes) { pools.push(s.nodes); } });
-  for (var i = 0; i < pools.length; i++) {
-    for (var j = 0; j < pools[i].length; j++) {
-      var n = pools[i][j];
-      if (n && n.protocol && n.address && identityOf(n) === ident) { return n; }
-    }
+  var manual = state && Array.isArray(state.manual) ? state.manual : [];
+  for (var i = 0; i < manual.length; i++) {
+    var n = manual[i];
+    if (n && n.protocol && n.address && identityOf(n) === ident) { return n; }
   }
   return null;
 }
@@ -715,7 +906,7 @@ function mergeNodes(state, nodes) {
       Object.keys(n).forEach(function (k) { if (k !== "id") { existing[k] = n[k]; } });
       existing.id = keepId;
       // Same id, possibly new credentials/transport: the applied config is now stale.
-      // The card says so until the next successful apply clears the flag.
+      // The list marks it until the next successful apply clears the flag.
       existing.dirty = true;
       updated++;
     } else {
@@ -744,72 +935,6 @@ function writeState(state) {
   return writeFile(STATE, JSON.stringify(state, null, 2) + "\n", "600");
 }
 
-// Apply is two writes and one CLI call. The meta goes first: if the second write
-// fails or the app dies between them, the meta names a node that is not the applied
-// one, so boot falls back to idle instead of pairing a new outbound with an old id.
-// (A settings edit keeps the same id; there boot rebuilds the old outbound, and the
-// node's dirty flag keeps the card from calling it current.) Only after both writes
-// does the shell run. A failed apply leaves the files in place; the applied id (owned
-// by the shell) still names the old node, and the card keeps showing the difference.
-function applySelected() {
-  if (busy || !hasBridge) { return; }
-  if (!lastStateObj) { toast(T.nodeNoState); return; }
-  var picked = pickNode(lastStateObj);
-  if (picked.kind !== "found") {
-    toast(picked.kind === "missing" ? T.nodeMissing : T.nodeNone);
-    return;
-  }
-  var n = picked.node;
-  if (!n.id || !/^[0-9A-Za-z_-]+$/.test(n.id)) {
-    toast(T.actionFailed + ": node has no usable id");
-    return;
-  }
-  var out;
-  try {
-    out = outboundOf(n);
-  } catch (e) {
-    toast(T.actionFailed + ": " + e.message);
-    return;
-  }
-  busy = true;
-  setButtons();
-  toast(T.applyingMsg);
-  var meta = "id=" + n.id + "\nhost=" + String(n.address || "") + "\n";
-  writeFile(OUTBOUND_META, meta, "600").then(function () {
-    return writeFile(OUTBOUND, JSON.stringify(out), "600");
-  }).then(function () {
-    return exec(CLI + " apply " + n.id);
-  }).then(function (r) {
-    if (r.errno !== 0) {
-      throw new Error((r.stderr || "").trim() || ("exit " + r.errno));
-    }
-    if (n.dirty) {
-      // The state may have been re-read by the poll while apply was running. Clear the
-      // flag only if the node still renders to the exact outbound we just applied;
-      // a newer edit must stay marked as not applied.
-      var cur = findNodeById(lastStateObj, n.id);
-      var current = "";
-      if (cur) {
-        try { current = JSON.stringify(outboundOf(cur)); } catch (e) { current = ""; }
-      }
-      if (cur && current === JSON.stringify(out)) {
-        cur.dirty = false;
-        lastStateObj.revision = (Number(lastStateObj.revision) || 0) + 1;
-        return writeState(lastStateObj).catch(function () {}).then(function () {
-          toast(T.appliedMsg);
-        });
-      }
-    }
-    toast(T.appliedMsg);
-  }).catch(function (e) {
-    toast(T.actionFailed + ": " + e.message);
-  }).then(function () {
-    busy = false;
-    setButtons();
-    refreshPage();
-  });
-}
-
 function previewLine(text, cls) {
   var row = document.createElement("div");
   row.className = "prow " + cls;
@@ -833,24 +958,6 @@ function previewLine(text, cls) {
   return row;
 }
 
-function previewRadio(value, label) {
-  var row = document.createElement("div");
-  row.className = "prow keep";
-  var input = document.createElement("input");
-  input.type = "radio";
-  input.name = "pick";
-  input.value = value;
-  var body = document.createElement("div");
-  body.className = "pbody";
-  var name = document.createElement("div");
-  name.className = "pname";
-  name.textContent = label;
-  body.appendChild(name);
-  row.appendChild(input);
-  row.appendChild(body);
-  return { row: row, input: input };
-}
-
 function renderPreview() {
   var ok = importRows.filter(function (r) { return r.ok; });
   els.iPreview.textContent = "";
@@ -866,26 +973,10 @@ function renderPreview() {
       return;
     }
     var n = r.node;
-    var meta = [n.protocol, n.transport && n.transport !== "tcp" ? n.transport : "",
-      n.security || "", hostPort(n)].filter(Boolean).join(" · ");
+    var meta = nodeMeta(n);
     if (n.dupOf) { meta += " — " + T.dupOf + n.dupOf + T.dupOfEnd; }
     els.iPreview.appendChild(previewLine({ num: r.line, name: n.name, meta: meta }, "ok"));
   });
-
-  var hasSelection = !!(lastStateObj && lastStateObj.selected);
-  var radios = [];
-  importRows.forEach(function (r, idx) {
-    if (!r.ok) { return; }
-    radios.push(previewRadio("" + idx, r.node.name));
-  });
-  radios.forEach(function (el) { els.iPreview.appendChild(el.row); });
-  if (hasSelection) {
-    var keep = previewRadio("", T.keepCurrent);
-    els.iPreview.appendChild(keep.row);
-    keep.input.checked = true;
-  } else if (radios.length) {
-    radios[0].input.checked = true;
-  }
 }
 
 function doParse() {
@@ -907,8 +998,6 @@ function doImport() {
   if (busy || !hasBridge) { return; }
   var ok = importRows.filter(function (r) { return r.ok; });
   if (!ok.length) { return; }
-  var picked = els.iPreview.querySelector('input[name="pick"]:checked');
-  var pickIdx = picked && picked.value !== "" ? Number(picked.value) : -1;
 
   busy = true;
   setButtons();
@@ -916,17 +1005,10 @@ function doImport() {
   exec("cat " + STATE + " 2>/dev/null").then(function (r) {
     var state = null;
     try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
-    if (!state || typeof state !== "object") {
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
       state = { schema: 1, revision: 0, manual: [], subscriptions: [], selected: "" };
     }
     var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
-    if (pickIdx >= 0 && importRows[pickIdx] && importRows[pickIdx].node) {
-      // An update keeps the stored id (possibly an older one), so select by identity
-      // rather than trusting the imported node's freshly computed id.
-      var wanted = importRows[pickIdx].node;
-      var stored = findNodeByIdentity(state, identityOf(wanted));
-      state.selected = stored ? stored.id : wanted.id;
-    }
     state.revision = (Number(state.revision) || 0) + 1;
     return writeState(state).then(function () {
       var msg = T.importDone + " " + res.added;
@@ -1083,7 +1165,7 @@ function initNav() {
 function refreshPage() {
   if (!hasBridge) { return; }
   refreshStatus();
-  if (currentRoute === "nodes") { refreshNode(); }
+  if (currentRoute === "nodes") { refreshNodes(); }
   else if (currentRoute === "log") { refreshLog(); }
 }
 
@@ -1107,7 +1189,26 @@ function run(command, pendingLabel) {
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });
-els.nApply.addEventListener("click", applySelected);
+els.nList.addEventListener("click", function (e) {
+  var t = e.target;
+  var row = t && t.closest ? t.closest(".nrow") : null;
+  if (!row) { return; }
+  var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
+  if (!node) { return; }
+  var action = t.getAttribute ? t.getAttribute("data-action") : "";
+  if (action === "delete") { askDelete(node); return; }
+  if (action === "cancel") { confirmId = null; renderNodeList(); return; }
+  if (action === "confirm") { confirmDelete(node); return; }
+  if (confirmId) { return; }
+  switchTo(node);
+});
+els.nList.addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" && e.key !== " ") { return; }
+  if (!e.target.classList || !e.target.classList.contains("nrow")) { return; }
+  e.preventDefault();
+  var node = findNodeById(lastStateObj, e.target.getAttribute("data-id"));
+  if (node) { switchTo(node); }
+});
 els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);
 
