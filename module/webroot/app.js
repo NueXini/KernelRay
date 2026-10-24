@@ -32,13 +32,14 @@ var DICT_ZH = {
   nodeSchema: "state.json 的 schema 版本未识别：",
   listTitle: "节点列表",
   listHint: "点一个节点即可切换并应用；「已应用」是核心正在使用的节点。",
-  emptyNodes: "节点库还是空的；在下面导入分享链接。",
+  emptyNodes: "节点库还是空的；点右上角的 + 添加节点。",
   nodeApplied: "已应用", nodeDirty: "有改动", nodePending: "未应用",
   nodeReapply: "这个节点应用后有改动；点一下重新应用。",
   selectedMissing: "state.json 的 selected 指向了一个不存在的节点。",
   appliedMissing: "runtime/applied 指向的节点不在节点库里。",
   delete: "删除", deleteApplied: "已应用的节点不能删除；先切换到别的节点。",
   deleteConfirm: "删除这个节点？", cancel: "取消", deleted: "已删除",
+  back: "返回",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
   setLang: "语言", langAuto: "自动",
   setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
@@ -74,13 +75,14 @@ var DICT_EN = {
   nodeSchema: "Unrecognised state.json schema: ",
   listTitle: "Node list",
   listHint: "Tap a node to switch and apply it; “Applied” is what the core runs.",
-  emptyNodes: "No nodes yet; import a share link below.",
+  emptyNodes: "No nodes yet; tap + in the top right to add one.",
   nodeApplied: "Applied", nodeDirty: "Changed", nodePending: "Not applied",
   nodeReapply: "This node changed after it was applied; tap to re-apply.",
   selectedMissing: "state.json points selected at a node that is not in the store.",
   appliedMissing: "runtime/applied points at a node that is not in the store.",
   delete: "Delete", deleteApplied: "The applied node cannot be deleted; switch to another node first.",
   deleteConfirm: "Delete this node?", cancel: "Cancel", deleted: "Deleted",
+  back: "Back",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
   setLang: "Language", langAuto: "Auto",
   setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
@@ -109,6 +111,7 @@ var els = {
   refresh: $("refresh"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
   lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
+  addNode: $("add-node"), backAdd: $("back-add"),
   nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
   lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
@@ -123,6 +126,7 @@ var els = {
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
 var pages = {
   status: $("page-status"), nodes: $("page-nodes"),
+  "nodes/add": $("page-add"),
   log: $("page-log"), settings: $("page-settings")
 };
 
@@ -149,6 +153,8 @@ function label(key) {
   els.lCore.textContent = T.core;
   els.lConf.textContent = T.conf;
   els.lList.textContent = T.listTitle;
+  els.addNode.setAttribute("aria-label", T.addTitle);
+  els.backAdd.setAttribute("aria-label", T.back);
   els.lImport.textContent = T.addTitle;
   els.iParse.textContent = T.parseBtn;
   els.iApply.textContent = T.importBtn;
@@ -813,7 +819,7 @@ function renderRow(row) {
   if (row.applied) { pills.appendChild(pill(T.nodeApplied, "ok")); }
   else if (row.unapplied) { pills.appendChild(pill(T.nodePending, "warn")); }
   if (row.dirty) { pills.appendChild(pill(T.nodeDirty, "warn")); }
-  el.appendChild(pills);
+  main.appendChild(pills);
 
   var del = document.createElement("button");
   del.type = "button";
@@ -835,6 +841,16 @@ function renderNodeList() {
     listSig = signature;
     els.nList.textContent = "";
     model.rows.forEach(function (row) { els.nList.appendChild(renderRow(row)); });
+    if (model.empty) {
+      // An empty list must still offer the one gesture that fills it, not just the + in
+      // the card header: a first-time user looks at the middle of the page.
+      var addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "primary nempty";
+      addBtn.setAttribute("data-action", "add");
+      addBtn.textContent = T.addTitle;
+      els.nList.appendChild(addBtn);
+    }
   }
   var hint = listHint(model, state);
   els.nHint.textContent = hint.text;
@@ -1133,7 +1149,8 @@ function doImport() {
       els.iCount.hidden = true;
       els.iHint.textContent = T.addHint;
       importRows = [];
-      refreshPage();
+      // The add page's task is done: back to the list, which refreshes as it shows.
+      go("nodes");
     });
   }).catch(function (e) {
     toast(T.actionFailed + ": " + e.message);
@@ -1202,12 +1219,15 @@ function refreshLog() {
 // WebView does not accumulate history for every tab switch.
 var DEFAULT_ROUTE = "status";
 var currentRoute = null;
-var scrollByRoute = { status: 0, nodes: 0, log: 0, settings: 0 };
+var scrollByRoute = { status: 0, nodes: 0, "nodes/add": 0, log: 0, settings: 0 };
 var ROUTES = ["status", "nodes", "log", "settings"];
+var ADD_ROUTE = "nodes/add";
 
 function routeOf(value) {
   var route = String(value == null ? "" : value)
     .replace(/^#\/?/, "").replace(/\/+$/, "").toLowerCase();
+  // The add page is a second level behind Nodes: reachable by deep link, never a tab.
+  if (route === ADD_ROUTE) { return route; }
   if (ROUTES.indexOf(route) >= 0) { return route; }
   return DEFAULT_ROUTE;
 }
@@ -1222,7 +1242,8 @@ function showRoute(route, opts) {
   currentRoute = route;
   Object.keys(pages).forEach(function (key) { pages[key].hidden = key !== route; });
   tabs.forEach(function (tab) {
-    var active = tab.getAttribute("data-route") === route;
+    var tr = tab.getAttribute("data-route");
+    var active = tr === route || (route === ADD_ROUTE && tr === "nodes");
     tab.classList.toggle("active", active);
     if (active) { tab.setAttribute("aria-current", "page"); }
     else { tab.removeAttribute("aria-current"); }
@@ -1241,6 +1262,17 @@ function showRoute(route, opts) {
     else { toBottom(); }
   }
   if (!opts || opts.refresh !== false) { refreshPage(); }
+}
+
+// Tab switches replace history (a long-lived WebView must not accumulate entries), but
+// entering the add page pushes: it is a second level, so the system back gesture returns
+// to the list.
+function openAdd() {
+  if (currentRoute === ADD_ROUTE) { return; }
+  var pushed = false;
+  try { history.pushState(null, "", routeHash(ADD_ROUTE)); pushed = true; } catch (e) { /* fall back below */ }
+  if (pushed) { showRoute(ADD_ROUTE, { refresh: true }); }
+  else { location.hash = routeHash(ADD_ROUTE); }
 }
 
 function go(route) {
@@ -1306,6 +1338,8 @@ els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });
 els.nList.addEventListener("click", function (e) {
   var t = e.target;
+  var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
+  if (act === "add") { openAdd(); return; }
   var row = t && t.closest ? t.closest(".nrow") : null;
   if (!row) { return; }
   var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
@@ -1326,6 +1360,8 @@ els.nList.addEventListener("keydown", function (e) {
 });
 els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);
+els.addNode.addEventListener("click", openAdd);
+els.backAdd.addEventListener("click", function () { go("nodes"); });
 els.segLang.addEventListener("click", function (e) {
   var v = segValue(e);
   if (!v || LANGS.indexOf(v) < 0 || v === langPref) { return; }

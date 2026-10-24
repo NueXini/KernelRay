@@ -112,10 +112,16 @@ The user's whole set of nodes — the ones added by hand plus the ones a subscri
 _Avoid_: pool, node list (that is its form on the Nodes page; see 节点列表)
 
 **节点列表 (Node list)**:
-The Nodes page's rendering of the node store: one row per node, with the applied node marked and
-a selected-but-unapplied node marked too. This version renders the manually added nodes;
+The Nodes page's rendering of the node store: one entry per node, with the applied node marked
+and a selected-but-unapplied node marked too. This version renders the manually added nodes;
 subscription nodes await a subscription feature.
 _Avoid_: node store (that is the data), pool
+
+**添加页 (Add-node page)**:
+The second-level page behind the node list's + entry: share links are pasted, parsed and
+imported into the node store there. Opening it or importing from it never switches or
+applies a node.
+_Avoid_: import page, subscription page (that is the 订阅 feature)
 
 **订阅 (Subscription)**:
 A URL that yields nodes. Its nodes join the node store, but the store does not own them: a
