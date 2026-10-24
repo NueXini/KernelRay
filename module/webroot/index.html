@@ -71,6 +71,36 @@
       <pre id="log">…</pre>
     </section>
   </section>
+
+  <section class="page" id="page-settings" hidden>
+    <section class="card">
+      <div class="nodehead">
+        <span id="l-set-lang">Language</span>
+      </div>
+      <div class="seg" id="seg-lang">
+        <button type="button" data-v="auto"><span id="l-lang-auto">Auto</span></button>
+        <button type="button" data-v="zh">中文</button>
+        <button type="button" data-v="en">English</button>
+      </div>
+      <div class="hint" id="l-set-lang-hint"></div>
+    </section>
+
+    <section class="card">
+      <div class="nodehead">
+        <span id="l-set-log">Log buffer</span>
+      </div>
+      <div class="seg" id="seg-log">
+        <button type="button" data-v="100">100</button>
+        <button type="button" data-v="200">200</button>
+        <button type="button" data-v="500">500</button>
+      </div>
+      <div class="hint" id="l-set-log-hint"></div>
+    </section>
+
+    <section class="card">
+      <div class="hint" id="l-set-soon"></div>
+    </section>
+  </section>
 </main>
 
 <nav class="tabbar" id="tabbar" aria-label="Sections">
@@ -98,6 +128,14 @@
         <path d="M7 9l3 3-3 3M13 15h4"/>
       </svg>
       <span class="tab-label" id="l-tab-log">Log</span>
+    </a>
+    <a class="tab" href="#/settings" data-route="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 6h10M17 6h4M3 12h4M11 12h10M3 18h12M19 18h2"/>
+        <circle cx="15" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>
+      </svg>
+      <span class="tab-label" id="l-tab-settings">Settings</span>
     </a>
   </div>
 </nav>

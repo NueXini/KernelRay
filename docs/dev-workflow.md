@@ -24,10 +24,11 @@ bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 parser tests passing
 node tests/outbound.test.js            # 17 outbound tests passing
 node tests/nodelist.test.js            # 12 node list tests passing
+node tests/prefs.test.js               # 12 prefs tests passing
 node tests/config.test.js              # 16 config tests passing（需要 bash 和 /proc）
 ```
 
-前三个测试从 `module/webroot/app.js` 里抽出带标记的代码块跑，测的就是要发布的那个文件。
+前五个测试从 `module/webroot/app.js` 里抽出带标记的代码块跑，测的就是要发布的那个文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、apply 的失败路径和启动回滚；假核心只在回滚用例里运行，用 `/proc` 识别
 进程，不碰 iptables。
@@ -204,6 +205,7 @@ bash -n module/scripts/kernelray.sh || exit 1
 node tests/parse.test.js || exit 1
 node tests/outbound.test.js || exit 1
 node tests/nodelist.test.js || exit 1
+node tests/prefs.test.js || exit 1
 node tests/config.test.js || exit 1
 bash scripts/pack.sh || exit 1
 zip=$(ls -t build/kernelray-*.zip | head -1)

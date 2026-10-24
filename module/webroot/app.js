@@ -8,11 +8,14 @@ var STATE = MOD + "/state.json";
 var APPLIED = MOD + "/runtime/applied";
 var OUTBOUND = MOD + "/outbound.json";
 var OUTBOUND_META = MOD + "/outbound.meta";
-var LOG_LINES = 200;
+// Log buffer size is a Settings-page preference; 200 is the default before prefs load.
+var logLines = 200;
 var POLL_MS = 2000;
 
-var ZH = navigator.language && navigator.language.toLowerCase().indexOf("zh") === 0;
-var T = ZH ? {
+// Language is a Settings-page preference, not a boot-time fact: applyLang() reassigns T,
+// and every T.x read picks the current dictionary because nothing captures the object.
+var langPref = "auto"; // "auto" | "zh" | "en"; resolved against navigator.language when "auto"
+var DICT_ZH = {
   start: "启动", stop: "停止", follow: "跟随", refresh: "刷新",
   log: "日志", pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
   running: "运行中", stopped: "已停止", starting: "启动中", stopping: "停止中",
@@ -36,7 +39,12 @@ var T = ZH ? {
   appliedMissing: "runtime/applied 指向的节点不在节点库里。",
   delete: "删除", deleteApplied: "已应用的节点不能删除；先切换到别的节点。",
   deleteConfirm: "删除这个节点？", cancel: "取消", deleted: "已删除",
-  tabStatus: "状态", tabNodes: "节点", tabLog: "日志", navLabel: "页面",
+  tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
+  setLang: "语言", langAuto: "自动",
+  setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
+  setLog: "日志行数",
+  setLogHint: "日志页每次拉取的行数；行数越多看得越早。",
+  setSoon: "路由 / DNS 等核心设置会随透明代理（v0.7）提供；目前这里只有界面设置。",
   addTitle: "添加节点",
   addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
   addPlaceholder: "vless://…",
@@ -48,7 +56,8 @@ var T = ZH ? {
   importDone: "已导入",
   importUpdated: "，更新",
   notAppliedYet: "导入只写入节点库，不会切换；点列表里的节点即可切换并应用。"
-} : {
+};
+var DICT_EN = {
   start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
   log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
   running: "running", stopped: "stopped", starting: "starting", stopping: "stopping",
@@ -72,7 +81,12 @@ var T = ZH ? {
   appliedMissing: "runtime/applied points at a node that is not in the store.",
   delete: "Delete", deleteApplied: "The applied node cannot be deleted; switch to another node first.",
   deleteConfirm: "Delete this node?", cancel: "Cancel", deleted: "Deleted",
-  tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", navLabel: "Sections",
+  tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
+  setLang: "Language", langAuto: "Auto",
+  setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
+  setLog: "Log buffer",
+  setLogHint: "How many lines the Log tab fetches each time; more lines reach further back.",
+  setSoon: "Routing/DNS settings arrive with the transparent proxy (v0.7); for now this page holds UI settings only.",
   addTitle: "Add node",
   addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
   addPlaceholder: "vless://…",
@@ -85,6 +99,7 @@ var T = ZH ? {
   importUpdated: ", updated",
   notAppliedYet: "Importing only fills the node list; tap a node there to switch and apply it."
 };
+var T = DICT_EN; // applyLang() reassigns this before anything renders
 
 var $ = function (id) { return document.getElementById(id); };
 var els = {
@@ -98,10 +113,18 @@ var els = {
   lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
   iCount: $("i-count"), tabbar: $("tabbar"),
-  lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log")
+  lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log"),
+  lTabSettings: $("l-tab-settings"),
+  segLang: $("seg-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
+  lSetLangHint: $("l-set-lang-hint"),
+  segLog: $("seg-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
+  lSetSoon: $("l-set-soon")
 };
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
-var pages = { status: $("page-status"), nodes: $("page-nodes"), log: $("page-log") };
+var pages = {
+  status: $("page-status"), nodes: $("page-nodes"),
+  log: $("page-log"), settings: $("page-settings")
+};
 
 var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
 var lastLog = "";
@@ -134,6 +157,13 @@ function label(key) {
   els.lTabStatus.textContent = T.tabStatus;
   els.lTabNodes.textContent = T.tabNodes;
   els.lTabLog.textContent = T.tabLog;
+  els.lTabSettings.textContent = T.tabSettings;
+  els.lSetLang.textContent = T.setLang;
+  els.lLangAuto.textContent = T.langAuto;
+  els.lSetLangHint.textContent = T.setLangHint;
+  els.lSetLog.textContent = T.setLog;
+  els.lSetLogHint.textContent = T.setLogHint;
+  els.lSetSoon.textContent = T.setSoon;
   els.tabbar.setAttribute("aria-label", T.navLabel);
 }
 
@@ -142,6 +172,57 @@ function toast(msg) {
   els.toast.className = "toast show";
   clearTimeout(toast._t);
   toast._t = setTimeout(function () { els.toast.className = "toast"; }, 2600);
+}
+
+// localStorage itself can throw in a locked-down WebView; prefs survive as session-only.
+function prefsStore() {
+  try { return window.localStorage; } catch (e) { return null; }
+}
+
+function resolveLang() {
+  if (langPref === "zh" || langPref === "en") { return langPref; }
+  return (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+}
+
+// Switching language has to invalidate what was rendered under the old one: the node list
+// signature does not include language, and renderLog skips unchanged text.
+function applyLang() {
+  var lang = resolveLang();
+  T = lang === "zh" ? DICT_ZH : DICT_EN;
+  document.documentElement.lang = lang;
+  label();
+  renderSegs();
+  listSig = "";
+  renderNodeList();
+  els.iHint.textContent = T.addHint;
+  els.iHint.className = "nodehint";
+  lastLog = null;
+  renderLog("");
+  if (!hasBridge) {
+    els.banner.textContent = T.noBridge;
+    els.badge.textContent = T.unknown;
+  }
+}
+
+function markSeg(container, value) {
+  if (!container) { return; }
+  var btns = container.querySelectorAll("button");
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i].getAttribute("data-v") === String(value);
+    btns[i].classList.toggle("on", on);
+    btns[i].setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+
+function renderSegs() {
+  markSeg(els.segLang, langPref);
+  markSeg(els.segLog, logLines);
+}
+
+// Taps may land on the label span inside a button, so resolve through closest().
+function segValue(e) {
+  var b = e.target && e.target.closest ? e.target.closest("button[data-v]") : null;
+  return b ? b.getAttribute("data-v") : null;
 }
 
 // ksu.exec is callback-based: ksu.exec(cmd, optionsJson, callbackName) and the
@@ -171,6 +252,39 @@ function parseKv(text) {
   });
   return out;
 }
+
+// ---- UI preferences ----
+// Language and log-buffer size are UI prefs, not intent: state.json's `settings` object is
+// reserved for routing/DNS (docs/state-schema.md) and is wiped by every module upgrade
+// anyway, so these live in the WebView's localStorage and degrade to session-only when the
+// manager ships a WebView with storage disabled. tests/prefs.test.js runs this block.
+
+var PREFS_KEY = "kernelray.prefs";
+var LANGS = ["auto", "zh", "en"];
+var LOG_LINE_STEPS = [100, 200, 500];
+
+function prefsNormalize(raw) {
+  var p = { lang: "auto", logLines: 200 };
+  if (!raw || typeof raw !== "object") { return p; }
+  if (LANGS.indexOf(raw.lang) >= 0) { p.lang = String(raw.lang); }
+  var n = Number(raw.logLines);
+  if (LOG_LINE_STEPS.indexOf(n) >= 0) { p.logLines = n; }
+  return p;
+}
+
+function prefsLoad(store) {
+  try {
+    return prefsNormalize(JSON.parse((store && store.getItem(PREFS_KEY)) || "null"));
+  } catch (e) { return prefsNormalize(null); }
+}
+
+function prefsSave(store, prefs) {
+  try {
+    var p = prefsNormalize(prefs);
+    store.setItem(PREFS_KEY, JSON.stringify({ v: 1, lang: p.lang, logLines: p.logLines }));
+  } catch (e) { /* no storage: the choice lasts for this session only */ }
+}
+// ---- end UI preferences ----
 
 // ---- node parsing ----
 // Share link → node. Lives here rather than in the shell: there is no jq on the device and
@@ -1077,7 +1191,7 @@ function refreshStatus() {
 }
 
 function refreshLog() {
-  return exec(CLI + " log " + LOG_LINES).then(function (r) {
+  return exec(CLI + " log " + logLines).then(function (r) {
     renderLog(r.stdout || r.stderr);
   }).catch(function () {});
 }
@@ -1088,12 +1202,13 @@ function refreshLog() {
 // WebView does not accumulate history for every tab switch.
 var DEFAULT_ROUTE = "status";
 var currentRoute = null;
-var scrollByRoute = { status: 0, nodes: 0, log: 0 };
+var scrollByRoute = { status: 0, nodes: 0, log: 0, settings: 0 };
+var ROUTES = ["status", "nodes", "log", "settings"];
 
 function routeOf(value) {
   var route = String(value == null ? "" : value)
     .replace(/^#\/?/, "").replace(/\/+$/, "").toLowerCase();
-  if (route === "status" || route === "nodes" || route === "log") { return route; }
+  if (ROUTES.indexOf(route) >= 0) { return route; }
   return DEFAULT_ROUTE;
 }
 
@@ -1211,6 +1326,28 @@ els.nList.addEventListener("keydown", function (e) {
 });
 els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);
+els.segLang.addEventListener("click", function (e) {
+  var v = segValue(e);
+  if (!v || LANGS.indexOf(v) < 0 || v === langPref) { return; }
+  langPref = v;
+  prefs.lang = v;
+  prefsSave(prefsStore(), prefs);
+  applyLang();
+  if (hasBridge) {
+    refreshStatus();
+    if (currentRoute === "log") { refreshLog(); }
+  }
+});
+els.segLog.addEventListener("click", function (e) {
+  var v = segValue(e);
+  var n = Number(v);
+  if (!v || LOG_LINE_STEPS.indexOf(n) < 0 || n === logLines) { return; }
+  logLines = n;
+  prefs.logLines = n;
+  prefsSave(prefsStore(), prefs);
+  renderSegs();
+  if (hasBridge && currentRoute === "log") { refreshLog(); }
+});
 
 // Poll only while the page is actually visible; the WebView freezes timers in
 // the background and a stale interval would otherwise pile up on resume.
@@ -1227,7 +1364,10 @@ document.addEventListener("visibilitychange", function () {
   if (document.visibilityState === "hidden") { stopPolling(); } else { startPolling(); }
 });
 
-label();
+var prefs = prefsLoad(prefsStore());
+langPref = prefs.lang;
+logLines = prefs.logLines;
+applyLang();
 initNav();
 if (!hasBridge) {
   els.banner.textContent = T.noBridge;

@@ -55,6 +55,10 @@ The Nodes page renders `manual` only. It writes `state.json`; it never writes `c
 Unknown top-level fields are preserved: the writer parses the file, mutates the object and
 serialises it back, so nothing is dropped by an older UI.
 
+`settings` is still untouched intent. The WebUI's Settings page (language, log buffer size)
+deliberately does **not** write it — those are UI preferences, not core intent, and they live
+in the WebView's own localStorage instead.
+
 ## Node
 
 Common fields:

@@ -47,6 +47,7 @@ the core forwards direct; after tapping a node in the WebUI the same request exi
 | `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped `app.js` |
 | `tests/outbound.test.js` | node → Xray outbound renderer tests, run against the shipped block |
 | `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
+| `tests/prefs.test.js` | Settings-page preference (language, log buffer) normalise/load/save tests, run against the shipped block |
 | `tests/config.test.js` | template assembly, apply failure paths and start rollback, run against the shipped shell + a fake core |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
@@ -99,16 +100,20 @@ is a direct freedom connection. The socks request proves the core works either w
 
 *The screenshot predates the node list; the Nodes tab is now a list of tappable rows.*
 
-Open the module card in the KernelSU manager and tap **WebUI**. The page has three tabs —
-**Status**, **Nodes** and **Log** — with the title and runtime badge pinned above them:
+Open the module card in the KernelSU manager and tap **WebUI**. The page has four tabs —
+**Status**, **Nodes**, **Log** and **Settings** — with the title and runtime badge pinned above
+them:
 
 - **Status** — start / stop the core and read pid, uptime, ports, core version and config path.
 - **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, and the import card.
-- **Log** — the last 200 lines, with a follow toggle.
+- **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
+- **Settings** — UI language (auto / 中文 / English) and the log buffer size. These are UI
+  preferences: they live in the WebView's own storage, not in `state.json`.
 
-Tabs are hash routes (`#/status`, `#/nodes`, `#/log`): a reload or a deep link lands on the same
-tab, and anything else falls back to `#/status`. Only the visible tab is polled, plus the status
-badge; switching tabs keeps each tab's scroll position and any half-typed import.
+Tabs are hash routes (`#/status`, `#/nodes`, `#/log`, `#/settings`): a reload or a deep link
+lands on the same tab, and anything else falls back to `#/status`. Only the visible tab is
+polled, plus the status badge; switching tabs keeps each tab's scroll position and any
+half-typed import.
 
 The node list renders `state.manual` against `runtime/applied` — the id the current
 `config.json` was built from. The applied row says **Applied**; a node that changed after a
@@ -135,9 +140,10 @@ Import only fills the node list; it does not change the selection or how traffic
 node row afterwards to switch and apply it. Deleting a node needs a second tap; the applied
 node cannot be deleted, and deleting the selected node clears the selection.
 
-The parser, the node list model and the outbound renderer are tested without a browser:
-`node tests/parse.test.js`, `node tests/nodelist.test.js` and `node tests/outbound.test.js`
-extract the marked blocks from the shipped `app.js`.
+The parser, the node list model, the outbound renderer and the UI preferences are tested
+without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
+`node tests/outbound.test.js` and `node tests/prefs.test.js` extract the marked blocks from
+the shipped `app.js`.
 `node tests/config.test.js` sources the shipped shell against a fake core and checks template
 assembly, escaping, apply's failure paths and the start-rollback path.
 

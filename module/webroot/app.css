@@ -121,6 +121,9 @@ button.small { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; border-radius
 .nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }
 .nodehint.warn { color: var(--warn); }
 .nodehint.ok { color: var(--ok); }
+.seg { display: flex; gap: 8px; margin-top: 6px; }
+.seg button { padding: 8px 6px; font-size: 13px; font-weight: 500; }
+.seg button.on { background: var(--accent); border-color: transparent; color: #fff; }
 .row[hidden] { display: none; }
 textarea {
   width: 100%; margin-top: 4px; padding: 10px; border-radius: 10px;
