@@ -39,6 +39,11 @@ var DICT_ZH = {
   appliedMissing: "runtime/applied 指向的节点不在节点库里。",
   delete: "删除", deleteApplied: "已应用的节点不能删除；先切换到别的节点。",
   deleteConfirm: "删除这个节点？", cancel: "取消", deleted: "已删除",
+  edit: "编辑", done: "完成",
+  checkAll: "全选", uncheckAll: "取消全选",
+  batchDelete: "删除", deleteConfirmN: "删除 {n} 个节点？",
+  deletedN: "已删除 {n} 个节点",
+  editHint: "勾选要删除的节点，点「删除」批量删除；已应用的节点不能删除。",
   back: "返回",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
   setLang: "语言", langAuto: "自动",
@@ -82,6 +87,11 @@ var DICT_EN = {
   appliedMissing: "runtime/applied points at a node that is not in the store.",
   delete: "Delete", deleteApplied: "The applied node cannot be deleted; switch to another node first.",
   deleteConfirm: "Delete this node?", cancel: "Cancel", deleted: "Deleted",
+  edit: "Edit", done: "Done",
+  checkAll: "Select all", uncheckAll: "Deselect all",
+  batchDelete: "Delete", deleteConfirmN: "Delete {n} node(s)?",
+  deletedN: "Deleted {n} node(s)",
+  editHint: "Check the nodes to delete, then tap Delete; the applied node cannot be deleted.",
   back: "Back",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
   setLang: "Language", langAuto: "Auto",
@@ -113,6 +123,7 @@ var els = {
   lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
   addNode: $("add-node"), backAdd: $("back-add"),
   nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
+  editNode: $("edit-node"), nToolbar: $("n-toolbar"),
   lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
   iCount: $("i-count"), tabbar: $("tabbar"),
@@ -140,6 +151,11 @@ var lastApplied = "";
 var lastMetaId = "";
 var confirmId = null;
 var listSig = "";
+// Edit-mode check set: which rows a batch delete would remove. In memory only — a check is
+// a temporary intent, not a wish like `selected` — and cleared when edit mode ends.
+var editMode = false;
+var checkSet = {};
+var batchConfirm = false;
 
 function label(key) {
   els.start.textContent = T.start;
@@ -153,6 +169,7 @@ function label(key) {
   els.lCore.textContent = T.core;
   els.lConf.textContent = T.conf;
   els.lList.textContent = T.listTitle;
+  els.editNode.textContent = editMode ? T.done : T.edit;
   els.addNode.setAttribute("aria-label", T.addTitle);
   els.backAdd.setAttribute("aria-label", T.back);
   els.lImport.textContent = T.addTitle;
@@ -728,6 +745,25 @@ function nodeListModel(state, appliedId) {
     appliedKnown: appliedKnown, selectedKnown: selectedKnown, empty: rows.length === 0
   };
 }
+
+// The edit-mode check set → what a batch delete may act on. Pure so tests/nodelist.test.js
+// can run it: the applied row never joins (single delete refuses it too), and check ids
+// that no longer have a row (a stale set after a refresh) are simply ignored.
+function batchModel(model, checks) {
+  var set = checks || {};
+  var checkable = [];
+  var checked = [];
+  for (var i = 0; i < model.rows.length; i++) {
+    var row = model.rows[i];
+    if (row.applied) { continue; }
+    checkable.push(row.id);
+    if (set[row.id]) { checked.push(row.id); }
+  }
+  return {
+    checkableIds: checkable, checkedIds: checked,
+    allChecked: checkable.length > 0 && checked.length === checkable.length
+  };
+}
 // ---- end node list model ----
 
 function nodeMeta(n) {
@@ -759,6 +795,7 @@ function listHint(model, state) {
     }
   }
   if (model.empty) { return { text: T.emptyNodes, cls: "" }; }
+  if (editMode) { return { text: T.editHint, cls: "" }; }
   return { text: T.listHint, cls: "" };
 }
 
@@ -774,7 +811,8 @@ function rowSig(row) {
 function renderRow(row) {
   var el = document.createElement("div");
   el.className = "nrow" + (row.applied ? " applied" : "") +
-    (confirmId === row.id ? " confirming" : "");
+    (confirmId === row.id && !editMode ? " confirming" : "") +
+    (editMode ? " editing" : "");
   el.setAttribute("data-id", row.id);
 
   var main = document.createElement("div");
@@ -812,14 +850,30 @@ function renderRow(row) {
     return el;
   }
 
-  el.setAttribute("role", "button");
-  el.tabIndex = 0;
+  if (!editMode) {
+    el.setAttribute("role", "button");
+    el.tabIndex = 0;
+  } else {
+    // In edit mode the whole row is the check toggle; the applied row's box is disabled
+    // because a delete refuses it too. The switch gesture waits outside edit mode.
+    var check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "ncheck";
+    check.setAttribute("data-action", "check");
+    check.setAttribute("aria-label", row.node.name || row.id);
+    check.checked = !!checkSet[row.id];
+    if (row.applied) { check.disabled = true; }
+    el.insertBefore(check, el.firstChild);
+  }
+
   var pills = document.createElement("div");
   pills.className = "npills";
   if (row.applied) { pills.appendChild(pill(T.nodeApplied, "ok")); }
   else if (row.unapplied) { pills.appendChild(pill(T.nodePending, "warn")); }
   if (row.dirty) { pills.appendChild(pill(T.nodeDirty, "warn")); }
   main.appendChild(pills);
+
+  if (editMode) { return el; }
 
   var del = document.createElement("button");
   del.type = "button";
@@ -831,10 +885,61 @@ function renderRow(row) {
   return el;
 }
 
+// The edit-mode toolbar: select-all, the batch delete and its inline confirm. Built with
+// createElement/textContent like every row; the count comes from the check set.
+function renderBatchBar(model, bm) {
+  var bar = els.nToolbar;
+  if (!editMode || model.empty) {
+    bar.hidden = true;
+    bar.textContent = "";
+    return;
+  }
+  bar.hidden = false;
+  bar.textContent = "";
+  if (batchConfirm) {
+    var q = document.createElement("span");
+    q.className = "nbatch-q";
+    q.textContent = T.deleteConfirmN.replace("{n}", String(bm.checkedIds.length));
+    bar.appendChild(q);
+    var yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "small danger";
+    yes.setAttribute("data-action", "batchconfirm");
+    yes.textContent = T.delete;
+    var no = document.createElement("button");
+    no.type = "button";
+    no.className = "small";
+    no.setAttribute("data-action", "batchcancel");
+    no.textContent = T.cancel;
+    bar.appendChild(yes);
+    bar.appendChild(no);
+    return;
+  }
+  var all = document.createElement("button");
+  all.type = "button";
+  all.className = "small";
+  all.setAttribute("data-action", "checkall");
+  all.textContent = bm.allChecked ? T.uncheckAll : T.checkAll;
+  all.disabled = bm.checkableIds.length === 0;
+  var del = document.createElement("button");
+  del.type = "button";
+  del.className = "small danger";
+  del.setAttribute("data-action", "batchdel");
+  del.textContent = bm.checkedIds.length > 0
+    ? T.batchDelete + " (" + bm.checkedIds.length + ")"
+    : T.batchDelete;
+  del.disabled = bm.checkedIds.length === 0;
+  bar.appendChild(all);
+  bar.appendChild(del);
+}
+
 function renderNodeList() {
   var state = lastStateObj;
   var model = nodeListModel(state, lastApplied);
-  var sig = [String(state && state.schema), lastApplied, confirmId || ""];
+  var bm = batchModel(model, checkSet);
+  var sig = [String(state && state.schema), lastApplied, confirmId || "",
+    editMode ? "edit" : "", batchConfirm ? "batch" : ""];
+  bm.checkedIds.forEach(function (id) { sig.push(id); });
   model.rows.forEach(function (row) { sig.push(rowSig(row)); });
   var signature = sig.join("\n");
   if (signature !== listSig) {
@@ -852,6 +957,9 @@ function renderNodeList() {
       els.nList.appendChild(addBtn);
     }
   }
+  renderBatchBar(model, bm);
+  els.editNode.textContent = editMode ? T.done : T.edit;
+  els.editNode.disabled = busy || model.empty;
   var hint = listHint(model, state);
   els.nHint.textContent = hint.text;
   els.nHint.className = "nodehint" + (hint.cls ? " " + hint.cls : "");
@@ -949,6 +1057,32 @@ function askDelete(n) {
   renderNodeList();
 }
 
+// One deletion path for one id or many: filter the manual store, clear the selected pointer
+// when it named a deleted node, drop the rendered outbound when it belonged to one, then
+// persist. The rm runs before the write: a failed rm must leave the node in the store so the
+// removal can be retried.
+function deleteNodes(ids) {
+  var state = lastStateObj;
+  var gone = {};
+  ids.forEach(function (id) { gone[id] = true; });
+  state.manual = (Array.isArray(state.manual) ? state.manual : []).filter(function (x) {
+    return !x || !gone[x.id];
+  });
+  if (gone[state.selected]) { state.selected = ""; }
+  state.revision = (Number(state.revision) || 0) + 1;
+  busy = true;
+  setButtons();
+  renderNodeList();
+  var removeRendered = lastMetaId && gone[lastMetaId];
+  var chain = removeRendered ? exec("rm -f " + OUTBOUND + " " + OUTBOUND_META).then(function (r) {
+    if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
+    lastMetaId = "";
+  }) : Promise.resolve();
+  return chain.then(function () {
+    return writeState(state);
+  });
+}
+
 function confirmDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
   if (lastApplied && lastApplied === n.id) {
@@ -957,27 +1091,39 @@ function confirmDelete(n) {
     toast(T.deleteApplied);
     return;
   }
-  var state = lastStateObj;
-  state.manual = (Array.isArray(state.manual) ? state.manual : []).filter(function (x) {
-    return !x || x.id !== n.id;
-  });
-  if (state.selected === n.id) { state.selected = ""; }
-  state.revision = (Number(state.revision) || 0) + 1;
-  busy = true;
-  setButtons();
-  renderNodeList();
-  // Remove the rendered outbound first: it carries the deleted node's credentials, and a
-  // failed rm must leave the node in the store so the removal can be retried.
-  var removeRendered = lastMetaId && lastMetaId === n.id;
-  var chain = removeRendered ? exec("rm -f " + OUTBOUND + " " + OUTBOUND_META).then(function (r) {
-    if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
-    lastMetaId = "";
-  }) : Promise.resolve();
-  chain.then(function () {
-    return writeState(state);
-  }).then(function () {
+  deleteNodes([n.id]).then(function () {
     confirmId = null;
     toast(T.deleted);
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    setButtons();
+    refreshPage();
+  });
+}
+
+function confirmBatchDelete() {
+  if (busy || !hasBridge || !lastStateObj) { return; }
+  var ids = batchModel(nodeListModel(lastStateObj, lastApplied), checkSet).checkedIds;
+  if (ids.length === 0) {
+    batchConfirm = false;
+    renderNodeList();
+    return;
+  }
+  // The check set never holds the applied row, but a refresh between check and confirm
+  // must not let it sneak in.
+  if (lastApplied && ids.indexOf(lastApplied) >= 0) {
+    batchConfirm = false;
+    renderNodeList();
+    toast(T.deleteApplied);
+    return;
+  }
+  var n = ids.length;
+  deleteNodes(ids).then(function () {
+    checkSet = {};
+    batchConfirm = false;
+    toast(T.deletedN.replace("{n}", String(n)));
   }).catch(function (e) {
     toast(T.actionFailed + ": " + e.message);
   }).then(function () {
@@ -1236,6 +1382,13 @@ function routeHash(route) { return "#/" + route; }
 
 function showRoute(route, opts) {
   route = routeOf(route);
+  // The check set is a temporary intent: leaving the node page (including into the add
+  // page) discards it rather than carrying it across.
+  if (route !== "nodes" && editMode) {
+    editMode = false;
+    checkSet = {};
+    batchConfirm = false;
+  }
   if (currentRoute && currentRoute !== route) {
     scrollByRoute[currentRoute] = window.scrollY || window.pageYOffset || 0;
   }
@@ -1344,6 +1497,14 @@ els.nList.addEventListener("click", function (e) {
   if (!row) { return; }
   var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
   if (!node) { return; }
+  // In edit mode the whole row is the check toggle; the applied row is excluded and
+  // ADR 0007's switch gesture waits outside edit mode.
+  if (editMode) {
+    if (lastApplied && lastApplied === node.id) { return; }
+    if (checkSet[node.id]) { delete checkSet[node.id]; } else { checkSet[node.id] = true; }
+    renderNodeList();
+    return;
+  }
   var action = t.getAttribute ? t.getAttribute("data-action") : "";
   if (action === "delete") { askDelete(node); return; }
   if (action === "cancel") { confirmId = null; renderNodeList(); return; }
@@ -1356,7 +1517,43 @@ els.nList.addEventListener("keydown", function (e) {
   if (!e.target.classList || !e.target.classList.contains("nrow")) { return; }
   e.preventDefault();
   var node = findNodeById(lastStateObj, e.target.getAttribute("data-id"));
-  if (node) { switchTo(node); }
+  if (!node) { return; }
+  if (editMode) {
+    if (lastApplied && lastApplied === node.id) { return; }
+    if (checkSet[node.id]) { delete checkSet[node.id]; } else { checkSet[node.id] = true; }
+    renderNodeList();
+    return;
+  }
+  switchTo(node);
+});
+els.editNode.addEventListener("click", function () {
+  editMode = !editMode;
+  checkSet = {};
+  batchConfirm = false;
+  confirmId = null;
+  renderNodeList();
+});
+els.nToolbar.addEventListener("click", function (e) {
+  var t = e.target;
+  var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
+  if (act === "checkall") {
+    var bm = batchModel(nodeListModel(lastStateObj, lastApplied), checkSet);
+    if (bm.allChecked) {
+      bm.checkableIds.forEach(function (id) { delete checkSet[id]; });
+    } else {
+      bm.checkableIds.forEach(function (id) { checkSet[id] = true; });
+    }
+  } else if (act === "batchdel") {
+    batchConfirm = true;
+  } else if (act === "batchconfirm") {
+    confirmBatchDelete();
+    return;
+  } else if (act === "batchcancel") {
+    batchConfirm = false;
+  } else {
+    return;
+  }
+  renderNodeList();
 });
 els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);

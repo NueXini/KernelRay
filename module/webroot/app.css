@@ -127,6 +127,16 @@ pre {
   line-height: 1; border-radius: 8px;
 }
 .ndel.muted { opacity: .45; }
+.nedit { flex: 0 0 auto; padding: 5px 10px; font-size: 12px; font-weight: 500; border-radius: 8px; }
+.nbatch {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+}
+.nbatch[hidden] { display: none; }
+.nbatch button { flex: 0 0 auto; }
+.nbatch-q { flex: 1; min-width: 0; color: var(--warn); font-size: 13px; }
+.nrow.editing { cursor: default; }
+.nrow.applied.editing { cursor: not-allowed; }
+.ncheck { flex: 0 0 auto; width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 .nactions { display: flex; gap: 6px; flex: 0 0 auto; }
 button.small { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 .nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }

@@ -105,7 +105,7 @@ Open the module card in the KernelSU manager and tap **WebUI**. The page has fou
 them:
 
 - **Status** — start / stop the core and read pid, uptime, ports, core version and config path.
-- **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, and the import card.
+- **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
 - **Settings** — UI language (auto / 中文 / English) and the log buffer size. These are UI
   preferences: they live in the WebView's own storage, not in `state.json`.
@@ -139,6 +139,13 @@ updates it in place and keeps its id, so a rename does not create a duplicate.
 Import only fills the node list; it does not change the selection or how traffic flows. Tap a
 node row afterwards to switch and apply it. Deleting a node needs a second tap; the applied
 node cannot be deleted, and deleting the selected node clears the selection.
+
+**Batch delete.** *Edit* turns the list into a check UI: each row gets a checkbox, tapping a
+row toggles its check, and a toolbar offers select-all and a delete with the checked count.
+The check set lives in memory only — leaving edit mode or the page discards it, and it never
+touches `state.json`. The applied row's checkbox is disabled (it cannot be deleted), and the
+deletion goes through the same path as a single delete, so the selected pointer and the
+rendered outbound are cleaned up the same way.
 
 The parser, the node list model, the outbound renderer and the UI preferences are tested
 without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,

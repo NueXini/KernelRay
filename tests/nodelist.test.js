@@ -24,7 +24,7 @@ if (from < 0 || to < 0) {
 }
 
 const block = js.slice(from, to);
-const L = new Function(block + "\nreturn { nodeListModel: nodeListModel };")();
+const L = new Function(block + "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel };")();
 
 let pass = 0;
 const failures = [];
@@ -139,6 +139,43 @@ check("applied comparison uses the string form of the id", () => {
   const model = L.nodeListModel(state([node("7")], "7"), "7");
   eq(model.rows[0].applied, true);
   eq(model.rows[0].noop, true);
+});
+
+// ---- batch check set (edit mode) ----
+
+function batch(model, checks) {
+  const bm = L.batchModel(model, checks);
+  return [bm.checkableIds, bm.checkedIds, bm.allChecked];
+}
+
+check("batch: the applied node never joins the checkable set", () => {
+  const model = L.nodeListModel(state([node("a"), node("b"), node("c")], "a"), "a");
+  eq(batch(model, {}), [["b", "c"], [], false]);
+});
+
+check("batch: checked ids follow the check set", () => {
+  const model = L.nodeListModel(state([node("a"), node("b"), node("c")], ""), "");
+  eq(batch(model, { b: true, c: true }), [["a", "b", "c"], ["b", "c"], false]);
+});
+
+check("batch: every checkable id checked means allChecked", () => {
+  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  eq(batch(model, { b: true }), [["b"], ["b"], true]);
+});
+
+check("batch: stale check ids that lost their row are ignored", () => {
+  const model = L.nodeListModel(state([node("a")], ""), "");
+  eq(batch(model, { a: true, gone: true }), [["a"], ["a"], true]);
+});
+
+check("batch: no checkable rows is never allChecked", () => {
+  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  eq(batch(model, {}), [[], [], false]);
+});
+
+check("batch: empty list is never allChecked", () => {
+  const model = L.nodeListModel(state([], ""), "");
+  eq(batch(model, {}), [[], [], false]);
 });
 
 if (failures.length) {

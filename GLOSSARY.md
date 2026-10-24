@@ -117,6 +117,12 @@ and a selected-but-unapplied node marked too. This version renders the manually 
 subscription nodes await a subscription feature.
 _Avoid_: node store (that is the data), pool
 
+**勾选 (Check)**:
+The edit-mode mark a user puts on node rows to say which ones a batch delete would remove.
+It is a temporary intent held only while edit mode lasts, and it never moves the selected
+pointer or touches the core. The applied node cannot be checked, because it cannot be deleted.
+_Avoid_: select (that names the 当前节点 pointer), pick, mark
+
 **添加页 (Add-node page)**:
 The second-level page behind the node list's + entry: share links are pasted, parsed and
 imported into the node store there. Opening it or importing from it never switches or
