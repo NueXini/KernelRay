@@ -18,8 +18,8 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | `config.example.json` | repo | the config template (not runnable on its own) |
 | `config.json` | shell | the config the core actually runs |
 | `runtime/applied` | shell | id of the node `config.json` was built from |
-| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node` |
-| `runtime/tproxy` | shell | persisted takeover switch (v0.7) |
+| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy` |
+| `runtime/tproxy` | shell | persisted takeover switch (docs/adr/0004, 0008) |
 
 One writer per file: the UI never writes `config.json`, `runtime/applied` or `status.json`; the
 shell never writes `state.json`, `outbound.json` or `outbound.meta`. No locks are needed for
@@ -30,7 +30,7 @@ mode `0600`, like `state.json`. `pack.sh` excludes them.
 
 ## The template
 
-`module/config.example.json` is the fixed skeleton: local socks/http inbounds, and three
+`module/config.example.json` is the fixed skeleton: local socks/http inbounds, and four
 outbounds —
 
 ```json
@@ -38,7 +38,10 @@ outbounds —
   "__KERNELRAY_OUTBOUND__",
   { "tag": "direct", "protocol": "freedom", "streamSettings": { "sockopt": { "mark": 19283 } } },
   { "tag": "block", "protocol": "blackhole", "settings": {} }
+  ,"__KERNELRAY_DNS_OUTBOUND__"
 ]
+,"dns": "__KERNELRAY_DNS__"
+,"routing": "__KERNELRAY_ROUTING__"
 ```
 
 - `"__KERNELRAY_OUTBOUND__"` is a quoted placeholder; the whole string is replaced. The file
@@ -46,15 +49,49 @@ outbounds —
   by accident.
 - The first outbound is Xray's default when no routing rule matches. Idle fills it with
   `{"tag":"proxy","protocol":"freedom","settings":{}}`; apply fills it with the node outbound
-  (tag `proxy`). No routing rules are needed for v0.6.
-- `direct` is unused in v0.6; it already carries the bypass mark because v0.7 uses it for the
-  DNS bootstrap connection (ADR 0006).
-- `config.json` never contains the placeholder. `kr_render_config` refuses a template without
-  it.
+  (tag `proxy`).
+- The takeover placeholders follow the same trick, one per line, each carrying its own
+  leading comma: `,"__KERNELRAY_TPROXY_INBOUND__"` in `inbounds` and
+  `,"__KERNELRAY_DNS_OUTBOUND__"` in `outbounds`, plus the top-level `"dns"` and `"routing"`
+  keys whose values are quoted placeholders. With takeover on the line is replaced by the
+  real block (authored in `tproxy.sh`); with takeover off the whole line disappears. Both
+  results are valid JSON, and so is the template itself — every placeholder is a quoted string.
+- `config.json` never contains a placeholder. `kr_render_config` refuses a template without
+  the outbound one.
 
 The shell does not parse the outbound. It reads `outbound.json` as an opaque JSON fragment (the
 UI writes one line; newlines are only whitespace if a human pretty-prints it), so protocol
 knowledge stays in the tested JS renderer (`tests/outbound.test.js`).
+
+## The takeover form
+
+Every render decides between the idle form and the takeover form ([ADR 0008](adr/0008-takeover-namespace-boot-and-toggle-semantics.md)):
+
+takeover is rendered when the persisted switch (`runtime/tproxy`) is on **and** the rules are
+actually present (`kr_tp_rules_present`, checked against iptables — switch on without rules is
+the boot-conflict state, and a mark without its ip rule loses routing). Callers can force
+either form with `KR_TAKEOVER=1|0`; the toggle and the boot path force the form they are about
+to enforce.
+
+The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
+`dns-out` outbound; the `dns` module (fixed upstream `https://1.1.1.1/dns-query`, ADR 0006);
+and the routing rules — the applied node's hostname resolves through `direct` (skipped when
+the host is an IP literal), the DNS module's upstream queries go through `proxy`, and port 53
+tcp/udp goes to `dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholder becomes the
+bypass mark 19283; in the idle form it becomes `0` (no mark). The placeholder itself is written
+by the UI renderer, which cannot know the switch state.
+
+Applying a node while takeover is on renders the takeover form — the rules are up, so an
+idle-form config would lose routing for the node outbound. The switch toggle
+(`kernelray.sh tproxy on|off`) reuses the same render → `-test` → swap → restart machinery.
+
+## Boot and the switch
+
+`service.sh` runs `kr_tp_boot` before `kr_start` when the switch is on: it re-renders the
+config to match the switch (the on-disk config may be stale), installs the rules before the
+core starts (fail-closed), and on a conflict or a rule failure writes the idle-form config
+plus the `failed/conflict` / `failed/rules` phase while leaving the switch file untouched —
+intent is never silently rewritten, the WebUI offers a retry (see `docs/adr/0008`).
 
 ## Applying a node
 
@@ -136,9 +173,10 @@ The normal boot path never rewrites the config. An upgrade replaces the whole mo
 
 - `state.selected` is intent; `runtime/applied` is fact. The UI shows both and never equates
   them.
-- The node outbound is always tagged `proxy` and carries no socket mark in v0.6. On Android an
-  arbitrary `SO_MARK` with no matching ip rule loses routing (verified: the node's Reality
-  handshake failed until the mark was removed). Only the template's fixed `direct` outbound
-  carries the v0.7 bypass mark; the node mark must ship together with the v0.7 rules.
+- The node outbound is tagged `proxy` and carries only the `__KERNELRAY_MARK__` placeholder.
+  On Android an arbitrary `SO_MARK` with no matching ip rule loses routing (verified: the
+  node's Reality handshake failed until the mark was removed). The shell turns the placeholder
+  into the bypass mark exactly while the rules are up; only the template's fixed `direct`
+  outbound carries a literal mark, and it is unused while idle.
 - `config.json` is never hand-edited and never shipped in the ZIP.
 - `xray -test` precedes every swap; a candidate that fails never replaces a working config.

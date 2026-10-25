@@ -109,7 +109,7 @@ check("vless: a string alpn is normalised to an array", () => {
 
 check("vless: security none produces no tls/reality block", () => {
   const o = O.outboundOf(node({}));
-  eq(o.streamSettings, { network: "tcp", security: "none" }, "streamSettings");
+  eq(o.streamSettings, { network: "tcp", security: "none", sockopt: { mark: "__KERNELRAY_MARK__" } }, "streamSettings");
 });
 
 // ---- vmess ------------------------------------------------------------------------------
@@ -158,7 +158,7 @@ check("ss: method and password", () => {
   eq(o.settings, {
     servers: [{ address: "d.example.com", port: 8388, method: "aes-256-gcm", password: "secret" }]
   }, "settings");
-  eq(o.streamSettings, { network: "tcp", security: "none" }, "streamSettings");
+  eq(o.streamSettings, { network: "tcp", security: "none", sockopt: { mark: "__KERNELRAY_MARK__" } }, "streamSettings");
 });
 
 // ---- transports -------------------------------------------------------------------------
@@ -203,9 +203,11 @@ check("port strings are coerced to numbers", () => {
   eq(typeof o.settings.vnext[0].port, "number", "port type");
 });
 
-// v0.6 has no bypass ip rule. An arbitrary SO_MARK loses routing on Android (the node's
-// Reality handshake failed until it was removed), so no outbound may carry one yet.
-check("no protocol carries a sockopt mark", () => {
+// The renderer never writes a real mark: a SO_MARK without the matching ip rule loses
+// routing on Android (verified on v0.6). It writes the placeholder, and the shell —
+// which knows the switch state — replaces it with the bypass mark or 0, so mark and
+// rules always ship together (docs/adr/0008).
+check("every protocol carries the mark placeholder, never a real mark", () => {
   const fixtures = [
     node({}),
     node({ protocol: "vmess", uuid: "id" }),
@@ -213,7 +215,7 @@ check("no protocol carries a sockopt mark", () => {
     { protocol: "ss", address: "d.example.com", port: 8388, method: "aes-256-gcm", password: "secret" }
   ];
   fixtures.forEach((n) => {
-    eq(O.outboundOf(n).streamSettings.sockopt, undefined, n.protocol);
+    eq(O.outboundOf(n).streamSettings.sockopt, { mark: "__KERNELRAY_MARK__" }, n.protocol);
   });
 });
 

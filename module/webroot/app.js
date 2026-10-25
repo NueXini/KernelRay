@@ -27,6 +27,16 @@ var DICT_ZH = {
   stoppedHintNone: "核心未运行，也没有应用节点；下次启动会直连。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:10808 就会走已应用的节点。",
   runningHintNone: "核心在运行，但还没有应用节点：客户端指向 127.0.0.1:10808 时是直连。",
+  tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:10808 仍然可用。",
+  tp: "接管",
+  tpNoNode: "先在节点页点一个节点；没有已应用的节点时不能接管，否则所有流量都会被丢弃。",
+  tpOffHint: "关闭中：设备流量直连。打开后设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发。",
+  tpOnHint: "已接管：设备流量经核心转发；ping 等 ICMP 仍直连。冲突或规则失败时关掉开关即可恢复网络。",
+  tpConflict: "接管被冲突阻止：设备上有别的 VPN 或透明代理在运行。处理后再试；关闭开关也可恢复直连。",
+  tpRules: "接管规则安装失败，已回滚（可能漏流量）。详情见 kernelray.log；关闭开关可恢复直连。",
+  tpRetry: "重试接管",
+  tpOnMsg: "正在开启接管…", tpOffMsg: "正在关闭接管…",
+  "failed/rules": "接管规则", "failed/conflict": "接管冲突",
   applyingMsg: "正在应用节点…", appliedMsg: "节点已应用",
   nodeNoState: "没有 state.json，节点信息无从得知",
   nodeSchema: "state.json 的 schema 版本未识别：",
@@ -50,7 +60,7 @@ var DICT_ZH = {
   setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLog: "日志行数",
   setLogHint: "日志页每次拉取的行数；行数越多看得越早。",
-  setSoon: "路由 / DNS 等核心设置会随透明代理（v0.7）提供；目前这里只有界面设置。",
+  setSoon: "路由与 DNS 目前是内置策略：DNS 由核心的 DNS 模块应答并经节点转发；透明代理开关在状态页。",
   addTitle: "添加节点",
   addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
   addPlaceholder: "vless://…",
@@ -75,6 +85,16 @@ var DICT_EN = {
   stoppedHintNone: "The core is stopped and no node is applied; the next start runs direct.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:10808 to use the applied node.",
   runningHintNone: "The core is running direct: no node is applied yet. Clients pointed at 127.0.0.1:10808 go out directly.",
+  tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:10808 still works.",
+  tp: "Takeover",
+  tpNoNode: "Tap a node on the Nodes page first: capture without an applied node would drop all traffic.",
+  tpOffHint: "Off: device traffic goes out directly. On: it is routed through the applied node (TCP/UDP, IPv4/IPv6).",
+  tpOnHint: "On: device traffic goes through the core; ICMP such as ping stays direct. Turning the switch off restores the network.",
+  tpConflict: "Takeover is blocked by a conflict: another VPN or transparent proxy is running. Resolve it and retry; switching off restores direct access.",
+  tpRules: "Installing the takeover rules failed and was rolled back (traffic may leak). See kernelray.log; switching off restores direct access.",
+  tpRetry: "Retry takeover",
+  tpOnMsg: "Enabling takeover…", tpOffMsg: "Disabling takeover…",
+  "failed/rules": "rules", "failed/conflict": "conflict",
   applyingMsg: "Applying node…", appliedMsg: "Node applied",
   nodeNoState: "No state.json, so the nodes are unknown",
   nodeSchema: "Unrecognised state.json schema: ",
@@ -98,7 +118,7 @@ var DICT_EN = {
   setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
   setLog: "Log buffer",
   setLogHint: "How many lines the Log tab fetches each time; more lines reach further back.",
-  setSoon: "Routing/DNS settings arrive with the transparent proxy (v0.7); for now this page holds UI settings only.",
+  setSoon: "Routing and DNS are built-in policy for now: DNS is answered by the core's DNS module and sent through the node; the takeover switch lives on the Status page.",
   addTitle: "Add node",
   addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
   addPlaceholder: "vless://…",
@@ -132,7 +152,8 @@ var els = {
   segLang: $("seg-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
   lSetLangHint: $("l-set-lang-hint"),
   segLog: $("seg-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
-  lSetSoon: $("l-set-soon")
+  lSetSoon: $("l-set-soon"),
+  lTp: $("l-tp"), tpHint: $("tp-hint"), tpSwitch: $("tp-switch"), tpRetry: $("tp-retry")
 };
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
 var pages = {
@@ -147,6 +168,7 @@ var lastState = "unknown";
 var busy = false;
 var pending = null; // "start" | "stop" while the action is in flight
 var lastStateObj = null;
+var lastKv = null;
 var lastApplied = "";
 var lastMetaId = "";
 var confirmId = null;
@@ -187,6 +209,8 @@ function label(key) {
   els.lSetLog.textContent = T.setLog;
   els.lSetLogHint.textContent = T.setLogHint;
   els.lSetSoon.textContent = T.setSoon;
+  els.lTp.textContent = T.tp;
+  els.tpRetry.textContent = T.tpRetry;
   els.tabbar.setAttribute("aria-label", T.navLabel);
 }
 
@@ -586,11 +610,12 @@ function parseInput(text) {
 // template. The shell cannot parse nested JSON (there is no jq on the device), so the
 // protocol knowledge lives here and tests/outbound.test.js runs this exact block.
 //
-// The node outbound deliberately has no sockopt.mark. On Android an arbitrary SO_MARK
-// with no matching ip rule loses routing: the node's Reality handshake failed until the
-// mark was removed. v0.7 must add the mark and the bypass ip rule as one change; the
-// template's fixed direct outbound already carries the mark for that future DNS
-// bootstrap.
+// The node outbound carries the "__KERNELRAY_MARK__" sockopt placeholder, never a real
+// mark: on Android a SO_MARK with no matching ip rule loses routing (the node's Reality
+// handshake failed on v0.6 until the mark was removed). The shell replaces the
+// placeholder with the bypass mark only while takeover is on (docs/adr/0008), keeping
+// mark and rules together; the template's fixed direct outbound keeps its literal mark
+// because an unused outbound creates no socket.
 
 function tlsSettingsOf(n) {
   var t = {};
@@ -641,6 +666,9 @@ function streamSettingsOf(n) {
     if (n.host) { hu.host = String(n.host); }
     if (Object.keys(hu).length) { s.httpupgradeSettings = hu; }
   }
+  // Replaced by the shell with the bypass mark (takeover on) or 0 (off); never a real
+  // mark here, because the renderer cannot know the switch state.
+  s.sockopt = { mark: "__KERNELRAY_MARK__" };
   return s;
 }
 
@@ -690,6 +718,7 @@ function setButtons() {
   els.stop.disabled = busy || !running;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
+  els.tpSwitch.disabled = busy || !(lastKv && lastKv.node);
   if (els.nList) { els.nList.classList.toggle("busy", busy); }
 }
 
@@ -1308,12 +1337,14 @@ function doImport() {
 }
 
 function renderStatus(kv) {
+  lastKv = kv;
   var state = kv.state || "unknown";
   var phase = kv.phase || "";
-  var failed = phase === "config-invalid" || phase === "no-core" || phase === "crashed" || phase === "no-config";
+  var failed = phase === "config-invalid" || phase === "no-core" || phase === "crashed"
+    || phase === "no-config" || phase === "failed/rules" || phase === "failed/conflict";
   var cls = failed ? "failed" : state;
   var text = T[state] || state;
-  if (failed) { text = T.failed + " · " + phase; }
+  if (failed) { text = T.failed + " · " + (T[phase] || phase); }
   els.badge.textContent = text;
   els.badge.className = "badge " + cls;
 
@@ -1326,10 +1357,23 @@ function renderStatus(kv) {
   els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
-    els.hint.textContent = kv.node ? T.runningHint : T.runningHintNone;
+    if (kv.tproxy === "on") { els.hint.textContent = T.tpRunningHint; }
+    else { els.hint.textContent = kv.node ? T.runningHint : T.runningHintNone; }
   } else {
     els.hint.textContent = kv.node ? T.stoppedHint : T.stoppedHintNone;
   }
+
+  // The takeover card follows the persisted switch (kv.tproxy), not rule presence: a
+  // conflict or rule failure leaves the switch on but unenforced, and the hint says so.
+  var tpOn = kv.tproxy === "on";
+  els.tpSwitch.classList.toggle("on", tpOn);
+  els.tpSwitch.setAttribute("aria-checked", tpOn ? "true" : "false");
+  els.tpSwitch.disabled = busy || !kv.node;
+  if (!kv.node) { els.tpHint.textContent = T.tpNoNode; }
+  else if (phase === "failed/conflict") { els.tpHint.textContent = T.tpConflict; }
+  else if (phase === "failed/rules") { els.tpHint.textContent = T.tpRules; }
+  else { els.tpHint.textContent = tpOn ? T.tpOnHint : T.tpOffHint; }
+  els.tpRetry.hidden = phase !== "failed/conflict" || busy;
 
   setButtons();
 }
@@ -1488,6 +1532,11 @@ function run(command, pendingLabel) {
 
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
+els.tpSwitch.addEventListener("click", function () {
+  var target = lastKv && lastKv.tproxy === "on" ? "off" : "on";
+  run("tproxy " + target, target === "on" ? T.tpOnMsg : T.tpOffMsg);
+});
+els.tpRetry.addEventListener("click", function () { run("tproxy on", T.tpOnMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });
 els.nList.addEventListener("click", function (e) {
   var t = e.target;

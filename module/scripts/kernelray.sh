@@ -24,9 +24,23 @@ KR_OUTBOUND=$KR_MODDIR/outbound.json
 KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
 
+# Takeover support (v0.7). Sourced so every entry point -- CLI, service, action,
+# uninstall -- sees the same switch and rule helpers. Missing file (an older layout)
+# only disables the takeover functions; the rest of the module keeps working.
+# shellcheck disable=SC1090,SC1091
+[ -f "$KR_MODDIR/scripts/tproxy.sh" ] && . "$KR_MODDIR/scripts/tproxy.sh"
+
 kr_now() { date +%s; }
 
-kr_log() { printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*"; }
+# The console line goes to the caller (KernelSU log, CLI); the same line lands in the
+# module's own log, which is the one the WebUI's takeover card reads from. A missing
+# log dir (before kr_dirs) is tolerated silently.
+kr_log() {
+  printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*"
+  # 2>/dev/null first: a missing log dir (before kr_dirs) must not print redirection errors.
+  printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*" 2>/dev/null \
+    >>"$KR_LOGDIR/kernelray.log"
+}
 
 kr_dirs() {
   mkdir -p "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
@@ -34,6 +48,7 @@ kr_dirs() {
   chmod 700 "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
   chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" \
     "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" 2>/dev/null
+  [ -n "${KR_TP_SWITCH:-}" ] && chmod 600 "$KR_TP_SWITCH" 2>/dev/null
 }
 
 # There is exactly one core: bin/xray. A core is usable only if it executes here.
@@ -146,9 +161,11 @@ kr_status_write() { # <state> <phase>
   _s=$(cat "$KR_STARTED" 2>/dev/null)
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
   _n=$(kr_applied_id) || _n=""
+  _tp=off
+  command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on && _tp=on
   kr_dirs
-  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s"}\n' \
-    "$1" "$2" "$_s" "$_n" >"$KR_STATUS" 2>/dev/null
+  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","tproxy":"%s"}\n' \
+    "$1" "$2" "$_s" "$_n" "$_tp" >"$KR_STATUS" 2>/dev/null
 }
 
 # Render the template with one outbound. The outbound is passed through the
@@ -172,12 +189,78 @@ kr_render_config() { # <outbound-file|"" for idle>
   else
     _line='{"tag":"proxy","protocol":"freedom","settings":{}}'
   fi
-  KR_OUT_LINE=$_line awk -v ph='"__KERNELRAY_OUTBOUND__"' '
-    BEGIN { out = ENVIRON["KR_OUT_LINE"] }
+  # The config form follows the switch unless the caller forces one: toggle and boot
+  # render the exact form they are about to enforce. Switch on without rules (a boot
+  # conflict) renders idle-form: a mark without its ip rule loses routing.
+  _takeover=${KR_TAKEOVER:-}
+  if [ -z "$_takeover" ]; then
+    if command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on && kr_tp_rules_present; then
+      _takeover=1
+    else
+      _takeover=0
+    fi
+  fi
+  _tp_in=""
+  _dns_out=""
+  _dns=""
+  _routing=""
+  _mark=0
+  if [ "$_takeover" = 1 ]; then
+    if ! kr_tp_render_blocks; then
+      kr_log "could not build the takeover blocks"
+      return 1
+    fi
+    _tp_in=$KR_TP_INBOUND
+    _dns_out=$KR_DNS_OUTBOUND
+    _dns=$KR_DNS_BLOCK
+    _routing=$KR_ROUTING
+    _mark=$KR_BYPASS
+  fi
+  # The outbound and the takeover blocks pass through the environment, not interpolated
+  # into awk's program or a shell string: JSON contains backslashes, quotes and `` $ ``, all
+  # of which an awk -v value or a double-quoted shell expansion would reinterpret.
+  # The takeover placeholder lines carry their leading comma in the template so that
+  # both the replaced (block spliced in) and the removed (line dropped) result stay
+  # valid JSON; the template itself parses because every placeholder is a quoted string.
+  # A takeover config whose node outbound lost its bypass mark would let the OUTPUT
+  # rules capture the core's own connection back into the core: a routing loop. An
+  # outbound without the placeholder (a stale renderer) is refused, not shipped.
+  KR_OUT_LINE=$_line KR_TP_TAKEOVER=$_takeover KR_TP_MARK=$_mark \
+    KR_TP_INBOUND_BLOCK=$_tp_in KR_DNS_OUTBOUND_BLOCK=$_dns_out \
+    KR_DNS_BLOCK=$_dns KR_ROUTING_BLOCK=$_routing awk '
+    BEGIN {
+      out = ENVIRON["KR_OUT_LINE"]
+      gsub(/"__KERNELRAY_MARK__"/, ENVIRON["KR_TP_MARK"], out)
+      tp = ENVIRON["KR_TP_TAKEOVER"]
+      if (tp == 1 && index(out, "\"mark\":" ENVIRON["KR_TP_MARK"]) == 0) {
+        print "kernelray: the node outbound carries no bypass mark; refusing a takeover config" > "/dev/stderr"
+        exit 3
+      }
+    }
     {
-      p = index($0, ph)
-      if (p > 0) print substr($0, 1, p - 1) out substr($0, p + length(ph))
-      else print
+      line = $0
+      ph = "\"__KERNELRAY_OUTBOUND__\""
+      p = index(line, ph)
+      if (p > 0) line = substr(line, 1, p - 1) out substr(line, p + length(ph))
+      if (!tp) {
+        if (line ~ /^[ \t]*,"__(KERNELRAY_TPROXY_INBOUND|KERNELRAY_DNS_OUTBOUND)__"[ \t]*$/) next
+        if (line ~ /^[ \t]*,"(dns|routing)": "__KERNELRAY_(DNS|ROUTING)__"[ \t]*$/) next
+        print line
+        next
+      }
+      ph = "\"__KERNELRAY_TPROXY_INBOUND__\""
+      p = index(line, ph)
+      if (p > 0) { print "," ENVIRON["KR_TP_INBOUND_BLOCK"]; next }
+      ph = "\"__KERNELRAY_DNS_OUTBOUND__\""
+      p = index(line, ph)
+      if (p > 0) { print "," ENVIRON["KR_DNS_OUTBOUND_BLOCK"]; next }
+      ph = "\"__KERNELRAY_DNS__\""
+      p = index(line, ph)
+      if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_DNS_BLOCK"] substr(line, p + length(ph))
+      ph = "\"__KERNELRAY_ROUTING__\""
+      p = index(line, ph)
+      if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_ROUTING_BLOCK"] substr(line, p + length(ph))
+      print line
     }
   ' "$KR_TMPL"
 }
@@ -349,7 +432,7 @@ kr_start_locked() {
   if kr_running; then
     kr_kill_strays "$(kr_pid)"
     kr_log "already running (pid $(kr_pid))"
-    kr_status_write running idle
+    kr_status_write running "${KR_TP_PHASE:-idle}"
     return 0
   fi
   rm -f "$KR_PIDFILE"
@@ -381,7 +464,7 @@ kr_start_locked() {
 
   if kr_running; then
     kr_log "started pid $(kr_pid) core $_core"
-    kr_status_write running idle
+    kr_status_write running "${KR_TP_PHASE:-idle}"
     return 0
   fi
   rm -f "$KR_PIDFILE"
@@ -426,10 +509,16 @@ kr_report() {
   echo "conf:  $KR_CONF"
   _node=$(kr_applied_id) || _node="(none)"
   echo "node:  $_node"
+  if command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on; then
+    echo "tproxy: on (rules $(kr_tp_rules_present && echo present || echo absent), port $KR_TP_PORT)"
+  else
+    echo "tproxy: off"
+  fi
   echo "log:   $KR_LOG"
   if kr_running; then
     echo "pid:   $(kr_pid)"
     echo "ports: 10808 socks / 10809 http (127.0.0.1)"
+    kr_tp_rules_present 2>/dev/null && echo "       $KR_TP_PORT tproxy (wildcard; device traffic)"
   fi
 }
 
@@ -453,6 +542,12 @@ kr_status_kv() {
   _ver=-
   [ -x "$(kr_core)" ] && _ver=$(kr_version_cached)
   [ -n "$_ver" ] || _ver=-
+  _tp=off
+  _rules=absent
+  if command -v kr_tp_switch_on >/dev/null 2>&1; then
+    kr_tp_switch_on && _tp=on
+    kr_tp_rules_present && _rules=present
+  fi
   echo "state=$_state"
   echo "phase=$_phase"
   echo "pid=$_pid"
@@ -462,6 +557,8 @@ kr_status_kv() {
   echo "conf=$KR_CONF"
   echo "log=$KR_LOG"
   echo "node=$_node"
+  echo "tproxy=$_tp"
+  echo "rules=$_rules"
   echo "socks=10808"
   echo "http=10809"
 }
@@ -486,8 +583,19 @@ kr_cli() {
     apply) kr_apply "${1:-}" ;;
     status) kr_status_kv ;;
     log) kr_tail "${1:-200}" ;;
+    tproxy)
+      case "${1:-}" in
+        on) kr_tproxy_on ;;
+        off) kr_tproxy_off ;;
+        status) kr_tproxy_status ;;
+        *)
+          echo "usage: kernelray.sh tproxy {on|off|status}" >&2
+          return 2
+          ;;
+      esac
+      ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|tproxy {on|off|status}|status|log [lines]}" >&2
       return 2
       ;;
   esac

@@ -25,10 +25,26 @@ The core is up and listening on its own local inbounds, and no device traffic is
 into it. The opposite of transparent proxying.
 _Avoid_: running, normal mode, passive mode
 
+**失败规则 (failed/rules)**:
+The status phase meaning rule installation failed and was rolled back — the one takeover
+failure that can leak traffic. It is written, never inferred by callers.
+_Avoid_: rules error, install failed
+
+**失败冲突 (failed/conflict)**:
+The status phase meaning takeover was refused because a foreign VPN/TUN or TPROXY setup owns
+the traffic (see 冲突). The device keeps its network; only the takeover is not enforced.
+_Avoid_: blocked, busy
+
 **透明代理 (Transparent proxy)**:
 Device traffic entering the core without any app being configured with a proxy address. It is a
 behaviour the user can observe, not a mechanism.
 _Avoid_: tproxy, hijack, redirection
+
+**旁路标记 (Bypass mark)**:
+The socket mark every core-owned outbound socket carries while takeover is on, which the policy
+routing uses to exempt the core's own connections from capture. It only ever exists together
+with the rules that read it: a mark without its matching rule loses routing.
+_Avoid_: fwmark, SO_MARK (those name the mechanism, not the role)
 
 **TPROXY**:
 The Linux netfilter and policy-routing mechanism the module uses to reach transparent proxying.

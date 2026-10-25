@@ -3,24 +3,29 @@
 A [KernelSU](https://kernelsu.org) module that runs an [Xray-core](https://github.com/XTLS/Xray-core)
 on an Android device.
 
-**v0.6 — switch between nodes, still no transparent proxy.** The core starts on boot and exposes
-local `socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node
-switches the core to it, so clients pointed at the socks port go through that node. System
-traffic is not intercepted yet — no TPROXY, DNS hijacking, TUN or routing rules. That is v0.7.
+**v0.7 — transparent proxy (TPROXY takeover).** The core starts on boot and exposes local
+`socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node switches
+the core to it. After a node is applied, the takeover switch in the WebUI turns on transparent
+proxying: the module installs iptables TPROXY rules and policy routing so all device traffic
+(TCP/UDP, IPv4/IPv6, every UID) enters the core, and DNS is answered by the core's DNS module
+through the node. Takeover is **off by default**, never enables itself, and is fail-closed:
+while it is on, a dead core means no traffic instead of leaked traffic.
 
 ## What it does
 
 | | |
 | --- | --- |
-| starts on boot | `service.sh` (late_start service) launches the core with the applied config, or direct when none is applied |
+| starts on boot | `service.sh` (late_start service) launches the core with the applied config, or direct when none is applied; with the takeover switch on it installs the rules first |
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
-| listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) |
+| listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http), wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node; `freedom` (direct) until a node is applied |
 | switches to a node | tapping a row in the WebUI writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core |
+| takes over device traffic | the takeover switch (WebUI status card or `kernelray.sh tproxy on`) installs the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
+| answers DNS | port 53 is captured into the core's DNS module (fixed DoH upstream `https://1.1.1.1/dns-query`) and its queries go through the node; the applied node's own hostname resolves direct |
 | action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop, log, import nodes, switch the applied node from the node list |
+| WebUI | start / stop, takeover switch, log, import nodes, switch the applied node from the node list |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
-| log | `logs/xray.log` in the module dir |
+| log | `logs/xray.log` (core) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
 
 > **Everything lives in the module dir.** Nothing is written outside it, so uninstalling leaves no
 > residue. The flip side: a module update replaces that directory wholesale, so `config.json`,
@@ -31,6 +36,38 @@ Point any app, Termux command or adb-forwarded client at the socks port to check
 core really is forwarding traffic — a live pid alone proves nothing. Without an applied node
 the core forwards direct; after tapping a node in the WebUI the same request exits through it.
 
+## Transparent proxy (takeover)
+
+The takeover switch is the whole UI for the feature, and it is deliberately boring:
+
+- **Off by default.** An update or reinstall resets it (the module dir is replaced wholesale),
+  so the module never starts intercepting traffic unasked. It requires an applied node first.
+- **Fail-closed.** While it is on, the rules exist independently of the core's health: they are
+  installed before the core starts, and a core that crashes later leaves them in place, so
+  traffic is dropped instead of going out direct. Recovery is turning the switch off — that
+  works without network.
+- **What is captured.** Device-local TCP and UDP, IPv4 and IPv6, all UIDs — including DNS,
+  even queries aimed at a LAN resolver. Bypassed: loopback, private/link-local/multicast
+  ranges, DHCP, and the core's own connections (via the bypass mark). ICMP stays direct:
+  `ping` is not proxied, that is documented behaviour, not a bug.
+- **Conflicts refuse to fight.** A UP `tun*`/`wg*` interface, an always-on VPN setting or a
+  foreign `-j TPROXY` rule blocks enabling with `failed/conflict`. Detection is heuristic; the
+  rule of thumb stands: only one transparent proxy may be active. After a boot-time conflict
+  the module stays idle and the WebUI offers a retry; the switch itself is not silently reset.
+- **The listener is not an open proxy.** The tproxy inbound binds a wildcard address; a filter
+  rule drops direct access to port 10810 from anything but loopback.
+
+Recovery cheat sheet: device offline with the switch on means the core died — start it again
+or run `kernelray.sh tproxy off`; `failed/rules` means an install failed and was rolled back
+(see `logs/kernelray.log`); `failed/conflict` means another VPN owns the traffic. The bypass
+routing copies the current default route at enable time; if the network changes while
+takeover is on, toggle the switch off and on again to rebuild it.
+
+The mechanism details — namespace values, boot and toggle semantics, the mark placeholder —
+are pinned down in [`docs/adr/0008`](docs/adr/0008-takeover-namespace-boot-and-toggle-semantics.md),
+built on [`docs/adr/0004`](docs/adr/0004-tproxy-takeover-is-module-owned-and-fail-closed.md)
+and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
+
 ## Layout
 
 | Path | Purpose |
@@ -38,6 +75,7 @@ the core forwards direct; after tapping a node in the WebUI the same request exi
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, apply, status; also the CLI used by the WebUI |
+| `module/scripts/tproxy.sh` | takeover: rule install/remove, conflict detection, boot path, the `tproxy` CLI; sourced by `kernelray.sh` |
 | `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
 | `module/webroot/app.css` | WebUI styles, including the light/dark palettes |
 | `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, renders the node list, renders the tapped node as an Xray outbound, drives the CLI |
@@ -48,7 +86,8 @@ the core forwards direct; after tapping a node in the WebUI the same request exi
 | `tests/outbound.test.js` | node → Xray outbound renderer tests, run against the shipped block |
 | `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
 | `tests/prefs.test.js` | Settings-page preference (language, log buffer) normalise/load/save tests, run against the shipped block |
-| `tests/config.test.js` | template assembly, apply failure paths and start rollback, run against the shipped shell + a fake core |
+| `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths and start rollback, run against the shipped shell + a fake core |
+| `tests/tproxy.test.js` | rule install/remove, conflict detection and the boot path, run against fake iptables/ip binaries |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
@@ -94,6 +133,21 @@ After switching to a node in the WebUI, the same `curl` exits through that node;
 is a direct freedom connection. The socks request proves the core works either way, so check
 `runtime/applied` when the question is which path it took.
 
+With takeover on, verify that device traffic — not just the socks client — goes through:
+
+```sh
+adb shell su -c 'iptables -t mangle -S KR_TP_OUTPUT | head'   # the module's own rules
+adb shell su -c 'cat /data/adb/modules/kernelray/runtime/status.json'   # "tproxy":"on"
+adb shell su -c 'cat /data/adb/modules/kernelray/logs/kernelray.log'
+# a plain (non-socks) request from the device must exit through the node:
+adb shell su -c 'curl -sS -o /dev/null -w "%{http_code} %{remote_ip}\n" https://www.gstatic.com/generate_204'
+```
+
+The `%{remote_ip}` is the node's exit, not the device's WAN IP. DNS is checked the same way:
+`adb shell su -c 'ping -c1 -W2 host.example'` does not prove DNS (ICMP is direct), so use
+`adb shell su -c 'nslookup www.google.com'` and compare the answer against what the node's
+region would return.
+
 ## WebUI
 
 <p align="center"><img src="docs/webui.png" width="300" alt="KernelRay WebUI"></p>
@@ -104,7 +158,8 @@ Open the module card in the KernelSU manager and tap **WebUI**. The page has fou
 **Status**, **Nodes**, **Log** and **Settings** — with the title and runtime badge pinned above
 them:
 
-- **Status** — start / stop the core and read pid, uptime, ports, core version and config path.
+- **Status** — start / stop the core, the takeover switch (with its conflict / failure hints),
+  and pid, uptime, ports, core version and config path.
 - **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
 - **Settings** — UI language (auto / 中文 / English) and the log buffer size. These are UI
@@ -152,7 +207,9 @@ without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
 `node tests/outbound.test.js` and `node tests/prefs.test.js` extract the marked blocks from
 the shipped `app.js`.
 `node tests/config.test.js` sources the shipped shell against a fake core and checks template
-assembly, escaping, apply's failure paths and the start-rollback path.
+assembly, escaping, the idle/takeover render forms, apply's failure paths and the
+start-rollback path. `node tests/tproxy.test.js` runs the rule installer, conflict detection
+and boot path against fake `iptables`/`ip` binaries that log their arguments.
 
 The page is a dumb client: every core action runs the same CLI the shell uses, so behaviour
 cannot diverge between the two entry points.
@@ -163,6 +220,9 @@ cannot diverge between the two entry points.
 /data/adb/modules/kernelray/scripts/kernelray.sh start
 /data/adb/modules/kernelray/scripts/kernelray.sh stop
 /data/adb/modules/kernelray/scripts/kernelray.sh apply <node-id>
+/data/adb/modules/kernelray/scripts/kernelray.sh tproxy on     # takeover: needs an applied node
+/data/adb/modules/kernelray/scripts/kernelray.sh tproxy off    # removes the rules, keeps the core
+/data/adb/modules/kernelray/scripts/kernelray.sh tproxy status
 ```
 
 `apply` is the last step of the WebUI flow: it expects `outbound.json` and `outbound.meta` to
@@ -173,13 +233,12 @@ No build step and no `npm install`: `webroot/index.html`, `app.css` and `app.js`
 as-is, and the page talks to the manager through the injected `ksu.exec` bridge. Opened outside
 the manager it says so instead of pretending to work.
 
-## Deliberately out of scope (v0.6)
+## Deliberately out of scope (v0.7)
 
-Transparent proxy (TPROXY/iptables), DNS hijacking, routing/geo rules, fetching a subscription
-URL (the page has no TLS-validating fetcher, and a subscription URL *is* a credential),
-hand-editing `config.json`, per-app proxying, TUN, watchdog/auto-restart, multi-core support
-(sing-box/mihomo/…). The transparent proxy is the next slice (v0.7); the rest are parked, not
-rejected — see `docs/adr/`.
+Routing/geo rules beyond the fixed DNS and bypass policy, fetching a subscription URL (the page
+has no TLS-validating fetcher, and a subscription URL *is* a credential), hand-editing
+`config.json`, per-app proxying/bypass, tethering/forwarded traffic, TUN, watchdog/auto-restart,
+multi-core support (sing-box/mihomo/…) — parked, not rejected; see `docs/adr/`.
 
 ## Releasing a new version
 

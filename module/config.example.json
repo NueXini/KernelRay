@@ -23,6 +23,7 @@
       "protocol": "http",
       "settings": {}
     }
+    ,"__KERNELRAY_TPROXY_INBOUND__"
   ],
   "outbounds": [
     "__KERNELRAY_OUTBOUND__",
@@ -32,7 +33,7 @@
       "settings": {},
       "streamSettings": {
         "sockopt": {
-          "mark": 19283
+          "mark": 19282
         }
       }
     },
@@ -41,5 +42,8 @@
       "protocol": "blackhole",
       "settings": {}
     }
+    ,"__KERNELRAY_DNS_OUTBOUND__"
   ]
+  ,"dns": "__KERNELRAY_DNS__"
+  ,"routing": "__KERNELRAY_ROUTING__"
 }

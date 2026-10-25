@@ -19,6 +19,7 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 set_perm "$MODPATH/scripts/kernelray.sh" 0 0 0755
+set_perm "$MODPATH/scripts/tproxy.sh" 0 0 0755
 
 KR_MODDIR=$MODPATH
 export KR_MODDIR
@@ -37,7 +38,9 @@ kr_status_write installed idle
 
 ui_print "- Installed. Core starts on boot; until a node is applied it runs direct on"
 ui_print "  socks 127.0.0.1:10808 and http 127.0.0.1:10809."
-ui_print "- Select a node in the WebUI (Nodes -> Apply node) to derive the core config."
+ui_print "- Select a node in the WebUI (Nodes -> tap a row) to derive the core config."
+ui_print "- Transparent proxy: after a node is applied, switch takeover on in the WebUI."
+ui_print "  It is off by default and never enables itself."
 ui_print "- Config: /data/adb/modules/$KR_ID/config.json (generated; do not hand-edit)"
 ui_print "- Log:    /data/adb/modules/$KR_ID/logs/xray.log"
 ui_print "! Everything lives in this module dir. A module update replaces it whole,"

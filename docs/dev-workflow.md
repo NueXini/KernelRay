@@ -149,6 +149,19 @@ adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第
 `runtime/applied`。切换失败时列表会把刚点的行标成“未应用”、原节点仍显示“已应用”。
 重新导入保留 id 时该行会显示“有改动”，再点一次它就重新应用。
 
+**开启接管（v0.7）**：应用节点后，在 Status 页打开接管开关，或直接：
+
+```sh
+adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh tproxy on'
+adb -s $D shell 'su -c "iptables -t mangle -S"' | grep KR_TP_        # 规则应存在
+adb -s $D shell 'su -c "cat /data/adb/modules/kernelray/logs/kernelray.log"'   # 装/拆/冲突判定
+adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh tproxy status'
+```
+
+模拟器（x86_64 + ARM 翻译）能装规则但别当真机结论：内核要有 `xt_TPROXY`/`nf_tproxy_core`。
+验证接管真的生效要用普通（非 socks）请求看出口 IP，见 README 的 Verify 一节。关掉：
+`tproxy off`，或 UI 开关。**开关开着时停掉核心 = 断网**（fail-closed），这是设计行为。
+
 ## 8. 在 WebUI 里输入文字（最容易上当的一步）
 
 - 先 `input tap` 点中输入框，**等 2–3 秒**，再用 `input keyboard text '<内容>'`。

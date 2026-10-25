@@ -39,7 +39,8 @@ const fixture = {
     network: "ws",
     security: "tls",
     tlsSettings: { serverName: "n.example.com", alpn: ["h2", "http/1.1"] },
-    wsSettings: { path: "/ws", headers: { Host: "cdn.example.com" } }
+    wsSettings: { path: "/ws", headers: { Host: "cdn.example.com" } },
+    sockopt: { mark: "__KERNELRAY_MARK__" }
   }
 };
 
@@ -113,13 +114,19 @@ function makeModule(core) {
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), core || fakeCore, "utf8");
   fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+  // kernelray.sh sources the takeover helpers from $KR_MODDIR/scripts, so the fixture
+  // needs the real tproxy.sh for the takeover render paths.
+  fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
+    path.join(dir, "scripts", "tproxy.sh"));
   return {
     dir: dir,
     config: path.join(dir, "config.json"),
     outbound: path.join(dir, "outbound.json"),
     meta: path.join(dir, "outbound.meta"),
     applied: path.join(dir, "runtime", "applied"),
-    status: path.join(dir, "runtime", "status.json")
+    status: path.join(dir, "runtime", "status.json"),
+    tproxy: path.join(dir, "runtime", "tproxy")
   };
 }
 
@@ -159,6 +166,7 @@ function readJson(p) {
 }
 
 const BODY_RENDER = '. "$KR_TEST_SCRIPT"; kr_render_config "$1"';
+const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$1"';
 const BODY_ENSURE = '. "$KR_TEST_SCRIPT"; kr_ensure_config';
 const BODY_STATUS = '. "$KR_TEST_SCRIPT"; kr_status_write "$1" "$2"';
 const BODY_APPLY = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply "$1"';
@@ -170,35 +178,44 @@ const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 check("template: valid JSON with the quoted outbound placeholder", () => {
   const t = JSON.parse(fs.readFileSync(template, "utf8"));
   eq(t.outbounds[0], "__KERNELRAY_OUTBOUND__", "placeholder");
-  eq(t.outbounds.length, 3, "outbound slots");
+  eq(t.outbounds.length, 4, "outbound slots (proxy, direct, block, dns-out placeholder)");
+  if (t.inbounds.indexOf("__KERNELRAY_TPROXY_INBOUND__") < 0) {
+    throw new Error("the tproxy inbound placeholder is missing");
+  }
+  eq(t.dns, "__KERNELRAY_DNS__", "dns placeholder");
+  eq(t.routing, "__KERNELRAY_ROUTING__", "routing placeholder");
 });
 
 check("idle render: the template becomes a valid 3-outbound config", () => {
   const m = makeModule();
   const out = runShell(m.dir, BODY_RENDER, [""]);
-  if (out.indexOf("__KERNELRAY_OUTBOUND__") >= 0) {
-    throw new Error("placeholder survived rendering");
+  if (out.indexOf("__KERNELRAY") >= 0) {
+    throw new Error("a placeholder survived rendering");
   }
   const cfg = JSON.parse(out);
   eq(cfg.log.loglevel, "warning", "log settings preserved");
-  eq(cfg.inbounds.length, 2, "both local inbounds kept");
+  eq(cfg.inbounds.length, 2, "both local inbounds kept, no tproxy inbound");
   eq(cfg.outbounds.length, 3, "proxy + direct + block");
   eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle proxy");
   eq(cfg.outbounds[1].tag, "direct", "direct tag");
-  eq(cfg.outbounds[1].streamSettings.sockopt.mark, 19283, "direct bypass mark");
+  eq(cfg.outbounds[1].streamSettings.sockopt.mark, 19282, "direct bypass mark");
   eq(cfg.outbounds[2].tag, "block", "block tag");
+  eq(cfg.dns, undefined, "no dns block while idle");
+  eq(cfg.routing, undefined, "no routing block while idle");
 });
 
 check("node render: outbound.json is spliced verbatim, special characters included", () => {
   const m = makeModule();
   writeOutbound(m);
   const out = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
-  if (out.indexOf("__KERNELRAY_OUTBOUND__") >= 0) {
-    throw new Error("placeholder survived rendering");
+  if (out.indexOf("__KERNELRAY") >= 0) {
+    throw new Error("a placeholder survived rendering");
   }
   const cfg = JSON.parse(out);
   eq(cfg.outbounds.length, 3, "still three outbounds");
-  eq(cfg.outbounds[0], fixture, "the node outbound is first, so it is the default");
+  eq(cfg.outbounds[0], Object.assign({}, fixture,
+    { streamSettings: Object.assign({}, fixture.streamSettings,
+      { sockopt: { mark: 0 } }) }), "the node outbound carries mark 0 while idle");
   eq(cfg.outbounds[0].settings.servers[0].password, fixture.settings.servers[0].password, "escaping round-trip");
 });
 
@@ -206,7 +223,106 @@ check("node render: a pretty-printed outbound file also works", () => {
   const m = makeModule();
   writeOutbound(m, { pretty: true, newline: true });
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
-  eq(cfg.outbounds[0], fixture, "outbound");
+  eq(cfg.outbounds[0].settings.servers[0].password, fixture.settings.servers[0].password, "outbound");
+});
+
+// ---- takeover render -------------------------------------------------------------------
+
+check("takeover render: tproxy inbound, dns module and routing are spliced in", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  const out = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  if (out.indexOf("__KERNELRAY") >= 0) {
+    throw new Error("a placeholder survived rendering");
+  }
+  const cfg = JSON.parse(out);
+  eq(cfg.inbounds.length, 3, "socks + http + tproxy");
+  const tp = cfg.inbounds[2];
+  eq(tp.tag, "tp-in", "tproxy tag");
+  eq(tp.port, 10810, "tproxy port");
+  eq(tp.protocol, "dokodemo-door", "tproxy protocol");
+  eq(tp.settings.network, "tcp,udp", "tcp and udp");
+  eq(tp.streamSettings.sockopt.tproxy, "tproxy", "sockopt tproxy");
+  eq(cfg.outbounds.length, 4, "proxy + direct + block + dns-out");
+  eq(cfg.outbounds[3], { tag: "dns-out", protocol: "dns", settings: {} }, "dns-out");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "node outbound carries the bypass mark");
+  eq(cfg.dns, { servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns upstream: A-only, so apps never leak over v6");
+  eq(cfg.routing.rules[0], {
+    inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct"
+  }, "the node host resolves through direct (bootstrap)");
+  eq(cfg.routing.rules[1], { inboundTag: ["dns"], outboundTag: "proxy" }, "dns upstream goes through the proxy");
+  eq(cfg.routing.rules[2], { network: "tcp,udp", port: 53, outboundTag: "dns-out" }, "port 53 to dns-out");
+  eq(cfg.routing.rules.length, 3, "no other rules");
+});
+
+check("takeover render: a pinned node address lands in the dns hosts", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "203.0.113.9\n");
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  eq(cfg.dns.hosts, { "full:n.example.com": "203.0.113.9" }, "hosts pin");
+  eq(cfg.routing.rules[0].outboundTag, "direct", "bootstrap rule kept");
+});
+
+check("takeover render: an IP node produces no bootstrap domain rule", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  fs.writeFileSync(m.meta, "id=" + ID + "\nhost=203.0.113.10\n");
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  eq(cfg.routing.rules.length, 2, "only the dns and port-53 rules");
+  eq(cfg.routing.rules[0], { inboundTag: ["dns"], outboundTag: "proxy" }, "dns upstream first");
+});
+
+check("takeover render: an IPv6 node literal produces no bootstrap domain rule", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  fs.writeFileSync(m.meta, "id=" + ID + "\nhost=2001:db8::1\n");
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  eq(cfg.routing.rules.length, 2, "only the dns and port-53 rules");
+});
+
+check("takeover render: the mark is 0, never a live mark, when takeover is forced off", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  fs.writeFileSync(m.tproxy, "on\n");
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "0" }));
+  eq(cfg.inbounds.length, 2, "no tproxy inbound");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark 0");
+  eq(cfg.routing, undefined, "no routing");
+});
+
+check("takeover render: an outbound without the mark placeholder is refused", () => {
+  const m = makeModule();
+  // A stale renderer could write an unmarked outbound; under takeover its packets
+  // would be captured back into the core: a routing loop. The render must fail.
+  fs.writeFileSync(m.outbound, JSON.stringify(fixture).replace(
+    /,"sockopt":\{"mark":"__KERNELRAY_MARK__"\}/, ""));
+  fs.writeFileSync(m.meta, "id=" + ID + "\nhost=n.example.com\n");
+  const r = runFail(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  if (!/no bypass mark/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the mark refusal, got: " + (r.stdout + r.stderr));
+  }
+});
+
+check("render follows the switch when rules are present, and stays idle when they are not", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  fs.writeFileSync(m.tproxy, "on\n");
+  // No stubs: iptables is missing or finds no rules here, so the render must stay idle.
+  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.inbounds.length, 2, "switch without rules renders idle-form");
+
+  fs.mkdirSync(path.join(m.dir, "stubs"), { recursive: true });
+  fs.writeFileSync(path.join(m.dir, "stubs", "iptables"), "#!/bin/sh\nexit 0\n");
+  fs.writeFileSync(path.join(m.dir, "stubs", "ip6tables"), "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(path.join(m.dir, "stubs", "iptables"), 0o755);
+  fs.chmodSync(path.join(m.dir, "stubs", "ip6tables"), 0o755);
+  const stubPath = path.join(m.dir, "stubs") + ":" + process.env.PATH;
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], {
+    PATH: process.platform === "win32" ? shPath(path.join(m.dir, "stubs")) + ";" + process.env.PATH : stubPath
+  }));
+  eq(cfg.inbounds.length, 3, "switch plus rules renders takeover-form");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
 });
 
 check("a template without the placeholder is refused", () => {
@@ -234,7 +350,8 @@ check("ensure: a deleted config is rebuilt from the applied outbound", () => {
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_ENSURE);
   const cfg = readJson(m.config);
-  eq(cfg.outbounds[0], fixture, "applied outbound");
+  eq(cfg.outbounds[0].settings, fixture.settings, "applied outbound");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped while the switch is off");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id kept");
 });
 
@@ -255,7 +372,8 @@ check("apply: a stopped core gets the new config and the applied id", () => {
   writeOutbound(m);
   runShell(m.dir, BODY_APPLY, [ID]);
   const cfg = readJson(m.config);
-  eq(cfg.outbounds[0], fixture, "config carries the node outbound");
+  eq(cfg.outbounds[0].settings, fixture.settings, "config carries the node outbound");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped while the switch is off");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id");
   const st = readJson(m.status);
   eq(st.state, "stopped", "state");
