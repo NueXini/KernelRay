@@ -143,9 +143,10 @@ kr_cleanup_legacy() {
   rm -f "$KR_RUNDIR/arch" "$KR_RUNDIR/watch.lock" 2>/dev/null
 }
 
-# Applied node id: the node the current config was built from. Empty when the core
-# runs the idle (freedom) config. Only hex/alphanumeric ids (plus _ and -) are
-# accepted, so the value is safe to splice into paths, status JSON and the UI.
+# Applied node id: the node the current config was built from. Empty when nothing has
+# been applied, in which case nothing may start (ADR 0010). Only hex/alphanumeric ids
+# (plus _ and -) are accepted, so the value is safe to splice into paths, status JSON
+# and the UI.
 kr_applied_id() {
   [ -s "$KR_APPLIED" ] || return 1
   _a=$(sed -n '1p' "$KR_APPLIED" 2>/dev/null)
@@ -192,7 +193,7 @@ kr_status_write() { # <state> <phase>
 # expansion would reinterpret. The placeholder is a quoted string so the template stays
 # valid JSON for tooling, but replacing the whole string leaves a runnable config only
 # after the module renders it.
-kr_render_config() { # <outbound-file|"" for idle>
+kr_render_config() { # <outbound-file>
   _ob=${1:-}
   if [ ! -f "$KR_TMPL" ]; then
     kr_log "missing config template $KR_TMPL"
@@ -206,11 +207,13 @@ kr_render_config() { # <outbound-file|"" for idle>
     kr_log "config template $KR_TMPL has no inbound port placeholders"
     return 1
   fi
-  if [ -n "$_ob" ] && [ -s "$_ob" ]; then
-    _line=$(cat "$_ob") || return 1
-  else
-    _line='{"tag":"proxy","protocol":"freedom","settings":{}}'
+  # No outbound, no config: the core only ever runs a config derived from an applied
+  # node (ADR 0010). There is no freedom fallback to fall back to.
+  if [ -z "$_ob" ] || [ ! -s "$_ob" ]; then
+    kr_log "no node outbound to render; apply a node first"
+    return 1
   fi
+  _line=$(cat "$_ob") || return 1
 
   # The config form follows the switch unless the caller forces one: toggle and boot
   # render the exact form they are about to enforce. Switch on without rules (a boot
@@ -298,22 +301,21 @@ kr_render_config() { # <outbound-file|"" for idle>
 
 # Generate config.json only when it is absent. The normal boot path never calls this:
 # apply already wrote the config. It exists so a deleted config falls back to the
-# applied node when it can still be reconstructed, and to idle (clearing the applied
-# id) when it cannot -- claiming a node is applied when the config is direct would be
-# worse than admitting the fallback.
+# applied node when it can still be reconstructed; when it cannot, the caller starts
+# nothing -- the core only ever runs a config derived from an applied node (ADR 0010).
 kr_ensure_config() {
   if [ -f "$KR_CONF" ]; then return 0; fi
   kr_dirs
-  _ob=""
   _n=$(kr_applied_id) || _n=""
-  if [ -n "$_n" ]; then
-    if [ "$(kr_meta_get id 2>/dev/null)" = "$_n" ] && [ -s "$KR_OUTBOUND" ]; then
-      _ob=$KR_OUTBOUND
-    else
-      kr_log "applied id $_n has no matching outbound; falling back to idle"
-      rm -f "$KR_APPLIED"
-    fi
+  if [ -z "$_n" ]; then
+    kr_log "no applied node; not creating a config"
+    return 1
   fi
+  if [ "$(kr_meta_get id 2>/dev/null)" != "$_n" ] || [ ! -s "$KR_OUTBOUND" ]; then
+    kr_log "applied id $_n has no matching outbound; not creating a config"
+    return 1
+  fi
+  _ob=$KR_OUTBOUND
   # Keep the .json suffix: xray -test picks the format from the file name.
   _tmp=$KR_RUNDIR/config.new.json
   if ! kr_render_config "$_ob" >"$_tmp"; then
@@ -325,11 +327,7 @@ kr_ensure_config() {
     rm -f "$_tmp"
     return 1
   fi
-  if [ -n "$_ob" ]; then
-    kr_log "created config $KR_CONF from applied node $_n"
-  else
-    kr_log "created idle config $KR_CONF"
-  fi
+  kr_log "created config $KR_CONF from applied node $_n"
 }
 
 # Swap an already-tested candidate into config.json: back up the current config, stop a
@@ -382,21 +380,22 @@ kr_swap_config() { # <candidate> <applied-id|"">
       if [ -f "$_prev" ]; then
         mv -f "$_prev" "$KR_CONF"
         chmod 600 "$KR_CONF" 2>/dev/null
+        if [ -n "$_old" ]; then
+          printf '%s\n' "$_old" >"$KR_APPLIED"
+        else
+          rm -f "$KR_APPLIED"
+        fi
+        if kr_start; then
+          echo "new config failed to start; previous config restored" >&2
+        else
+          echo "new config failed to start; previous config restored but the core did not start" >&2
+        fi
       else
-        # The old config disappeared while the core was running. Removing the failed
-        # candidate lets kr_start fall back to idle (and clear the applied id) instead
-        # of starting a config that just failed.
-        rm -f "$KR_CONF"
-      fi
-      if [ -n "$_old" ]; then
-        printf '%s\n' "$_old" >"$KR_APPLIED"
-      else
-        rm -f "$KR_APPLIED"
-      fi
-      if kr_start; then
-        echo "new config failed to start; previous config restored" >&2
-      else
-        echo "new config failed to start; previous config restored but the core did not start" >&2
+        # Nothing to restore: without a config the applied id is void, and the core
+        # stays down rather than running anything not derived from an applied node.
+        rm -f "$KR_CONF" "$KR_APPLIED"
+        kr_status_write stopped no-node
+        echo "new config failed to start; no previous config, the core stays stopped" >&2
       fi
       return 1
     fi
@@ -472,19 +471,20 @@ kr_apply_ports() {
     echo "core missing or not executable" >&2
     return 1
   fi
-  # Same reconstruction rule as kr_ensure_config: the applied node's outbound when the
-  # bookkeeping is consistent, idle otherwise -- claiming a node is applied while the
-  # config renders direct would be worse than admitting the fallback.
-  _ob=""
-  _n=$(kr_applied_id) || _n=""
-  if [ -n "$_n" ]; then
-    if [ "$(kr_meta_get id 2>/dev/null)" = "$_n" ] && [ -s "$KR_OUTBOUND" ]; then
-      _ob=$KR_OUTBOUND
-    else
-      kr_log "ports: applied id $_n has no matching outbound; rendering idle"
-      rm -f "$KR_APPLIED"
-    fi
+  # Same rule as kr_ensure_config: the applied node's outbound, or a refusal when the
+  # bookkeeping is broken -- claiming direct while a node is applied would be worse
+  # than refusing the ports change.
+  _n=$(kr_applied_id) || {
+    kr_log "ports: no applied node"
+    echo "no applied node; apply a node first" >&2
+    return 1
+  }
+  if [ "$(kr_meta_get id 2>/dev/null)" != "$_n" ] || [ ! -s "$KR_OUTBOUND" ]; then
+    kr_log "ports: applied id $_n has no matching outbound"
+    echo "outbound.json does not match the applied node; re-tap the node in the WebUI" >&2
+    return 1
   fi
+  _ob=$KR_OUTBOUND
   # Keep the .json suffix: xray -test picks the format from the file name.
   _tmp=$KR_RUNDIR/config.new.json
   if ! kr_render_config "$_ob" >"$_tmp"; then
@@ -534,6 +534,15 @@ kr_start_locked() {
     return 1
   fi
   kr_version_refresh
+  # The gate: the core never runs a config that is not derived from an applied node
+  # (ADR 0010). Without one there is nothing to start; the honest status is a stop,
+  # not a direct run.
+  if ! kr_applied_id >/dev/null; then
+    kr_log "no applied node; the core stays stopped"
+    echo "no applied node; tap a node in the node list to apply one first" >&2
+    kr_status_write stopped no-node
+    return 1
+  fi
   kr_ensure_config || {
     kr_status_write failed no-config
     return 1

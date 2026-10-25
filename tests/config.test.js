@@ -58,8 +58,9 @@ const fakeCore = [
   ""
 ].join("\n");
 
-// A fake core that stays up only for the idle config. It lets the rollback test exercise
-// the "candidate tests but exits right after start" path.
+// A fake core that stays up only for a config built from the "old" node outbound
+// (address old.example.com). It lets the rollback tests exercise the "candidate tests
+// but exits right after start" path while a real config is running.
 const loopingCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then',
@@ -70,7 +71,7 @@ const loopingCore = [
   "  exit 0",
   "fi",
   'if [ "$1" = "run" ] && [ "$2" = "-c" ]; then',
-  '  if grep -q \'"tag":"proxy","protocol":"freedom"\' "$3"; then',
+  '  if grep -q \'old.example.com\' "$3"; then',
   "    trap 'exit 0' TERM INT",
   "    while :; do sleep 0.2; done",
   "  fi",
@@ -200,24 +201,13 @@ check("template: valid JSON with the quoted outbound placeholder", () => {
   eq(t.routing, "__KERNELRAY_ROUTING__", "routing placeholder");
 });
 
-check("idle render: the template becomes a valid 3-outbound config", () => {
+check("render: no outbound is refused — the core only runs an applied node's config", () => {
   const m = makeModule();
-  const out = runShell(m.dir, BODY_RENDER, [""]);
-  if (out.indexOf("__KERNELRAY") >= 0) {
-    throw new Error("a placeholder survived rendering");
+  const r = runFail(m.dir, BODY_RENDER, [""]);
+  if (!/no node outbound/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the no-outbound refusal, got: " + (r.stdout + r.stderr));
   }
-  const cfg = JSON.parse(out);
-  eq(cfg.log.loglevel, "warning", "log settings preserved");
-  eq(cfg.inbounds.length, 2, "both local inbounds kept, no tproxy inbound");
-  eq(cfg.inbounds[0].port, 10808, "default socks port without state.json");
-  eq(cfg.inbounds[1].port, 10809, "default http port without state.json");
-  eq(cfg.outbounds.length, 3, "proxy + direct + block");
-  eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle proxy");
-  eq(cfg.outbounds[1].tag, "direct", "direct tag");
-  eq(cfg.outbounds[1].streamSettings.sockopt.mark, 19282, "direct bypass mark");
-  eq(cfg.outbounds[2].tag, "block", "block tag");
-  eq(cfg.dns, undefined, "no dns block while idle");
-  eq(cfg.routing, undefined, "no routing block while idle");
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
 });
 
 check("node render: outbound.json is spliced verbatim, special characters included", () => {
@@ -228,10 +218,19 @@ check("node render: outbound.json is spliced verbatim, special characters includ
     throw new Error("a placeholder survived rendering");
   }
   const cfg = JSON.parse(out);
-  eq(cfg.outbounds.length, 3, "still three outbounds");
+  eq(cfg.log.loglevel, "warning", "log settings preserved");
+  eq(cfg.inbounds.length, 2, "both local inbounds kept, no tproxy inbound");
+  eq(cfg.inbounds[0].port, 10808, "default socks port without state.json");
+  eq(cfg.inbounds[1].port, 10809, "default http port without state.json");
+  eq(cfg.outbounds.length, 3, "proxy + direct + block");
   eq(cfg.outbounds[0], Object.assign({}, fixture,
     { streamSettings: Object.assign({}, fixture.streamSettings,
-      { sockopt: { mark: 0 } }) }), "the node outbound carries mark 0 while idle");
+      { sockopt: { mark: 0 } }) }), "the node outbound carries mark 0 without takeover");
+  eq(cfg.outbounds[1].tag, "direct", "direct tag");
+  eq(cfg.outbounds[1].streamSettings.sockopt.mark, 19282, "direct bypass mark");
+  eq(cfg.outbounds[2].tag, "block", "block tag");
+  eq(cfg.dns, undefined, "no dns block without takeover");
+  eq(cfg.routing, undefined, "no routing block without takeover");
   eq(cfg.outbounds[0].settings.servers[0].password, fixture.settings.servers[0].password, "escaping round-trip");
 });
 
@@ -320,13 +319,13 @@ check("takeover render: an outbound without the mark placeholder is refused", ()
   }
 });
 
-check("render follows the switch when rules are present, and stays idle when they are not", () => {
+check("render follows the switch when rules are present, and stays no-takeover when they are not", () => {
   const m = makeModule();
   writeOutbound(m);
   fs.writeFileSync(m.tproxy, "on\n");
-  // No stubs: iptables is missing or finds no rules here, so the render must stay idle.
+  // No stubs: iptables is missing or finds no rules here, so the render must stay no-takeover.
   let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
-  eq(cfg.inbounds.length, 2, "switch without rules renders idle-form");
+  eq(cfg.inbounds.length, 2, "switch without rules renders the no-takeover form");
 
   fs.mkdirSync(path.join(m.dir, "stubs"), { recursive: true });
   fs.writeFileSync(path.join(m.dir, "stubs", "iptables"), "#!/bin/sh\nexit 0\n");
@@ -355,25 +354,27 @@ check("a template without the placeholder is refused", () => {
 check("render: the inbound ports come from state.json's settings", () => {
   const m = makeModule();
   writeStatePorts(m, { socksPort: 12008, httpPort: 12009 });
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  writeOutbound(m);
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.inbounds[0].port, 12008, "socks");
   eq(cfg.inbounds[1].port, 12009, "http");
 });
 
 check("render: a broken or out-of-range port falls back per field", () => {
   const m = makeModule();
+  writeOutbound(m);
   writeStatePorts(m, { socksPort: "11008", httpPort: "not a port" });
-  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.inbounds[0].port, 10808, "a quoted (hand-edited) value is not trusted");
   eq(cfg.inbounds[1].port, 10809, "junk falls back to the default");
 
   writeStatePorts(m, { socksPort: 70000, httpPort: 0 });
-  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.inbounds[0].port, 10808, "out of range falls back");
   eq(cfg.inbounds[1].port, 10809, "zero falls back");
 
   writeStatePorts(m, {});
-  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.inbounds[0].port, 10808, "missing settings object falls back");
   eq(cfg.inbounds[1].port, 10809, "http too");
 });
@@ -392,6 +393,31 @@ check("ports: a stopped core gets the re-rendered config", () => {
   eq(readJson(m.status).state, "stopped", "state");
 });
 
+check("ports: without an applied node the change is refused", () => {
+  const m = makeModule();
+  writeStatePorts(m, { socksPort: 13008, httpPort: 13009 });
+  writeOutbound(m);
+  const r = runFail(m.dir, BODY_PORTS);
+  if (!/no applied node/.test(r.stderr)) {
+    throw new Error("expected the no-node refusal, got: " + r.stderr);
+  }
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
+});
+
+check("ports: a broken applied bookkeeping is refused, applied id kept", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.config, '{"sentinel":true}\n');
+  fs.writeFileSync(m.applied, ID + "\n");
+  writeStatePorts(m, { socksPort: 13008, httpPort: 13009 });
+  writeOutbound(m, { id: OTHER_ID });
+  const r = runFail(m.dir, BODY_PORTS);
+  if (!/does not match the applied node/.test(r.stderr)) {
+    throw new Error("expected the bookkeeping refusal, got: " + r.stderr);
+  }
+  eq(readJson(m.config), { sentinel: true }, "old config untouched");
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id kept");
+});
+
 check("ports: a failed xray -test leaves config.json and the applied id untouched", () => {
   const m = makeModule();
   fs.writeFileSync(m.config, '{"sentinel":true}\n');
@@ -408,12 +434,13 @@ check("ports: a failed xray -test leaves config.json and the applied id untouche
 
 // ---- kr_ensure_config -------------------------------------------------------------------
 
-check("ensure: missing config falls back to idle and leaves no applied id", () => {
+check("ensure: no config and no applied node refuses to create one", () => {
   const m = makeModule();
-  runShell(m.dir, BODY_ENSURE);
-  const cfg = readJson(m.config);
-  eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle");
-  if (fs.existsSync(m.applied)) { throw new Error("applied id must not exist"); }
+  const r = runFail(m.dir, BODY_ENSURE);
+  if (!/no applied node/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the no-node refusal, got: " + r.stdout + r.stderr);
+  }
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
 });
 
 check("ensure: a deleted config is rebuilt from the applied outbound", () => {
@@ -427,14 +454,41 @@ check("ensure: a deleted config is rebuilt from the applied outbound", () => {
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id kept");
 });
 
-check("ensure: a mismatched meta falls back to idle and clears the applied id", () => {
+check("ensure: a mismatched meta refuses and keeps the applied id", () => {
   const m = makeModule();
   writeOutbound(m, { id: OTHER_ID });
   fs.writeFileSync(m.applied, ID + "\n");
-  runShell(m.dir, BODY_ENSURE);
-  const cfg = readJson(m.config);
-  eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle");
-  if (fs.existsSync(m.applied)) { throw new Error("stale applied id must be cleared"); }
+  const r = runFail(m.dir, BODY_ENSURE);
+  if (!/no matching outbound/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the bookkeeping refusal, got: " + r.stdout + r.stderr);
+  }
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is kept, never silently cleared");
+});
+
+check("start: without an applied node the core stays stopped (no-node)", () => {
+  const m = makeModule();
+  const r = runFail(m.dir, BODY_START);
+  if (!/no applied node/.test(r.stderr)) {
+    throw new Error("expected the start refusal, got: " + r.stderr);
+  }
+  const st = readJson(m.status);
+  eq(st.state, "stopped", "state");
+  eq(st.phase, "no-node", "phase");
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
+});
+
+check("start: an applied id without its outbound fails with no-config", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.applied, ID + "\n");
+  const r = runFail(m.dir, BODY_START);
+  if (!/no matching outbound/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the bookkeeping refusal, got: " + r.stdout + r.stderr);
+  }
+  const st = readJson(m.status);
+  eq(st.state, "failed", "state");
+  eq(st.phase, "no-config", "phase");
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
 });
 
 // ---- kr_apply ---------------------------------------------------------------------------
@@ -502,9 +556,15 @@ check("apply: an invalid id is refused before anything is read", () => {
 check("apply: a candidate that tests but does not start is rolled back", () => {
   const m = makeModule(loopingCore);
   try {
+    // The core runs the "old" node's config; the candidate (the fixture node) tests
+    // but exits right after start, so the swap must restore the previous config.
+    const oldFixture = JSON.parse(JSON.stringify(fixture));
+    oldFixture.settings.servers[0].address = "old.example.com";
+    fs.writeFileSync(m.outbound, JSON.stringify(oldFixture));
+    fs.writeFileSync(m.meta, "id=" + OTHER_ID + "\nhost=old.example.com\n");
+    fs.writeFileSync(m.applied, OTHER_ID + "\n");
     runShell(m.dir, BODY_START);
-    eq(readJson(m.status).state, "running", "idle core did start");
-    eq(fs.existsSync(m.applied), false, "no applied id before the failed apply");
+    eq(readJson(m.status).state, "running", "the old node's core did start");
 
     writeOutbound(m);
     const r = runFail(m.dir, BODY_APPLY, [ID]);
@@ -513,11 +573,40 @@ check("apply: a candidate that tests but does not start is rolled back", () => {
     }
 
     const cfg = readJson(m.config);
-    eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle config restored");
-    if (fs.existsSync(m.applied)) { throw new Error("applied id must be cleared"); }
+    eq(cfg.outbounds[0].settings.servers[0].address, "old.example.com", "previous config restored");
+    eq(fs.readFileSync(m.applied, "utf8").trim(), OTHER_ID, "old applied id restored");
     const st = readJson(m.status);
     eq(st.state, "running", "restored core is running");
-    eq(st.node, "", "no applied node after rollback");
+    eq(st.node, OTHER_ID, "the applied node after rollback");
+  } finally {
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+  }
+});
+
+check("apply: a failed start with no previous config leaves the core stopped with no node", () => {
+  const m = makeModule(loopingCore);
+  try {
+    const oldFixture = JSON.parse(JSON.stringify(fixture));
+    oldFixture.settings.servers[0].address = "old.example.com";
+    fs.writeFileSync(m.outbound, JSON.stringify(oldFixture));
+    fs.writeFileSync(m.meta, "id=" + OTHER_ID + "\nhost=old.example.com\n");
+    fs.writeFileSync(m.applied, OTHER_ID + "\n");
+    runShell(m.dir, BODY_START);
+    eq(readJson(m.status).state, "running", "the old node's core did start");
+    // The previous config disappears while the core is up, so the swap has nothing to
+    // roll back to: the core must go down, not fall back to anything.
+    fs.unlinkSync(m.config);
+
+    writeOutbound(m);
+    const r = runFail(m.dir, BODY_APPLY, [ID]);
+    if (!/no previous config/.test(r.stderr)) {
+      throw new Error("expected the no-rollback error, got: " + r.stderr);
+    }
+    if (fs.existsSync(m.config)) { throw new Error("the failed candidate must be dropped"); }
+    if (fs.existsSync(m.applied)) { throw new Error("the applied id is void without a config"); }
+    const st = readJson(m.status);
+    eq(st.state, "stopped", "state");
+    eq(st.phase, "no-node", "phase");
   } finally {
     try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
   }

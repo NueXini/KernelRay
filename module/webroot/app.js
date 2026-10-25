@@ -24,9 +24,8 @@ var DICT_ZH = {
   startingMsg: "正在启动…", stoppingMsg: "正在停止…",
   actionFailed: "操作失败", noLog: "（还没有日志）",
   stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
-  stoppedHintNone: "核心未运行，也没有应用节点；下次启动会直连。",
+  stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表点一个节点应用，核心才会启动。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
-  runningHintNone: "核心在运行，但还没有应用节点：客户端指向 127.0.0.1:{port} 时是直连。",
   tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
   tp: "接管",
   tpNoNode: "先在节点页点一个节点；没有已应用的节点时不能接管，否则所有流量都会被丢弃。",
@@ -87,9 +86,8 @@ var DICT_EN = {
   startingMsg: "Starting…", stoppingMsg: "Stopping…",
   actionFailed: "Action failed", noLog: "(no log yet)",
   stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
-  stoppedHintNone: "The core is stopped and no node is applied; the next start runs direct.",
+  stoppedHintNone: "The core is stopped and no node is applied; tap a node in the node list to apply one — the core only starts with an applied node.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
-  runningHintNone: "The core is running direct: no node is applied yet. Clients pointed at 127.0.0.1:{port} go out directly.",
   tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
   tp: "Takeover",
   tpNoNode: "Tap a node on the Nodes page first: capture without an applied node would drop all traffic.",
@@ -764,7 +762,8 @@ function uptime(sec) {
 
 function setButtons() {
   var running = lastState === "running";
-  els.start.disabled = busy || running;
+  // No applied node, no start: the shell's start gate would refuse it anyway (ADR 0010).
+  els.start.disabled = busy || running || !(lastKv && lastKv.node);
   els.stop.disabled = busy || !running;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
@@ -1398,7 +1397,7 @@ function renderStatus(kv) {
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
     if (kv.tproxy === "on") { els.hint.textContent = hintText(T.tpRunningHint, kv); }
-    else { els.hint.textContent = hintText(kv.node ? T.runningHint : T.runningHintNone, kv); }
+    else { els.hint.textContent = hintText(T.runningHint, kv); }
   } else {
     els.hint.textContent = kv.node ? T.stoppedHint : T.stoppedHintNone;
   }

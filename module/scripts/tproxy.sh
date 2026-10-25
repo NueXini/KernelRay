@@ -347,12 +347,20 @@ kr_tp_boot() {
     _ob=$KR_OUTBOUND
   fi
   if [ -z "$_ob" ]; then
-    kr_tp_log "boot: switch on but no usable outbound; clearing the switch"
-    rm -f "$KR_TP_SWITCH"
-    # The applied id cannot be honoured without its outbound; a stale takeover-form
-    # config on disk would start a marked node outbound with no rules. Go idle.
-    rm -f "$KR_APPLIED"
-    kr_tp_swap_config 0 "" || kr_tp_log "boot: could not rewrite the config to the idle form"
+    # No applied node: there is no config to render, and the start gate keeps the core
+    # down (ADR 0010). The switch stays on (intent is never rewritten) and the rules go
+    # in anyway -- fail-closed (ADR 0004): with the switch on, skipping the rules would
+    # leak direct traffic until a node is applied.
+    _why=$(kr_tp_conflict) || _why=""
+    if [ -n "$_why" ]; then
+      kr_tp_log "boot: no applied node and a conflict ($_why); takeover not enforced"
+      return 0
+    fi
+    if ! kr_tp_install; then
+      kr_tp_log "boot: no applied node and the rule install failed; takeover not enforced"
+      return 0
+    fi
+    kr_tp_log "boot: no applied node; rules up, the core stays down until a node is applied"
     return 0
   fi
   _why=$(kr_tp_conflict) || _why=""
@@ -377,8 +385,8 @@ kr_tp_boot() {
     kr_tp_remove
     rm -f "$KR_TP_SWITCH"
     # The on-disk config may still be takeover-form from the previous session; a
-    # marked node outbound with no rules loses routing, so force the idle form.
-    kr_tp_swap_config 0 "" || kr_tp_log "boot: could not rewrite the config to the idle form"
+    # marked node outbound with no rules loses routing, so force the no-takeover form.
+    kr_tp_swap_config 0 "$_ob" || kr_tp_log "boot: could not rewrite the config to the no-takeover form"
     return 0
   fi
   KR_TP_PHASE=idle
@@ -388,7 +396,7 @@ kr_tp_boot() {
 
 # Render + test + atomically swap config.json without touching a running core.
 # Used at boot, where the core starts afterwards (fail-closed ordering).
-kr_tp_swap_config() { # <0|1 takeover> <outbound-file|"" for idle>
+kr_tp_swap_config() { # <0|1 takeover> <outbound-file>
   _tmp=$KR_RUNDIR/config.new.json
   if ! KR_TAKEOVER=$1 kr_render_config "$2" >"$_tmp"; then
     rm -f "$_tmp"
@@ -422,7 +430,7 @@ kr_tproxy_on() {
   _applied=$(kr_applied_id) || _applied=""
   if [ -z "$_applied" ]; then
     kr_tp_log "takeover on refused: no applied node"
-    echo "apply a node first: capture without an outbound is worse than an idle run" >&2
+    echo "apply a node first: there is no outbound to capture into" >&2
     return 1
   fi
   if [ "$(kr_meta_get id 2>/dev/null)" != "$_applied" ] || [ ! -s "$KR_OUTBOUND" ]; then
@@ -515,9 +523,18 @@ kr_tproxy_off() {
   _ob=""
   if [ -n "$_applied" ] && [ "$(kr_meta_get id 2>/dev/null)" = "$_applied" ] && [ -s "$KR_OUTBOUND" ]; then
     _ob=$KR_OUTBOUND
-  else
-    rm -f "$KR_APPLIED"
-    _applied=""
+  fi
+  if [ -z "$_ob" ]; then
+    # The applied bookkeeping is broken: no config can be re-rendered, and the one on
+    # disk is takeover-form whose marked outbound loses routing without the rules. The
+    # core stops and the unrunnable derived config is dropped; re-tapping the node
+    # rebuilds everything (ADR 0010).
+    kr_tp_log "takeover off: applied id $_applied has no matching outbound; stopping"
+    kr_running && kr_stop
+    rm -f "$KR_CONF" "$KR_APPLIED"
+    kr_status_write stopped no-node
+    echo "outbound.json does not match the applied node; the core is stopped, re-tap the node in the WebUI" >&2
+    return 1
   fi
   _tmp=$KR_RUNDIR/config.new.json
   if ! KR_TAKEOVER=0 kr_render_config "$_ob" >"$_tmp"; then
@@ -527,16 +544,16 @@ kr_tproxy_off() {
   fi
   chmod 600 "$_tmp" 2>/dev/null
   if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
-    # The applied outbound no longer tests: fall back to idle rather than keeping a
-    # takeover-form config whose mark has no rules (that would lose routing).
+    # The applied outbound no longer tests. The takeover-form config on disk must not
+    # survive either (its mark has no rules now); drop the config and the applied id
+    # and stop -- re-tapping the node rebuilds everything (ADR 0010).
     rm -f "$_tmp"
-    kr_tp_log "takeover off: config test failed; falling back to idle"
-    rm -f "$KR_APPLIED"
-    if ! kr_tp_swap_config 0 ""; then
-      echo "the idle config does not test either; config.json left unchanged" >&2
-      return 1
-    fi
-    _tmp=""
+    kr_tp_log "takeover off: the applied outbound no longer tests; stopping"
+    kr_running && kr_stop
+    rm -f "$KR_CONF" "$KR_APPLIED"
+    kr_status_write stopped no-node
+    echo "the applied outbound no longer tests; the core is stopped, re-tap the node in the WebUI" >&2
+    return 1
   fi
   _was=0
   kr_running && _was=1

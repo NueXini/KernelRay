@@ -21,9 +21,16 @@ inside it; that cost is deliberate (see `docs/adr/0002`).
 _Avoid_: install dir, app dir, data dir, storage, work dir
 
 **空转 (Idle run)**:
-The core is up and listening on its own local inbounds, and no device traffic is redirected
-into it. The opposite of transparent proxying.
-_Avoid_: running, normal mode, passive mode
+The core is running the applied node's config with the takeover switch off: it listens on its
+local inbounds and no device traffic is redirected into it. Requires an applied node — the
+core never runs a config that was not derived from one.
+_Avoid_: running, normal mode, passive mode, direct run (that is the abolished no-node state)
+
+**直连运行 (Direct run)**:
+The core running the freedom (direct) outbound because no node was ever applied. A state the
+module has abolished: without an applied node the core does not start. The word survives only
+in old logs and issues.
+_Avoid_: idle run, direct mode, freedom mode
 
 **失败规则 (failed/rules)**:
 The status phase meaning rule installation failed and was rolled back — the one takeover

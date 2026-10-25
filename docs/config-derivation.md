@@ -50,9 +50,9 @@ and four outbounds —
 - `"__KERNELRAY_OUTBOUND__"` is a quoted placeholder; the whole string is replaced. The file
   stays valid JSON for tooling, but it is **not** a runnable Xray config, so it cannot be used
   by accident.
-- The first outbound is Xray's default when no routing rule matches. Idle fills it with
-  `{"tag":"proxy","protocol":"freedom","settings":{}}`; apply fills it with the node outbound
-  (tag `proxy`).
+- The first outbound is Xray's default when no routing rule matches. It is always the applied
+  node's outbound (tag `proxy`): `kr_render_config` refuses to render without one — the core
+  never runs a config that is not derived from an applied node ([ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)).
 - The takeover placeholders follow the same trick, one per line, each carrying its own
   leading comma: `,"__KERNELRAY_TPROXY_INBOUND__"` in `inbounds` and
   `,"__KERNELRAY_DNS_OUTBOUND__"` in `outbounds`, plus the top-level `"dns"` and `"routing"`
@@ -66,9 +66,10 @@ The shell does not parse the outbound. It reads `outbound.json` as an opaque JSO
 UI writes one line; newlines are only whitespace if a human pretty-prints it), so protocol
 knowledge stays in the tested JS renderer (`tests/outbound.test.js`).
 
-## The takeover form
+## The no-takeover form
 
-Every render decides between the idle form and the takeover form ([ADR 0008](adr/0008-takeover-namespace-boot-and-toggle-semantics.md)):
+Every render decides between the no-takeover form (the 空转 form: the applied node's config
+without takeover) and the takeover form ([ADR 0008](adr/0008-takeover-namespace-boot-and-toggle-semantics.md)):
 
 takeover is rendered when the persisted switch (`runtime/tproxy`) is on **and** the rules are
 actually present (`kr_tp_rules_present`, checked against iptables — switch on without rules is
@@ -81,20 +82,23 @@ The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 
 and the routing rules — the applied node's hostname resolves through `direct` (skipped when
 the host is an IP literal), the DNS module's upstream queries go through `proxy`, and port 53
 tcp/udp goes to `dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholder becomes the
-bypass mark 19283; in the idle form it becomes `0` (no mark). The placeholder itself is written
-by the UI renderer, which cannot know the switch state.
+bypass mark 19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is
+written by the UI renderer, which cannot know the switch state.
 
-Applying a node while takeover is on renders the takeover form — the rules are up, so an
-idle-form config would lose routing for the node outbound. The switch toggle
+Applying a node while takeover is on renders the takeover form — the rules are up, so a
+no-takeover config would lose routing for the node outbound. The switch toggle
 (`kernelray.sh tproxy on|off`) reuses the same render → `-test` → swap → restart machinery.
 
 ## Boot and the switch
 
 `service.sh` runs `kr_tp_boot` before `kr_start` when the switch is on: it re-renders the
 config to match the switch (the on-disk config may be stale), installs the rules before the
-core starts (fail-closed), and on a conflict or a rule failure writes the idle-form config
+core starts (fail-closed), and on a conflict or a rule failure writes the no-takeover config
 plus the `failed/conflict` / `failed/rules` phase while leaving the switch file untouched —
-intent is never silently rewritten, the WebUI offers a retry (see `docs/adr/0008`).
+intent is never silently rewritten, the WebUI offers a retry (see `docs/adr/0008`). With no
+applied node there is nothing to render: the rules still go in (fail-closed — with the switch
+on, skipping them would leak direct traffic), and the start gate keeps the core down, so the
+device has no network until a node is applied from the local WebUI.
 
 ## Applying a node
 
@@ -107,8 +111,8 @@ scripts/kernelray.sh apply <node-id>
 
 `selected` goes first so a crash between writes leaves the honest "wants this node, runs the
 old one" state instead of a config newer than the pointer. `outbound.meta` goes before
-`outbound.json` so a crash between those two leaves an id mismatch (boot falls back to idle)
-rather than a new outbound paired with an old id.
+`outbound.json` so a crash between those two leaves an id mismatch (the start refuses to
+render, `failed/no-config`) rather than a new outbound paired with an old id.
 
 The shell:
 
@@ -132,6 +136,7 @@ Failure semantics:
 | candidate starts | applied id and `status.json` name the new node |
 | candidate does not start | old config + old applied id restored, old config started; CLI exits non-zero |
 | the restored old config also fails to start | files and applied id are the old ones, but the core is down (`failed/crashed`) |
+| candidate does not start and no previous config exists | the derived config and the applied id are dropped, the core stays down (`stopped/no-node`); CLI exits non-zero |
 
 A failed `-test` does **not** write a failed `phase`: the old core is still running and healthy.
 The CLI returns the error; the WebUI shows it in a toast. Only a failed **start** makes the
@@ -158,8 +163,9 @@ per field to 10808/10809 when anything is off. If that exception ever wants to g
 Saving ports on the Settings page is one gesture shaped like a node apply: the UI validates
 the pair (1–65535, distinct, never the tproxy port 10810), writes `state.json`'s `settings`
 (intent first), and calls `kernelray.sh ports`. The shell re-renders the config — the applied
-node's outbound as-is, or idle when the applied bookkeeping is inconsistent — tests it, and
-swaps it in via the same backup → stop → move → restart → rollback path as `apply`. The
+node's outbound and refuses when the bookkeeping is broken — no applied id, or an
+`outbound.meta` that names another node — rather than rendering anything else. It then tests
+and swaps via the same backup → stop → move → restart → rollback path as `apply`. The
 applied id is untouched: the ports change the local inbounds, never the outbound. A candidate
 that fails `-test` or start leaves the old config and running core as they were.
 
@@ -173,15 +179,18 @@ password containing quotes, backslashes, `$`, backticks, `&`, `<>` and a newline
 
 ## Boot and self-healing
 
-`service.sh` calls `kr_start`, which uses `config.json` when it exists. `kr_ensure_config` only
-runs when the file is missing:
+`service.sh` calls `kr_start`, which uses `config.json` when it exists. Before anything else,
+the start gate demands an applied node: without one, nothing starts and status.json records
+`stopped/no-node` ([ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)).
+`kr_ensure_config` only runs when the file is missing:
 
 - if `runtime/applied` exists, `outbound.meta` names the same id, and `outbound.json` is
-  present, the config is rebuilt from that outbound. The UI writes the meta before the outbound,
-  so a crash between its writes leaves a different id and falls through to idle; a same-id
-  settings edit can rebuild the older outbound, which is why the node is marked `dirty`;
-- otherwise the config is rebuilt as idle and `runtime/applied` is cleared, so the UI never
-  claims a node is applied when the config is direct.
+  present, the config is rebuilt from that outbound. The UI writes the meta before the
+  outbound, so a crash between its writes leaves a different id and the rebuild refuses; a
+  same-id settings edit can rebuild the older outbound, which is why the node is marked
+  `dirty`;
+- otherwise the rebuild refuses and the start fails with `failed/no-config`: claiming a node
+  is applied while the core ran something else would be worse than staying down.
 
 The normal boot path never rewrites the config. An upgrade replaces the whole module directory
 (ADR 0002), so config, outbound and applied id are reset together.
@@ -194,6 +203,9 @@ The normal boot path never rewrites the config. An upgrade replaces the whole mo
   On Android an arbitrary `SO_MARK` with no matching ip rule loses routing (verified: the
   node's Reality handshake failed until the mark was removed). The shell turns the placeholder
   into the bypass mark exactly while the rules are up; only the template's fixed `direct`
-  outbound carries a literal mark, and it is unused while idle.
+  outbound carries a literal mark, and it is unused while the core is not taken over.
 - `config.json` is never hand-edited and never shipped in the ZIP.
+- The core never runs a config that is not derived from an applied node: every render needs
+  `outbound.json`, every start needs `runtime/applied`, and every fallback that used to
+  produce a direct (freedom) config is gone (ADR 0010).
 - `xray -test` precedes every swap; a candidate that fails never replaces a working config.

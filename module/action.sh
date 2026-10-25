@@ -14,7 +14,9 @@ if kr_running; then
   fi
 else
   echo "- starting"
-  kr_start
+  if ! kr_start; then
+    echo "! start refused or failed; with no node applied, tap a node in the WebUI node list first"
+  fi
 fi
 
 echo

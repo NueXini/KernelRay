@@ -193,7 +193,8 @@ check("install: both families get the full rule set and the policy routing", () 
     if (!log.includes(ipt + " -t mangle -A KR_TP_OUTPUT -m mark --mark 19282 -j RETURN")) {
       throw new Error(ipt + ": bypass-mark return rule missing");
     }
-    if (!log.includes(ipt + " -t mangle -A KR_TP_PREROUTING -s 127.0.0.0/8 -p tcp -j TPROXY")) {
+    if (!log.includes(ipt + " -t mangle -A KR_TP_PREROUTING -s " +
+      (ipt === "ip6tables" ? "::1/128" : "127.0.0.0/8") + " -p tcp -j TPROXY")) {
       throw new Error(ipt + ": tcp TPROXY rule missing");
     }
     if (!log.includes(ipt + " -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK --set-mark 19283")) {
@@ -319,24 +320,38 @@ check("conflict: a foreign TPROXY rule refuses takeover, our own do not", () => 
 
 // ---- boot -------------------------------------------------------------------------------
 
-check("boot: switch on without a usable outbound clears the switch and goes idle", () => {
+check("boot: switch on with no usable outbound installs the rules fail-closed and keeps the switch", () => {
   const m = makeModule();
   fs.writeFileSync(m.tproxy, "on\n");
-  // A stale takeover-form config from the previous session must not be started
-  // without rules: its marked node outbound would lose routing.
-  fs.writeFileSync(m.config, JSON.stringify({
-    inbounds: [], outbounds: [{ tag: "proxy", streamSettings: { sockopt: { mark: 19282 } } }]
-  }));
+  // A stale takeover-form config from the previous session: it must be left alone —
+  // nothing starts it, because the start gate refuses without an applied node.
+  fs.writeFileSync(m.config, JSON.stringify({ sentinel: true }));
   fs.writeFileSync(m.applied, ID + "\n");
+  fs.rmSync(m.outbound, { force: true });
   const out = runShell(m, BODY_BOOT, { FAKE_IPT_NOCHAIN: "1" });
-  if (fs.existsSync(m.tproxy)) { throw new Error("the switch must be cleared"); }
-  if (fs.existsSync(m.applied)) { throw new Error("an unusable applied id must be cleared"); }
-  const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
-  eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle config rewritten");
+  if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is not silently cleared");
+  eq(JSON.parse(fs.readFileSync(m.config, "utf8")), { sentinel: true }, "config untouched");
+  const log = fakeLog(m);
+  if (!log.includes("iptables -t mangle -N KR_TP_OUTPUT")) {
+    throw new Error("rules must be installed even with no applied node (fail-closed)");
+  }
   if (!/phase=unset/.test(out)) { throw new Error("unexpected phase: " + out); }
 });
 
-check("boot: a conflict renders the idle-form config and reports failed/conflict", () => {
+check("boot: switch on, no node and a conflict keeps the network direct", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.tproxy, "on\n");
+  const out = runShell(m, BODY_BOOT, { FAKE_IP_LINK: TUN_UP });
+  if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
+  const log = fakeLog(m);
+  if (log.includes("-N KR_TP_OUTPUT")) {
+    throw new Error("a conflict must refuse the rule install");
+  }
+  if (!/phase=unset/.test(out)) { throw new Error("unexpected phase: " + out); }
+});
+
+check("boot: a conflict renders the no-takeover config and reports failed/conflict", () => {
   const m = makeModule();
   writeApplied(m);
   const out = runShell(m, BODY_BOOT, {
@@ -353,7 +368,7 @@ check("boot: a conflict renders the idle-form config and reports failed/conflict
   if (fs.existsSync(m.tproxy) === false) { throw new Error("switch file must survive"); }
 });
 
-check("boot: a failed rule install reports failed/rules and stays idle", () => {
+check("boot: a failed rule install reports failed/rules and stays no-takeover", () => {
   const m = makeModule();
   writeApplied(m);
   const out = runShell(m, BODY_BOOT, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_FAIL_N: "1" });
