@@ -23,7 +23,7 @@ the UI writes intent and the rendered outbound (`outbound.json` + `outbound.meta
 | --- | --- | --- |
 | `schema` | int | Schema version. Currently `1`; the UI refuses to interpret anything else. |
 | `revision` | int | Bumped on every write, so a stale reader can notice it changed. |
-| `settings` | object | Reserved for routing/DNS settings. Preserved verbatim, not interpreted yet. |
+| `settings` | object | Core settings the user chose. Currently two fields: `socksPort` and `httpPort`, the local inbound ports (see below). Unknown fields are preserved verbatim. |
 | `manual` | `Node[]` | Nodes added by hand (import) — the only list the UI appends to, renders and deletes from. |
 | `subscriptions` | `{name,url,nodes:Node[]}[]` | Nodes that came from a subscription. Preserved verbatim; nothing fills or renders them in this version. |
 | `selected` | string | `id` of the node the user last chose. Normally the applied node; a failed switch leaves it on the attempted node. `""` when nothing is selected. |
@@ -55,9 +55,17 @@ The Nodes page renders `manual` only. It writes `state.json`; it never writes `c
 Unknown top-level fields are preserved: the writer parses the file, mutates the object and
 serialises it back, so nothing is dropped by an older UI.
 
-`settings` is still untouched intent. The WebUI's Settings page (language, log buffer size)
-deliberately does **not** write it — those are UI preferences, not core intent, and they live
-in the WebView's own localStorage instead.
+`settings.socksPort` and `settings.httpPort` are the **inbound ports** (defaults 10808 and
+10809): the shell's render reads them directly with a line-level `sed` extraction
+([ADR 0009](adr/0009-shell-reads-state-settings-for-inbound-ports.md)) and falls back per
+field to the default when a value is missing, non-numeric or out of range. The UI validates
+the pair before writing (1–65535, distinct, never 10810 — the tproxy inbound's port) and
+applies them by calling `kernelray.sh ports`, which re-renders and restarts like a node
+apply. Every other field in `settings` is preserved verbatim and not interpreted yet.
+
+The WebUI's other Settings-page entries (language, log buffer size) deliberately do **not**
+live here — those are UI preferences, not core intent, and they stay in the WebView's own
+localStorage.
 
 ## Node
 

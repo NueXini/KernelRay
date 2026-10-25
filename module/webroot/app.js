@@ -25,9 +25,9 @@ var DICT_ZH = {
   actionFailed: "操作失败", noLog: "（还没有日志）",
   stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
   stoppedHintNone: "核心未运行，也没有应用节点；下次启动会直连。",
-  runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:10808 就会走已应用的节点。",
-  runningHintNone: "核心在运行，但还没有应用节点：客户端指向 127.0.0.1:10808 时是直连。",
-  tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:10808 仍然可用。",
+  runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
+  runningHintNone: "核心在运行，但还没有应用节点：客户端指向 127.0.0.1:{port} 时是直连。",
+  tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
   tp: "接管",
   tpNoNode: "先在节点页点一个节点；没有已应用的节点时不能接管，否则所有流量都会被丢弃。",
   tpOffHint: "关闭中：设备流量直连。打开后设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发。",
@@ -59,6 +59,13 @@ var DICT_ZH = {
   setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLog: "日志行数",
   setLogHint: "日志页每次拉取的行数；行数越多看得越早。",
+  setPorts: "入站端口",
+  setPortsHint: "本地 socks/http 入站在 127.0.0.1 上监听的端口。保存后重写核心配置；核心在运行时会重启。",
+  portRange: "端口必须是 1–65535 之间的整数",
+  portSame: "SOCKS 和 HTTP 端口不能相同",
+  portTp: "这个端口留给透明代理入站（10810），换一个",
+  portsSaving: "正在应用端口…", portsSaved: "端口已应用",
+  portsSave: "保存",
   setSoon: "路由与 DNS 目前是内置策略：DNS 由核心的 DNS 模块应答并经节点转发；透明代理开关在状态页。",
   addTitle: "添加节点",
   addPlaceholder: "vless://…",
@@ -81,9 +88,9 @@ var DICT_EN = {
   actionFailed: "Action failed", noLog: "(no log yet)",
   stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
   stoppedHintNone: "The core is stopped and no node is applied; the next start runs direct.",
-  runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:10808 to use the applied node.",
-  runningHintNone: "The core is running direct: no node is applied yet. Clients pointed at 127.0.0.1:10808 go out directly.",
-  tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:10808 still works.",
+  runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
+  runningHintNone: "The core is running direct: no node is applied yet. Clients pointed at 127.0.0.1:{port} go out directly.",
+  tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
   tp: "Takeover",
   tpNoNode: "Tap a node on the Nodes page first: capture without an applied node would drop all traffic.",
   tpOffHint: "Off: device traffic goes out directly. On: it is routed through the applied node (TCP/UDP, IPv4/IPv6).",
@@ -115,6 +122,13 @@ var DICT_EN = {
   setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
   setLog: "Log buffer",
   setLogHint: "How many lines the Log tab fetches each time; more lines reach further back.",
+  setPorts: "Inbound ports",
+  setPortsHint: "The ports the local socks/http inbounds listen on, at 127.0.0.1. Saving rewrites the core config; a running core restarts.",
+  portRange: "Ports must be integers between 1 and 65535",
+  portSame: "The SOCKS and HTTP ports must differ",
+  portTp: "That port is reserved for the tproxy inbound (10810); pick another",
+  portsSaving: "Applying ports…", portsSaved: "Ports applied",
+  portsSave: "Save",
   setSoon: "Routing and DNS are built-in policy for now: DNS is answered by the core's DNS module and sent through the node; the takeover switch lives on the Status page.",
   addTitle: "Add node",
   addPlaceholder: "vless://…",
@@ -148,6 +162,8 @@ var els = {
   segLang: $("seg-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
   lSetLangHint: $("l-set-lang-hint"),
   segLog: $("seg-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
+  iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
+  lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetSoon: $("l-set-soon"),
   lTp: $("l-tp"), tpHint: $("tp-hint"), tpSwitch: $("tp-switch"), tpRetry: $("tp-retry")
 };
@@ -173,6 +189,10 @@ var listSig = "";
 var editMode = false;
 var checkSet = {};
 var batchConfirm = false;
+// Port fields the user has touched since the last sync: a 2s poll must not reset a
+// field the user edited while filling in the other one. Cleared on a successful save
+// and when the settings page is left.
+var portsDirty = { socks: false, http: false };
 
 function label(key) {
   els.start.textContent = T.start;
@@ -202,6 +222,9 @@ function label(key) {
   els.lSetLangHint.textContent = T.setLangHint;
   els.lSetLog.textContent = T.setLog;
   els.lSetLogHint.textContent = T.setLogHint;
+  els.lSetPorts.textContent = T.setPorts;
+  els.lSetPortsHint.textContent = T.setPortsHint;
+  els.portsSave.textContent = T.portsSave;
   els.lSetSoon.textContent = T.setSoon;
   els.lTp.textContent = T.tp;
   els.tpRetry.textContent = T.tpRetry;
@@ -326,6 +349,39 @@ function prefsSave(store, prefs) {
   } catch (e) { /* no storage: the choice lasts for this session only */ }
 }
 // ---- end UI preferences ----
+
+// ---- inbound port settings ----
+// The local socks/http inbound ports are core intent, not UI prefs: the shell reads them
+// from state.json's `settings` when it renders config.json (ADR 0009), so saving goes
+// through state.json + the shell's render/restart path, like a node apply. tests/prefs.test.js
+// runs this block too.
+
+var PORT_DEFAULTS = { socks: 10808, http: 10809 };
+var TP_PORT = 10810; // the tproxy inbound the shell owns; a local inbound must not take it
+
+function portVal(raw) {
+  var n = Number(raw);
+  if (!isFinite(n) || n !== Math.floor(n)) { return 0; }
+  return n >= 1 && n <= 65535 ? n : 0;
+}
+
+// Per-field fallback: a missing or invalid port leaves that inbound on its default, so a
+// hand-edited state.json can never knock both inbounds out. The same rule the shell applies.
+function portsNormalize(raw) {
+  var s = raw && typeof raw === "object" ? portVal(raw.socksPort) : 0;
+  var h = raw && typeof raw === "object" ? portVal(raw.httpPort) : 0;
+  return { socks: s || PORT_DEFAULTS.socks, http: h || PORT_DEFAULTS.http };
+}
+
+// "" = acceptable; otherwise the i18n key of why the save is refused.
+function portsValidate(socks, http) {
+  var s = portVal(socks), h = portVal(http);
+  if (!s || !h) { return "portRange"; }
+  if (s === h) { return "portSame"; }
+  if (s === TP_PORT || h === TP_PORT) { return "portTp"; }
+  return "";
+}
+// ---- end inbound port settings ----
 
 // ---- node parsing ----
 // Share link → node. Lives here rather than in the shell: there is no jq on the device and
@@ -713,6 +769,9 @@ function setButtons() {
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
   els.tpSwitch.disabled = busy || !(lastKv && lastKv.node);
+  els.iSocks.disabled = !hasBridge;
+  els.iHttp.disabled = !hasBridge;
+  els.portsSave.disabled = busy || !hasBridge;
   if (els.nList) { els.nList.classList.toggle("busy", busy); }
 }
 
@@ -1312,6 +1371,11 @@ function doImport() {
   });
 }
 
+// The running hints mention the socks port; the shell now reports the configured one.
+function hintText(t, kv) {
+  return String(t || "").replace("{port}", kv && kv.socks ? String(kv.socks) : String(PORT_DEFAULTS.socks));
+}
+
 function renderStatus(kv) {
   lastKv = kv;
   var state = kv.state || "unknown";
@@ -1333,8 +1397,8 @@ function renderStatus(kv) {
   els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
-    if (kv.tproxy === "on") { els.hint.textContent = T.tpRunningHint; }
-    else { els.hint.textContent = kv.node ? T.runningHint : T.runningHintNone; }
+    if (kv.tproxy === "on") { els.hint.textContent = hintText(T.tpRunningHint, kv); }
+    else { els.hint.textContent = hintText(kv.node ? T.runningHint : T.runningHintNone, kv); }
   } else {
     els.hint.textContent = kv.node ? T.stoppedHint : T.stoppedHintNone;
   }
@@ -1379,6 +1443,65 @@ function refreshLog() {
   }).catch(function () {});
 }
 
+// The Settings page shows the effective ports (state.json's, defaults applied), so the
+// user sees what the shell would render even if the file was last written by hand.
+// A field the user is editing is left alone: a 2s poll must not clobber typing.
+function refreshSettings() {
+  return exec("cat " + STATE + " 2>/dev/null").then(function (r) {
+    var state = null;
+    try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
+    var p = portsNormalize(state && state.settings);
+    if (!portsDirty.socks && document.activeElement !== els.iSocks) {
+      els.iSocks.value = String(p.socks);
+    }
+    if (!portsDirty.http && document.activeElement !== els.iHttp) {
+      els.iHttp.value = String(p.http);
+    }
+  }).catch(function () {});
+}
+
+// One gesture: validate, write state.json's settings (intent first), then let the shell
+// render, test and restart. A failed render or restart leaves the old config running and
+// surfaces the CLI's error, like a failed node apply.
+function doSavePorts() {
+  if (busy || !hasBridge) { return; }
+  var err = portsValidate(els.iSocks.value, els.iHttp.value);
+  if (err) { toast(T[err]); return; }
+  busy = true;
+  setButtons();
+  toast(T.portsSaving);
+  exec("cat " + STATE + " 2>/dev/null").then(function (r) {
+    var state = null;
+    try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
+      state = { schema: 1, revision: 0, manual: [], subscriptions: [], selected: "" };
+    }
+    if (!state.settings || typeof state.settings !== "object" || Array.isArray(state.settings)) {
+      state.settings = {};
+    }
+    state.settings.socksPort = portVal(els.iSocks.value);
+    state.settings.httpPort = portVal(els.iHttp.value);
+    state.revision = (Number(state.revision) || 0) + 1;
+    return writeState(state).then(function () {
+      return exec(CLI + " ports");
+    }).then(function (r) {
+      if (r.errno !== 0) { toast(T.actionFailed + ": " + (r.stderr || r.errno)); }
+      else {
+        // The saved values are the effective ones now; let the poll sync the fields again.
+        portsDirty.socks = false;
+        portsDirty.http = false;
+        toast(T.portsSaved);
+      }
+    });
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    busy = false;
+    setButtons();
+    refreshPage();
+  });
+}
+
 // ---- navigation ----
 // Hash routes are the only navigation state: a reload lands on the same tab and
 // a link can deep-link into one. Taps replace rather than push, so a long-lived
@@ -1401,6 +1524,11 @@ function showRoute(route, opts) {
   route = routeOf(route);
   // The check set is a temporary intent: leaving the node page via the tab bar discards
   // it rather than carrying it across. The add dialog overlays without a route change.
+  // Typed-but-unsaved ports are the same: leaving the page discards them.
+  if (route !== "settings") {
+    portsDirty.socks = false;
+    portsDirty.http = false;
+  }
   if (route !== "nodes" && editMode) {
     editMode = false;
     checkSet = {};
@@ -1488,6 +1616,7 @@ function refreshPage() {
   refreshStatus();
   if (currentRoute === "nodes") { refreshNodes(); }
   else if (currentRoute === "log") { refreshLog(); }
+  else if (currentRoute === "settings") { refreshSettings(); }
 }
 
 function run(command, pendingLabel) {
@@ -1612,6 +1741,9 @@ els.segLog.addEventListener("click", function (e) {
   renderSegs();
   if (hasBridge && currentRoute === "log") { refreshLog(); }
 });
+els.portsSave.addEventListener("click", doSavePorts);
+els.iSocks.addEventListener("input", function () { portsDirty.socks = true; });
+els.iHttp.addEventListener("input", function () { portsDirty.http = true; });
 
 // Poll only while the page is actually visible; the WebView freezes timers in
 // the background and a stale interval would otherwise pile up on resume.

@@ -1,7 +1,7 @@
 id=kernelray
 name=KernelRay
 version=v0.7.0
-versionCode=70
+versionCode=71
 author=KernelRay
 description=Starts an Xray core on boot, applies one imported node, and (opt-in) takes over device traffic via TPROXY.
 updateJson=https://modules.kernelsu.org/api/v1/modules/kernelray/update.json

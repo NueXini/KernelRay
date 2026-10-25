@@ -50,6 +50,16 @@ _Avoid_: fwmark, SO_MARK (those name the mechanism, not the role)
 The Linux netfilter and policy-routing mechanism the module uses to reach transparent proxying.
 _Avoid_: transparent proxy (that is the behaviour), tproxy mode
 
+**本地入站 (Local inbound)**:
+The socks and HTTP listeners the core opens on 127.0.0.1 for apps that are configured with a
+proxy address. Traffic reaches them by choice, unlike the tproxy inbound that takeover owns.
+_Avoid_: local proxy, manual inbound, app inbound
+
+**入站端口 (Inbound port)**:
+The port a local inbound listens on; the user picks it in the settings, with socks and http
+kept distinct. Defaults to 10808 (socks) and 10809 (http).
+_Avoid_: proxy port, local port
+
 **接管 (Takeover)**:
 The module's act of making device traffic enter the core instead of going out directly. An idle
 run is the absence of takeover.

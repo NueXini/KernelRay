@@ -99,6 +99,26 @@
     </section>
 
     <section class="card">
+      <div class="nodehead">
+        <span id="l-set-ports">Inbound ports</span>
+      </div>
+      <div class="ports">
+        <label class="portfield">
+          <span>SOCKS</span>
+          <input type="number" id="i-socks" inputmode="numeric" min="1" max="65535"
+                 autocomplete="off" disabled>
+        </label>
+        <label class="portfield">
+          <span>HTTP</span>
+          <input type="number" id="i-http" inputmode="numeric" min="1" max="65535"
+                 autocomplete="off" disabled>
+        </label>
+      </div>
+      <button type="button" class="primary mt" id="ports-save" disabled>Save</button>
+      <div class="hint" id="l-set-ports-hint"></div>
+    </section>
+
+    <section class="card">
       <div class="hint" id="l-set-soon"></div>
     </section>
   </section>

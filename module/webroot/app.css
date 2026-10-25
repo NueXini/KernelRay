@@ -170,6 +170,17 @@ textarea {
 }
 textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .row.mt { margin-top: 10px; }
+.ports { display: flex; gap: 10px; margin-top: 6px; }
+.portfield { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.portfield span { font-size: 12px; color: var(--muted); }
+.portfield input {
+  width: 100%; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font: inherit;
+}
+.portfield input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.portfield input:disabled { opacity: 0.55; }
+#ports-save { width: 100%; margin-top: 12px; }
 .prow {
   display: flex; gap: 9px; align-items: flex-start; padding: 8px 0;
   border-top: 1px solid var(--line); font-size: 13px;

@@ -30,6 +30,20 @@ const P = new Function(block + "\nreturn {" +
   " PREFS_KEY: PREFS_KEY, LANGS: LANGS, LOG_LINE_STEPS: LOG_LINE_STEPS" +
 "};")();
 
+// The inbound-port block follows the same extraction contract.
+const PORTS_START = "// ---- inbound port settings ----";
+const PORTS_END = "// ---- end inbound port settings ----";
+const pfrom = js.indexOf(PORTS_START);
+const pto = js.indexOf(PORTS_END);
+if (pfrom < 0 || pto < 0) {
+  console.error("could not find the inbound port settings block markers in app.js");
+  process.exit(1);
+}
+const PB = new Function(js.slice(pfrom, pto) + "\nreturn {" +
+  " portVal: portVal, portsNormalize: portsNormalize, portsValidate: portsValidate," +
+  " PORT_DEFAULTS: PORT_DEFAULTS, TP_PORT: TP_PORT" +
+"};")();
+
 let pass = 0;
 const failures = [];
 
@@ -128,6 +142,50 @@ check("prefsSave against a denied store does not throw", () => {
 check("the presets the Settings page offers are the ones normalise accepts", () => {
   eq(P.LANGS, ["auto", "zh", "en"]);
   eq(P.LOG_LINE_STEPS, [100, 200, 500]);
+});
+
+// ---- inbound port settings ----
+
+check("ports: defaults on no input at all", () => {
+  eq(PB.portsNormalize(null), { socks: 10808, http: 10809 });
+  eq(PB.portsNormalize(undefined), { socks: 10808, http: 10809 });
+  eq(PB.portsNormalize("junk"), { socks: 10808, http: 10809 });
+  eq(PB.portsNormalize({}), { socks: 10808, http: 10809 });
+});
+
+check("ports: valid settings ports pass through", () => {
+  eq(PB.portsNormalize({ socksPort: 11008, httpPort: 11009 }), { socks: 11008, http: 11009 });
+  eq(PB.portsNormalize({ socksPort: 1, httpPort: 65535 }), { socks: 1, http: 65535 });
+});
+
+check("ports: an invalid port falls back per field, never both", () => {
+  eq(PB.portsNormalize({ socksPort: 11008 }), { socks: 11008, http: 10809 });
+  eq(PB.portsNormalize({ httpPort: "11009" }), { socks: 10808, http: 11009 });
+  eq(PB.portsNormalize({ socksPort: 0, httpPort: 70000 }), { socks: 10808, http: 10809 });
+  eq(PB.portsNormalize({ socksPort: "x", httpPort: 1.5 }), { socks: 10808, http: 10809 });
+  eq(PB.portsNormalize({ socksPort: NaN, httpPort: Infinity }), { socks: 10808, http: 10809 });
+});
+
+check("ports: validation accepts a normal pair", () => {
+  eq(PB.portsValidate(11008, 11009), "");
+  eq(PB.portsValidate("11008", "11009"), "");
+});
+
+check("ports: validation refuses out-of-range and junk", () => {
+  eq(PB.portsValidate(0, 11009), "portRange");
+  eq(PB.portsValidate(11008, 65536), "portRange");
+  eq(PB.portsValidate("", 11009), "portRange");
+  eq(PB.portsValidate("abc", 11009), "portRange");
+});
+
+check("ports: validation refuses the two local inbounds colliding", () => {
+  eq(PB.portsValidate(11008, 11008), "portSame");
+});
+
+check("ports: validation refuses the tproxy inbound's port", () => {
+  eq(PB.portsValidate(PB.TP_PORT, 11009), "portTp");
+  eq(PB.portsValidate(11008, PB.TP_PORT), "portTp");
+  eq(PB.TP_PORT, 10810, "the reserved port is the shell's KR_TP_PORT");
 });
 
 if (failures.length) {

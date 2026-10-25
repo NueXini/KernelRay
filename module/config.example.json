@@ -9,7 +9,7 @@
     {
       "tag": "socks-in",
       "listen": "127.0.0.1",
-      "port": 10808,
+      "port": "__KERNELRAY_SOCKS_PORT__",
       "protocol": "socks",
       "settings": {
         "auth": "noauth",
@@ -19,7 +19,7 @@
     {
       "tag": "http-in",
       "listen": "127.0.0.1",
-      "port": 10809,
+      "port": "__KERNELRAY_HTTP_PORT__",
       "protocol": "http",
       "settings": {}
     }

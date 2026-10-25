@@ -17,7 +17,7 @@ while it is on, a dead core means no traffic instead of leaked traffic.
 | --- | --- |
 | starts on boot | `service.sh` (late_start service) launches the core with the applied config, or direct when none is applied; with the takeover switch on it installs the rules first |
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
-| listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http), wildcard `:10810` (tproxy, only while takeover is on) |
+| listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node; `freedom` (direct) until a node is applied |
 | switches to a node | tapping a row in the WebUI writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core |
 | takes over device traffic | the takeover switch (WebUI status card or `kernelray.sh tproxy on`) installs the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |

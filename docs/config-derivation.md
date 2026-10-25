@@ -17,6 +17,7 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | `outbound.meta` | WebUI | `id=<node-id>` and `host=<address>` for that outbound |
 | `config.example.json` | repo | the config template (not runnable on its own) |
 | `config.json` | shell | the config the core actually runs |
+| `state.json` → render | WebUI writes, shell reads | the inbound ports (`settings.socksPort` / `settings.httpPort`), extracted at render time (ADR 0009) |
 | `runtime/applied` | shell | id of the node `config.json` was built from |
 | `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy` |
 | `runtime/tproxy` | shell | persisted takeover switch (docs/adr/0004, 0008) |
@@ -30,8 +31,10 @@ mode `0600`, like `state.json`. `pack.sh` excludes them.
 
 ## The template
 
-`module/config.example.json` is the fixed skeleton: local socks/http inbounds, and four
-outbounds —
+`module/config.example.json` is the fixed skeleton: local socks/http inbounds (whose ports
+are the quoted placeholders `"__KERNELRAY_SOCKS_PORT__"` / `"__KERNELRAY_HTTP_PORT__"`,
+replaced at render time with the ports from `state.json`'s `settings`, default 10808/10809),
+and four outbounds —
 
 ```json
 "outbounds": [
@@ -140,11 +143,25 @@ nothing to the core; tapping it after a re-import kept its id and marked it `dir
 it, and the `dirty` flag clears on success. Importing a node changes nothing until a row is
 tapped.
 
-## Why the shell does not read `state.json`
+## Why the shell reads (almost) nothing from `state.json`
 
 `state.json` is nested JSON and the device has no `jq`. Parsing it with `awk`/`sed` is the same
-liability ADR 0003 rejected for share links. The UI already has the node; rendering it there
-and handing the shell one flat outbound keeps the transformation testable and the shell simple.
+liability ADR 0003 rejected for share links, so the UI renders the node there and hands the
+shell one flat outbound. The one exception is the inbound ports
+([ADR 0009](adr/0009-shell-reads-state-settings-for-inbound-ports.md)): `kr_render_config`
+extracts exactly two flat integer keys from the `settings` object with `sed` and falls back
+per field to 10808/10809 when anything is off. If that exception ever wants to grow
+(routing/DNS settings), revisit the ADR rather than widening the `sed`.
+
+## Applying the inbound ports
+
+Saving ports on the Settings page is one gesture shaped like a node apply: the UI validates
+the pair (1–65535, distinct, never the tproxy port 10810), writes `state.json`'s `settings`
+(intent first), and calls `kernelray.sh ports`. The shell re-renders the config — the applied
+node's outbound as-is, or idle when the applied bookkeeping is inconsistent — tests it, and
+swaps it in via the same backup → stop → move → restart → rollback path as `apply`. The
+applied id is untouched: the ports change the local inbounds, never the outbound. A candidate
+that fails `-test` or start leaves the old config and running core as they were.
 
 ## Escaping
 

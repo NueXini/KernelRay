@@ -122,6 +122,7 @@ function makeModule(core) {
   return {
     dir: dir,
     config: path.join(dir, "config.json"),
+    state: path.join(dir, "state.json"),
     outbound: path.join(dir, "outbound.json"),
     meta: path.join(dir, "outbound.meta"),
     applied: path.join(dir, "runtime", "applied"),
@@ -161,6 +162,16 @@ function writeOutbound(m, opts) {
   fs.writeFileSync(m.meta, "id=" + (o.id || ID) + "\nhost=n.example.com\n");
 }
 
+// The UI serialises state.json pretty-printed; the shell's extraction relies on that
+// shape (every settings key on its own line).
+function writeStatePorts(m, settings, opts) {
+  const o = opts || {};
+  const state = Object.assign({ schema: 1, revision: 1, manual: [],
+    subscriptions: [], selected: "" }, o.extra || {});
+  if (settings !== undefined) { state.settings = settings; }
+  fs.writeFileSync(m.state, JSON.stringify(state, null, 2) + "\n");
+}
+
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, "utf8"));
 }
@@ -170,6 +181,7 @@ const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$
 const BODY_ENSURE = '. "$KR_TEST_SCRIPT"; kr_ensure_config';
 const BODY_STATUS = '. "$KR_TEST_SCRIPT"; kr_status_write "$1" "$2"';
 const BODY_APPLY = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply "$1"';
+const BODY_PORTS = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply_ports';
 const BODY_START = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 
@@ -179,6 +191,8 @@ check("template: valid JSON with the quoted outbound placeholder", () => {
   const t = JSON.parse(fs.readFileSync(template, "utf8"));
   eq(t.outbounds[0], "__KERNELRAY_OUTBOUND__", "placeholder");
   eq(t.outbounds.length, 4, "outbound slots (proxy, direct, block, dns-out placeholder)");
+  eq(t.inbounds[0].port, "__KERNELRAY_SOCKS_PORT__", "socks port placeholder");
+  eq(t.inbounds[1].port, "__KERNELRAY_HTTP_PORT__", "http port placeholder");
   if (t.inbounds.indexOf("__KERNELRAY_TPROXY_INBOUND__") < 0) {
     throw new Error("the tproxy inbound placeholder is missing");
   }
@@ -195,6 +209,8 @@ check("idle render: the template becomes a valid 3-outbound config", () => {
   const cfg = JSON.parse(out);
   eq(cfg.log.loglevel, "warning", "log settings preserved");
   eq(cfg.inbounds.length, 2, "both local inbounds kept, no tproxy inbound");
+  eq(cfg.inbounds[0].port, 10808, "default socks port without state.json");
+  eq(cfg.inbounds[1].port, 10809, "default http port without state.json");
   eq(cfg.outbounds.length, 3, "proxy + direct + block");
   eq(cfg.outbounds[0], { tag: "proxy", protocol: "freedom", settings: {} }, "idle proxy");
   eq(cfg.outbounds[1].tag, "direct", "direct tag");
@@ -332,6 +348,62 @@ check("a template without the placeholder is refused", () => {
   if (!/placeholder/.test(r.stdout + r.stderr)) {
     throw new Error("expected a placeholder error, got: " + (r.stdout + r.stderr));
   }
+});
+
+// ---- inbound ports ---------------------------------------------------------------------
+
+check("render: the inbound ports come from state.json's settings", () => {
+  const m = makeModule();
+  writeStatePorts(m, { socksPort: 12008, httpPort: 12009 });
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  eq(cfg.inbounds[0].port, 12008, "socks");
+  eq(cfg.inbounds[1].port, 12009, "http");
+});
+
+check("render: a broken or out-of-range port falls back per field", () => {
+  const m = makeModule();
+  writeStatePorts(m, { socksPort: "11008", httpPort: "not a port" });
+  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  eq(cfg.inbounds[0].port, 10808, "a quoted (hand-edited) value is not trusted");
+  eq(cfg.inbounds[1].port, 10809, "junk falls back to the default");
+
+  writeStatePorts(m, { socksPort: 70000, httpPort: 0 });
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  eq(cfg.inbounds[0].port, 10808, "out of range falls back");
+  eq(cfg.inbounds[1].port, 10809, "zero falls back");
+
+  writeStatePorts(m, {});
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [""]));
+  eq(cfg.inbounds[0].port, 10808, "missing settings object falls back");
+  eq(cfg.inbounds[1].port, 10809, "http too");
+});
+
+check("ports: a stopped core gets the re-rendered config", () => {
+  const m = makeModule();
+  writeStatePorts(m, { socksPort: 13008, httpPort: 13009 });
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  runShell(m.dir, BODY_PORTS);
+  const cfg = readJson(m.config);
+  eq(cfg.inbounds[0].port, 13008, "socks");
+  eq(cfg.inbounds[1].port, 13009, "http");
+  eq(cfg.outbounds[0].settings, fixture.settings, "the applied node is re-rendered as-is");
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id untouched");
+  eq(readJson(m.status).state, "stopped", "state");
+});
+
+check("ports: a failed xray -test leaves config.json and the applied id untouched", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.config, '{"sentinel":true}\n');
+  fs.writeFileSync(m.applied, ID + "\n");
+  writeStatePorts(m, { socksPort: 13008, httpPort: 13009 });
+  writeOutbound(m);
+  const r = runFail(m.dir, BODY_PORTS, [], { FAKE_XRAY_FAIL: "1" });
+  if (!/config test failed/.test(r.stderr)) {
+    throw new Error("expected a config-test error, got: " + r.stderr);
+  }
+  eq(readJson(m.config), { sentinel: true }, "old config untouched");
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "old applied id untouched");
 });
 
 // ---- kr_ensure_config -------------------------------------------------------------------

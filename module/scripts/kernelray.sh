@@ -20,6 +20,7 @@ KR_STARTED=$KR_RUNDIR/started
 KR_STATUS=$KR_RUNDIR/status.json
 KR_VERFILE=$KR_RUNDIR/version
 KR_TMPL=$KR_MODDIR/config.example.json
+KR_STATE=$KR_MODDIR/state.json
 KR_OUTBOUND=$KR_MODDIR/outbound.json
 KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
@@ -157,6 +158,23 @@ kr_meta_get() { # <key: id|host>
   sed -n "s/^$1=//p" "$KR_OUTBOUND_META" 2>/dev/null | head -n 1
 }
 
+# One inbound port from state.json's settings. The UI serialises state.json so every key
+# sits on its own line inside the settings object; this reads exactly the two flat integer
+# fields it owns (ADR 0009) and falls back per field, so a missing, hand-pretty-printed or
+# half-broken state.json can never knock an inbound off its default port.
+kr_setting_port() { # <key> <default>
+  _v=""
+  if [ -s "$KR_STATE" ]; then
+    _v=$(sed -n '/"settings"/,/^[[:space:]]*}/ {
+      s/.*"'"$1"'"[[:space:]]*:[[:space:]]*\([0-9]\{1,5\}\).*/\1/p
+    }' "$KR_STATE" 2>/dev/null | head -n 1)
+  fi
+  case "$_v" in
+    '' | 0 | *[!0-9]*) echo "$2"; return ;;
+  esac
+  [ "$_v" -ge 1 ] && [ "$_v" -le 65535 ] && echo "$_v" || echo "$2"
+}
+
 kr_status_write() { # <state> <phase>
   _s=$(cat "$KR_STARTED" 2>/dev/null)
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
@@ -184,11 +202,16 @@ kr_render_config() { # <outbound-file|"" for idle>
     kr_log "config template $KR_TMPL has no outbound placeholder"
     return 1
   fi
+  if ! grep -q '__KERNELRAY_SOCKS_PORT__' "$KR_TMPL" || ! grep -q '__KERNELRAY_HTTP_PORT__' "$KR_TMPL"; then
+    kr_log "config template $KR_TMPL has no inbound port placeholders"
+    return 1
+  fi
   if [ -n "$_ob" ] && [ -s "$_ob" ]; then
     _line=$(cat "$_ob") || return 1
   else
     _line='{"tag":"proxy","protocol":"freedom","settings":{}}'
   fi
+
   # The config form follows the switch unless the caller forces one: toggle and boot
   # render the exact form they are about to enforce. Switch on without rules (a boot
   # conflict) renders idle-form: a mark without its ip rule loses routing.
@@ -226,6 +249,8 @@ kr_render_config() { # <outbound-file|"" for idle>
   # rules capture the core's own connection back into the core: a routing loop. An
   # outbound without the placeholder (a stale renderer) is refused, not shipped.
   KR_OUT_LINE=$_line KR_TP_TAKEOVER=$_takeover KR_TP_MARK=$_mark \
+    KR_SOCKS_PORT=$(kr_setting_port socksPort 10808) \
+    KR_HTTP_PORT=$(kr_setting_port httpPort 10809) \
     KR_TP_INBOUND_BLOCK=$_tp_in KR_DNS_OUTBOUND_BLOCK=$_dns_out \
     KR_DNS_BLOCK=$_dns KR_ROUTING_BLOCK=$_routing awk '
     BEGIN {
@@ -242,6 +267,12 @@ kr_render_config() { # <outbound-file|"" for idle>
       ph = "\"__KERNELRAY_OUTBOUND__\""
       p = index(line, ph)
       if (p > 0) line = substr(line, 1, p - 1) out substr(line, p + length(ph))
+      ph = "\"__KERNELRAY_SOCKS_PORT__\""
+      p = index(line, ph)
+      if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_SOCKS_PORT"] substr(line, p + length(ph))
+      ph = "\"__KERNELRAY_HTTP_PORT__\""
+      p = index(line, ph)
+      if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_HTTP_PORT"] substr(line, p + length(ph))
       if (!tp) {
         if (line ~ /^[ \t]*,"__(KERNELRAY_TPROXY_INBOUND|KERNELRAY_DNS_OUTBOUND)__"[ \t]*$/) next
         if (line ~ /^[ \t]*,"(dns|routing)": "__KERNELRAY_(DNS|ROUTING)__"[ \t]*$/) next
@@ -301,6 +332,81 @@ kr_ensure_config() {
   fi
 }
 
+# Swap an already-tested candidate into config.json: back up the current config, stop a
+# running core, move the candidate in, start again. A candidate that tests but does not
+# start rolls back to the previous config and applied id. Pass the applied id to record
+# (the apply path), or "" to leave runtime/applied alone (the ports path re-renders the
+# same node). Returns 1 with a message on every failure; the core is left running the
+# old config whenever one could be restored.
+kr_swap_config() { # <candidate> <applied-id|"">
+  _cand=$1
+  _newid=$2
+  _was=0
+  kr_running && _was=1
+  _old=$(kr_applied_id) || _old=""
+  _prev=$KR_RUNDIR/config.json.prev
+  if [ -f "$KR_CONF" ]; then
+    if ! cp -f "$KR_CONF" "$_prev" 2>/dev/null; then
+      rm -f "$_prev" "$_cand"
+      kr_log "could not back up the current config"
+      echo "could not back up the current config" >&2
+      return 1
+    fi
+  else
+    rm -f "$_prev"
+  fi
+  if [ "$_was" = 1 ]; then
+    kr_stop
+  else
+    # A core we do not track may still hold the old config (duplicate service.sh).
+    # Stop it rather than leaving it running while status says stopped.
+    kr_kill_strays ""
+  fi
+
+  if ! mv -f "$_cand" "$KR_CONF"; then
+    rm -f "$_cand"
+    [ "$_was" = 1 ] && kr_start
+    kr_log "could not replace config"
+    echo "could not replace config" >&2
+    return 1
+  fi
+  chmod 600 "$KR_CONF" 2>/dev/null
+  if [ -n "$_newid" ]; then
+    printf '%s\n' "$_newid" >"$KR_APPLIED"
+    chmod 600 "$KR_APPLIED" 2>/dev/null
+  fi
+
+  if [ "$_was" = 1 ]; then
+    if ! kr_start; then
+      kr_log "new config did not start; restoring previous config"
+      if [ -f "$_prev" ]; then
+        mv -f "$_prev" "$KR_CONF"
+        chmod 600 "$KR_CONF" 2>/dev/null
+      else
+        # The old config disappeared while the core was running. Removing the failed
+        # candidate lets kr_start fall back to idle (and clear the applied id) instead
+        # of starting a config that just failed.
+        rm -f "$KR_CONF"
+      fi
+      if [ -n "$_old" ]; then
+        printf '%s\n' "$_old" >"$KR_APPLIED"
+      else
+        rm -f "$KR_APPLIED"
+      fi
+      if kr_start; then
+        echo "new config failed to start; previous config restored" >&2
+      else
+        echo "new config failed to start; previous config restored but the core did not start" >&2
+      fi
+      return 1
+    fi
+  else
+    kr_status_write stopped idle
+  fi
+  rm -f "$_prev"
+  return 0
+}
+
 # apply <id>: the UI has already rendered outbound.json + outbound.meta. Verify they
 # belong to this id, render a candidate config, let the core validate it, then swap.
 # The candidate is tested before the running core is touched; a test failure never
@@ -350,68 +456,51 @@ kr_apply() { # <node id>
     return 1
   fi
 
-  _was=0
-  kr_running && _was=1
-  _old=$(kr_applied_id) || _old=""
-  _prev=$KR_RUNDIR/config.json.prev
-  if [ -f "$KR_CONF" ]; then
-    if ! cp -f "$KR_CONF" "$_prev" 2>/dev/null; then
-      rm -f "$_prev" "$_tmp"
-      kr_log "apply $_id: could not back up the current config"
-      echo "could not back up the current config" >&2
-      return 1
-    fi
-  else
-    rm -f "$_prev"
-  fi
-  if [ "$_was" = 1 ]; then
-    kr_stop
-  else
-    # A core we do not track may still hold the old config (duplicate service.sh).
-    # Stop it rather than leaving it running while status says stopped.
-    kr_kill_strays ""
-  fi
+  kr_swap_config "$_tmp" "$_id" || return 1
+  kr_log "applied node $_id"
+  return 0
+}
 
-  if ! mv -f "$_tmp" "$KR_CONF"; then
-    rm -f "$_tmp"
-    [ "$_was" = 1 ] && kr_start
-    kr_log "apply $_id: could not replace config"
-    echo "could not replace config" >&2
+# ports: re-render config.json with the inbound ports from state.json's settings. The UI
+# writes state.json first (intent), then calls this; the candidate is tested and swapped
+# exactly like a node apply, and the applied node is rendered as-is -- the ports change
+# the local inbounds, never the outbound.
+kr_apply_ports() {
+  kr_dirs
+  if ! kr_core_works; then
+    kr_log "ports: core missing or not executable"
+    echo "core missing or not executable" >&2
     return 1
   fi
-  chmod 600 "$KR_CONF" 2>/dev/null
-  printf '%s\n' "$_id" >"$KR_APPLIED"
-  chmod 600 "$KR_APPLIED" 2>/dev/null
-
-  if [ "$_was" = 1 ]; then
-    if ! kr_start; then
-      kr_log "apply $_id: new config did not start; restoring previous config"
-      if [ -f "$_prev" ]; then
-        mv -f "$_prev" "$KR_CONF"
-        chmod 600 "$KR_CONF" 2>/dev/null
-      else
-        # The old config disappeared while the core was running. Removing the failed
-        # candidate lets kr_start fall back to idle (and clear the applied id) instead
-        # of starting a config that just failed.
-        rm -f "$KR_CONF"
-      fi
-      if [ -n "$_old" ]; then
-        printf '%s\n' "$_old" >"$KR_APPLIED"
-      else
-        rm -f "$KR_APPLIED"
-      fi
-      if kr_start; then
-        echo "new config failed to start; previous config restored" >&2
-      else
-        echo "new config failed to start; previous config restored but the core did not start" >&2
-      fi
-      return 1
+  # Same reconstruction rule as kr_ensure_config: the applied node's outbound when the
+  # bookkeeping is consistent, idle otherwise -- claiming a node is applied while the
+  # config renders direct would be worse than admitting the fallback.
+  _ob=""
+  _n=$(kr_applied_id) || _n=""
+  if [ -n "$_n" ]; then
+    if [ "$(kr_meta_get id 2>/dev/null)" = "$_n" ] && [ -s "$KR_OUTBOUND" ]; then
+      _ob=$KR_OUTBOUND
+    else
+      kr_log "ports: applied id $_n has no matching outbound; rendering idle"
+      rm -f "$KR_APPLIED"
     fi
-  else
-    kr_status_write stopped idle
   fi
-  rm -f "$_prev"
-  kr_log "applied node $_id"
+  # Keep the .json suffix: xray -test picks the format from the file name.
+  _tmp=$KR_RUNDIR/config.new.json
+  if ! kr_render_config "$_ob" >"$_tmp"; then
+    rm -f "$_tmp"
+    echo "could not render config" >&2
+    return 1
+  fi
+  chmod 600 "$_tmp" 2>/dev/null
+  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
+    rm -f "$_tmp"
+    kr_log "ports: xray -test rejected the generated config"
+    echo "config test failed (see $KR_LOG)" >&2
+    return 1
+  fi
+  kr_swap_config "$_tmp" "" || return 1
+  kr_log "ports applied: $(kr_setting_port socksPort 10808) socks / $(kr_setting_port httpPort 10809) http"
   return 0
 }
 
@@ -517,7 +606,7 @@ kr_report() {
   echo "log:   $KR_LOG"
   if kr_running; then
     echo "pid:   $(kr_pid)"
-    echo "ports: 10808 socks / 10809 http (127.0.0.1)"
+    echo "ports: $(kr_setting_port socksPort 10808) socks / $(kr_setting_port httpPort 10809) http (127.0.0.1)"
     kr_tp_rules_present 2>/dev/null && echo "       $KR_TP_PORT tproxy (wildcard; device traffic)"
   fi
 }
@@ -559,8 +648,8 @@ kr_status_kv() {
   echo "node=$_node"
   echo "tproxy=$_tp"
   echo "rules=$_rules"
-  echo "socks=10808"
-  echo "http=10809"
+  echo "socks=$(kr_setting_port socksPort 10808)"
+  echo "http=$(kr_setting_port httpPort 10809)"
 }
 
 kr_tail() {
@@ -581,6 +670,7 @@ kr_cli() {
     start) kr_start ;;
     stop) kr_stop ;;
     apply) kr_apply "${1:-}" ;;
+    ports) kr_apply_ports ;;
     status) kr_status_kv ;;
     log) kr_tail "${1:-200}" ;;
     tproxy)
@@ -595,7 +685,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|tproxy {on|off|status}|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|ports|tproxy {on|off|status}|status|log [lines]}" >&2
       return 2
       ;;
   esac
