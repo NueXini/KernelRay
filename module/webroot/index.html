@@ -61,24 +61,6 @@
     </section>
   </section>
 
-  <section class="page" id="page-add" hidden>
-    <section class="card" id="importcard">
-      <div class="nodehead">
-        <button type="button" class="iconbtn" id="back-add" aria-label="Back">‹</button>
-        <span id="l-import">Add node</span>
-        <span class="pill" id="i-count" hidden></span>
-      </div>
-      <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
-                autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
-      <div class="row mt">
-        <button id="i-parse">Parse</button>
-        <button class="primary" id="i-apply" disabled>Import</button>
-      </div>
-      <div class="nodehint" id="i-hint"></div>
-      <div id="i-preview"></div>
-    </section>
-  </section>
-
   <section class="page" id="page-log" hidden>
     <section class="card logcard">
       <div class="logbar">
@@ -158,6 +140,21 @@
     </a>
   </div>
 </nav>
+
+<div class="overlay" id="add-overlay" hidden>
+  <section class="card addcard" role="dialog" aria-modal="true" aria-labelledby="l-import">
+    <div class="nodehead">
+      <span id="l-import">Add node</span>
+      <span class="spacer"></span>
+      <button type="button" class="iconbtn" id="add-close" aria-label="Close">×</button>
+    </div>
+    <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
+              autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
+    <button type="button" class="primary mt" id="i-apply" disabled>Import</button>
+    <div class="nodehint" id="i-hint"></div>
+    <div id="i-preview"></div>
+  </section>
+</div>
 
 <div class="toast" id="toast"></div>
 

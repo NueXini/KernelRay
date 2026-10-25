@@ -214,3 +214,14 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   transition: opacity .2s ease; pointer-events: none; max-width: 88vw;
 }
 .toast.show { opacity: 1; }
+.overlay {
+  position: fixed; inset: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, .45);
+}
+.overlay[hidden] { display: none; }
+.addcard {
+  width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
+  overflow: auto; margin-bottom: 0;
+}
+.addcard > .primary { margin-top: 10px; width: 100%; }

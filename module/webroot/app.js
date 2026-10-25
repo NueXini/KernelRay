@@ -54,7 +54,6 @@ var DICT_ZH = {
   batchDelete: "删除", deleteConfirmN: "删除 {n} 个节点？",
   deletedN: "已删除 {n} 个节点",
   editHint: "勾选要删除的节点，点「删除」批量删除；已应用的节点不能删除。",
-  back: "返回",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
   setLang: "语言", langAuto: "自动",
   setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
@@ -62,15 +61,14 @@ var DICT_ZH = {
   setLogHint: "日志页每次拉取的行数；行数越多看得越早。",
   setSoon: "路由与 DNS 目前是内置策略：DNS 由核心的 DNS 模块应答并经节点转发；透明代理开关在状态页。",
   addTitle: "添加节点",
-  addHint: "粘贴分享链接，一行一个；也接受整段 base64 订阅内容。支持 vless / vmess / trojan / ss。",
   addPlaceholder: "vless://…",
-  parseBtn: "解析", importBtn: "导入",
-  readyCount: "可导入",
+  close: "关闭",
+  importBtn: "导入",
   lineNo: "第 ", lineNoEnd: " 行",
-  dupOf: "与第 ", dupOfEnd: " 行重复，已合并",
   importEmpty: "没有解析出可导入的节点",
   importDone: "已导入",
   importUpdated: "，更新",
+  importFailedN: "，{n} 行失败",
   notAppliedYet: "导入只写入节点库，不会切换；点列表里的节点即可切换并应用。"
 };
 var DICT_EN = {
@@ -112,7 +110,6 @@ var DICT_EN = {
   batchDelete: "Delete", deleteConfirmN: "Delete {n} node(s)?",
   deletedN: "Deleted {n} node(s)",
   editHint: "Check the nodes to delete, then tap Delete; the applied node cannot be deleted.",
-  back: "Back",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
   setLang: "Language", langAuto: "Auto",
   setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
@@ -120,15 +117,14 @@ var DICT_EN = {
   setLogHint: "How many lines the Log tab fetches each time; more lines reach further back.",
   setSoon: "Routing and DNS are built-in policy for now: DNS is answered by the core's DNS module and sent through the node; the takeover switch lives on the Status page.",
   addTitle: "Add node",
-  addHint: "Paste share links, one per line; a whole base64 subscription blob works too. vless / vmess / trojan / ss.",
   addPlaceholder: "vless://…",
-  parseBtn: "Parse", importBtn: "Import",
-  readyCount: "to import",
+  close: "Close",
+  importBtn: "Import",
   lineNo: "line ", lineNoEnd: "",
-  dupOf: "duplicate of line ", dupOfEnd: ", merged",
   importEmpty: "No importable node in the input",
   importDone: "Imported",
   importUpdated: ", updated",
+  importFailedN: ", {n} line(s) failed",
   notAppliedYet: "Importing only fills the node list; tap a node there to switch and apply it."
 };
 var T = DICT_EN; // applyLang() reassigns this before anything renders
@@ -141,12 +137,12 @@ var els = {
   refresh: $("refresh"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
   lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
-  addNode: $("add-node"), backAdd: $("back-add"),
+  addNode: $("add-node"),
   nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
   editNode: $("edit-node"), nToolbar: $("n-toolbar"),
-  lImport: $("l-import"), iText: $("i-text"), iParse: $("i-parse"),
+  lImport: $("l-import"), iText: $("i-text"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
-  iCount: $("i-count"), tabbar: $("tabbar"),
+  overlay: $("add-overlay"), addClose: $("add-close"), tabbar: $("tabbar"),
   lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log"),
   lTabSettings: $("l-tab-settings"),
   segLang: $("seg-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
@@ -158,7 +154,6 @@ var els = {
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
 var pages = {
   status: $("page-status"), nodes: $("page-nodes"),
-  "nodes/add": $("page-add"),
   log: $("page-log"), settings: $("page-settings")
 };
 
@@ -193,12 +188,11 @@ function label(key) {
   els.lList.textContent = T.listTitle;
   els.editNode.textContent = editMode ? T.done : T.edit;
   els.addNode.setAttribute("aria-label", T.addTitle);
-  els.backAdd.setAttribute("aria-label", T.back);
+  els.addClose.setAttribute("aria-label", T.close);
   els.lImport.textContent = T.addTitle;
-  els.iParse.textContent = T.parseBtn;
   els.iApply.textContent = T.importBtn;
   els.iText.placeholder = T.addPlaceholder;
-  els.iHint.textContent = T.addHint;
+  els.iHint.textContent = T.notAppliedYet;
   els.lTabStatus.textContent = T.tabStatus;
   els.lTabNodes.textContent = T.tabNodes;
   els.lTabLog.textContent = T.tabLog;
@@ -241,7 +235,7 @@ function applyLang() {
   renderSegs();
   listSig = "";
   renderNodeList();
-  els.iHint.textContent = T.addHint;
+  els.iHint.textContent = T.notAppliedYet;
   els.iHint.className = "nodehint";
   lastLog = null;
   renderLog("");
@@ -1183,8 +1177,6 @@ function refreshNodes() {
 
 // ---- node import UI ----
 
-var importRows = [];
-
 // Import dedupes inside the manual store: subscriptions are out of scope in this version and
 // an update must never land on a node the list cannot show.
 function findNodeByIdentity(state, ident) {
@@ -1263,46 +1255,28 @@ function previewLine(text, cls) {
   return row;
 }
 
-function renderPreview() {
-  var ok = importRows.filter(function (r) { return r.ok; });
+// A partial failure leaves the dialog open over the user's text: the imported rows are
+// done, and the failed ones are listed here so they can be fixed and retried.
+function renderFailedRows(rows) {
   els.iPreview.textContent = "";
-  els.iApply.disabled = busy || ok.length === 0;
-  els.iCount.hidden = ok.length === 0;
-  els.iCount.textContent = ok.length + " " + T.readyCount;
-  if (!importRows.length) { return; }
-
-  importRows.forEach(function (r) {
-    if (!r.ok) {
-      els.iPreview.appendChild(previewLine(
-        { num: r.line, name: r.error, meta: T.lineNo + r.line + T.lineNoEnd }, "bad"));
-      return;
-    }
-    var n = r.node;
-    var meta = nodeMeta(n);
-    if (n.dupOf) { meta += " — " + T.dupOf + n.dupOf + T.dupOfEnd; }
-    els.iPreview.appendChild(previewLine({ num: r.line, name: n.name, meta: meta }, "ok"));
+  rows.forEach(function (r) {
+    els.iPreview.appendChild(previewLine(
+      { num: r.line, name: r.error, meta: T.lineNo + r.line + T.lineNoEnd }, "bad"));
   });
 }
 
-function doParse() {
-  importRows = parseInput(els.iText.value);
-  if (!importRows.length) {
-    els.iPreview.textContent = "";
-    els.iApply.disabled = true;
-    els.iCount.hidden = true;
-    els.iHint.textContent = T.importEmpty;
-    els.iHint.className = "nodehint warn";
-    return;
-  }
-  els.iHint.textContent = T.notAppliedYet;
-  els.iHint.className = "nodehint";
-  renderPreview();
-}
-
+// One gesture: parse the input and merge the parseable rows into the store. Nothing here
+// switches or applies a node — the list's tap gesture owns that.
 function doImport() {
   if (busy || !hasBridge) { return; }
-  var ok = importRows.filter(function (r) { return r.ok; });
-  if (!ok.length) { return; }
+  var rows = parseInput(els.iText.value);
+  var ok = rows.filter(function (r) { return r.ok; });
+  if (!ok.length) {
+    els.iPreview.textContent = "";
+    toast(T.importEmpty);
+    return;
+  }
+  var bad = rows.filter(function (r) { return !r.ok; });
 
   busy = true;
   setButtons();
@@ -1318,21 +1292,23 @@ function doImport() {
     return writeState(state).then(function () {
       var msg = T.importDone + " " + res.added;
       if (res.updated) { msg += T.importUpdated + " " + res.updated; }
-      toast(msg);
-      els.iText.value = "";
-      els.iPreview.textContent = "";
-      els.iCount.hidden = true;
-      els.iHint.textContent = T.addHint;
-      importRows = [];
-      // The add page's task is done: back to the list, which refreshes as it shows.
-      go("nodes");
+      if (!bad.length) {
+        toast(msg);
+        closeAdd();
+        refreshPage();
+      } else {
+        // The text stays for editing; re-importing is safe because mergeNodes updates
+        // by identity instead of duplicating.
+        toast(msg + T.importFailedN.replace("{n}", String(bad.length)));
+        renderFailedRows(bad);
+      }
     });
   }).catch(function (e) {
     toast(T.actionFailed + ": " + e.message);
   }).then(function () {
     busy = false;
     setButtons();
-    els.iApply.disabled = importRows.filter(function (r) { return r.ok; }).length === 0;
+    els.iApply.disabled = !els.iText.value.trim();
   });
 }
 
@@ -1409,15 +1385,12 @@ function refreshLog() {
 // WebView does not accumulate history for every tab switch.
 var DEFAULT_ROUTE = "status";
 var currentRoute = null;
-var scrollByRoute = { status: 0, nodes: 0, "nodes/add": 0, log: 0, settings: 0 };
+var scrollByRoute = { status: 0, nodes: 0, log: 0, settings: 0 };
 var ROUTES = ["status", "nodes", "log", "settings"];
-var ADD_ROUTE = "nodes/add";
 
 function routeOf(value) {
   var route = String(value == null ? "" : value)
     .replace(/^#\/?/, "").replace(/\/+$/, "").toLowerCase();
-  // The add page is a second level behind Nodes: reachable by deep link, never a tab.
-  if (route === ADD_ROUTE) { return route; }
   if (ROUTES.indexOf(route) >= 0) { return route; }
   return DEFAULT_ROUTE;
 }
@@ -1426,8 +1399,8 @@ function routeHash(route) { return "#/" + route; }
 
 function showRoute(route, opts) {
   route = routeOf(route);
-  // The check set is a temporary intent: leaving the node page (including into the add
-  // page) discards it rather than carrying it across.
+  // The check set is a temporary intent: leaving the node page via the tab bar discards
+  // it rather than carrying it across. The add dialog overlays without a route change.
   if (route !== "nodes" && editMode) {
     editMode = false;
     checkSet = {};
@@ -1440,7 +1413,7 @@ function showRoute(route, opts) {
   Object.keys(pages).forEach(function (key) { pages[key].hidden = key !== route; });
   tabs.forEach(function (tab) {
     var tr = tab.getAttribute("data-route");
-    var active = tr === route || (route === ADD_ROUTE && tr === "nodes");
+    var active = tr === route;
     tab.classList.toggle("active", active);
     if (active) { tab.setAttribute("aria-current", "page"); }
     else { tab.removeAttribute("aria-current"); }
@@ -1461,15 +1434,19 @@ function showRoute(route, opts) {
   if (!opts || opts.refresh !== false) { refreshPage(); }
 }
 
-// Tab switches replace history (a long-lived WebView must not accumulate entries), but
-// entering the add page pushes: it is a second level, so the system back gesture returns
-// to the list.
+// The add dialog holds no route and no history entry: the back gesture stays with the
+// tab bar. Opening resets it because closing discards whatever was typed.
 function openAdd() {
-  if (currentRoute === ADD_ROUTE) { return; }
-  var pushed = false;
-  try { history.pushState(null, "", routeHash(ADD_ROUTE)); pushed = true; } catch (e) { /* fall back below */ }
-  if (pushed) { showRoute(ADD_ROUTE, { refresh: true }); }
-  else { location.hash = routeHash(ADD_ROUTE); }
+  els.iText.value = "";
+  els.iPreview.textContent = "";
+  els.iHint.textContent = T.notAppliedYet;
+  els.iHint.className = "nodehint";
+  els.iApply.disabled = true;
+  els.overlay.hidden = false;
+}
+
+function closeAdd() {
+  els.overlay.hidden = true;
 }
 
 function go(route) {
@@ -1604,10 +1581,15 @@ els.nToolbar.addEventListener("click", function (e) {
   }
   renderNodeList();
 });
-els.iParse.addEventListener("click", doParse);
 els.iApply.addEventListener("click", doImport);
 els.addNode.addEventListener("click", openAdd);
-els.backAdd.addEventListener("click", function () { go("nodes"); });
+els.addClose.addEventListener("click", closeAdd);
+els.overlay.addEventListener("click", function (e) {
+  if (e.target === els.overlay) { closeAdd(); }
+});
+els.iText.addEventListener("input", function () {
+  els.iApply.disabled = busy || !els.iText.value.trim();
+});
 els.segLang.addEventListener("click", function (e) {
   var v = segValue(e);
   if (!v || LANGS.indexOf(v) < 0 || v === langPref) { return; }

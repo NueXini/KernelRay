@@ -139,11 +139,12 @@ It is a temporary intent held only while edit mode lasts, and it never moves the
 pointer or touches the core. The applied node cannot be checked, because it cannot be deleted.
 _Avoid_: select (that names the 当前节点 pointer), pick, mark
 
-**添加页 (Add-node page)**:
-The second-level page behind the node list's + entry: share links are pasted, parsed and
-imported into the node store there. Opening it or importing from it never switches or
-applies a node.
-_Avoid_: import page, subscription page (that is the 订阅 feature)
+**添加弹窗 (Add-node dialog)**:
+The dialog the node list's + entry opens: share links are pasted and imported there, and
+parsing is the first half of that one import gesture, not a separate step. Success closes
+the dialog with a toast; failed lines stay in the dialog for fixing and retrying. Opening
+it or importing from it never switches or applies a node.
+_Avoid_: add page, import page, subscription page (that is the 订阅 feature), parse step
 
 **订阅 (Subscription)**:
 A URL that yields nodes. Its nodes join the node store, but the store does not own them: a
