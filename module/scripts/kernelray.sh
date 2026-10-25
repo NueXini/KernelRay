@@ -543,6 +543,19 @@ kr_start_locked() {
     kr_status_write stopped no-node
     return 1
   fi
+  # The switch couples takeover to the core's start (ADR 0011): on, the rules go in
+  # and the takeover config is swapped in before the core runs (fail-closed); off,
+  # any stale rules from a crash under the old switch state come down and the core
+  # starts idle. The gate above already refused a start without an applied node, so
+  # a default-on switch can never take a nodeless device over.
+  if command -v kr_tp_engage >/dev/null 2>&1; then
+    if kr_tp_switch_on; then
+      kr_tp_engage
+    elif kr_tp_rules_present; then
+      kr_tp_log "start: the tproxy switch is off; removing stale rules"
+      kr_tp_remove
+    fi
+  fi
   kr_ensure_config || {
     kr_status_write failed no-config
     return 1
@@ -684,8 +697,7 @@ kr_cli() {
     log) kr_tail "${1:-200}" ;;
     tproxy)
       case "${1:-}" in
-        on) kr_tproxy_on ;;
-        off) kr_tproxy_off ;;
+        on|off) kr_tproxy_set "$1" ;;
         status) kr_tproxy_status ;;
         *)
           echo "usage: kernelray.sh tproxy {on|off|status}" >&2

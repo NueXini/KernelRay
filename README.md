@@ -5,25 +5,26 @@ on an Android device.
 
 **v0.7 — transparent proxy (TPROXY takeover).** The core starts on boot and exposes local
 `socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node switches
-the core to it. After a node is applied, the takeover switch in the WebUI turns on transparent
-proxying: the module installs iptables TPROXY rules and policy routing so all device traffic
-(TCP/UDP, IPv4/IPv6, every UID) enters the core, and DNS is answered by the core's DNS module
-through the node. Takeover is **off by default**, never enables itself, and is fail-closed:
-while it is on, a dead core means no traffic instead of leaked traffic.
+the core to it. The tproxy switch in the WebUI settings (tproxy透明代理) decides whether
+device traffic is taken over at each core start: **on by default**, so once a node is applied
+every start installs iptables TPROXY rules and policy routing and all device traffic
+(TCP/UDP, IPv4/IPv6, every UID) enters the core, with DNS answered by the core's DNS module
+through the node. It is start-coupled — flipping it never touches a running core — and
+fail-closed: while the rules are up, a dead core means no traffic instead of leaked traffic.
 
 ## What it does
 
 | | |
 | --- | --- |
-| starts on boot | `service.sh` (late_start service) launches the core with the applied config, or direct when none is applied; with the takeover switch on it installs the rules first |
+| starts on boot | `service.sh` (late_start service) launches the core with the applied config; with the tproxy switch on (the default) it installs the rules first — with no applied node neither happens |
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node; `freedom` (direct) until a node is applied |
 | switches to a node | tapping a row in the WebUI writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core |
-| takes over device traffic | the takeover switch (WebUI status card or `kernelray.sh tproxy on`) installs the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
+| takes over device traffic | the tproxy switch (WebUI settings, on by default) makes every core start install the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
 | answers DNS | port 53 is captured into the core's DNS module (fixed DoH upstream `https://1.1.1.1/dns-query`) and its queries go through the node; the applied node's own hostname resolves direct |
 | action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop, takeover switch, log, import nodes, switch the applied node from the node list |
+| WebUI | start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch lives in Settings |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
 | log | `logs/xray.log` (core) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
 
@@ -38,30 +39,37 @@ the core forwards direct; after tapping a node in the WebUI the same request exi
 
 ## Transparent proxy (takeover)
 
-The takeover switch is the whole UI for the feature, and it is deliberately boring:
+The tproxy switch in Settings is the whole UI for the feature, and it is deliberately boring
+([ADR 0011](docs/adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
 
-- **Off by default.** An update or reinstall resets it (the module dir is replaced wholesale),
-  so the module never starts intercepting traffic unasked. It requires an applied node first.
-- **Fail-closed.** While it is on, the rules exist independently of the core's health: they are
-  installed before the core starts, and a core that crashes later leaves them in place, so
-  traffic is dropped instead of going out direct. Recovery is turning the switch off — that
-  works without network.
+- **On by default.** Install creates the switch and every update resets it (the module dir is
+  replaced wholesale). It only bites together with an applied node: without one, starts stay
+  idle and no rules go up.
+- **It applies at the next start.** Flipping it never touches a running core; stop → start
+  (or reboot) applies it. Start-coupled means the rules are installed before the core runs.
+- **Fail-closed.** While the switch is on, the rules exist independently of the core's health:
+  they are installed before the core starts, and a core that crashes later leaves them in
+  place, so traffic is dropped instead of going out direct. Recovery is starting the core
+  again (tproxy comes back), or switching the switch off and starting (direct) — both work
+  without network.
 - **What is captured.** Device-local TCP and UDP, IPv4 and IPv6, all UIDs — including DNS,
   even queries aimed at a LAN resolver. Bypassed: loopback, private/link-local/multicast
   ranges, DHCP, and the core's own connections (via the bypass mark). ICMP stays direct:
   `ping` is not proxied, that is documented behaviour, not a bug.
 - **Conflicts refuse to fight.** A UP `tun*`/`wg*` interface, an always-on VPN setting or a
-  foreign `-j TPROXY` rule blocks enabling with `failed/conflict`. Detection is heuristic; the
-  rule of thumb stands: only one transparent proxy may be active. After a boot-time conflict
-  the module stays idle and the WebUI offers a retry; the switch itself is not silently reset.
+  foreign `-j TPROXY` rule blocks the takeover at start with `failed/conflict`. Detection is
+  heuristic; the rule of thumb stands: only one transparent proxy may be active. After a
+  conflict the module stays idle and the WebUI offers a retry; the switch itself is not
+  silently reset.
 - **The listener is not an open proxy.** The tproxy inbound binds a wildcard address; a filter
   rule drops direct access to port 10810 from anything but loopback.
 
 Recovery cheat sheet: device offline with the switch on means the core died — start it again
-or run `kernelray.sh tproxy off`; `failed/rules` means an install failed and was rolled back
-(see `logs/kernelray.log`); `failed/conflict` means another VPN owns the traffic. The bypass
-routing copies the current default route at enable time; if the network changes while
-takeover is on, toggle the switch off and on again to rebuild it.
+(tproxy comes back with it), or switch tproxy off in Settings and start to go direct;
+`kernelray.sh tproxy off` writes the same preference. `failed/rules` means an install failed
+and was rolled back (see `logs/kernelray.log`); `failed/conflict` means another VPN owns the
+traffic. The bypass routing copies the current default route at start time; if the network
+changes while takeover is on, restart the core (stop, then start) to rebuild it.
 
 The mechanism details — namespace values, boot and toggle semantics, the mark placeholder —
 are pinned down in [`docs/adr/0008`](docs/adr/0008-takeover-namespace-boot-and-toggle-semantics.md),
@@ -75,7 +83,7 @@ and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, apply, status; also the CLI used by the WebUI |
-| `module/scripts/tproxy.sh` | takeover: rule install/remove, conflict detection, boot path, the `tproxy` CLI; sourced by `kernelray.sh` |
+| `module/scripts/tproxy.sh` | takeover: rule install/remove, conflict detection, the start-time engagement, the switch preference and the `tproxy` CLI; sourced by `kernelray.sh` |
 | `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
 | `module/webroot/app.css` | WebUI styles, including the light/dark palettes |
 | `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, renders the node list, renders the tapped node as an Xray outbound, drives the CLI |
@@ -87,7 +95,7 @@ and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 | `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
 | `tests/prefs.test.js` | Settings-page preference (language, log buffer) normalise/load/save tests, run against the shipped block |
 | `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths and start rollback, run against the shipped shell + a fake core |
-| `tests/tproxy.test.js` | rule install/remove, conflict detection and the boot path, run against fake iptables/ip binaries |
+| `tests/tproxy.test.js` | rule install/remove, conflict detection, the start-time engagement and the switch preference, run against fake iptables/ip binaries |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
 | `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
@@ -158,12 +166,14 @@ Open the module card in the KernelSU manager and tap **WebUI**. The page has fou
 **Status**, **Nodes**, **Log** and **Settings** — with the title and runtime badge pinned above
 them:
 
-- **Status** — start / stop the core, the takeover switch (with its conflict / failure hints),
-  and pid, uptime, ports, core version and config path.
+- **Status** — start / stop the core, conflict / failure hints with a retry, and pid, uptime,
+  ports, core version and config path.
 - **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
-- **Settings** — UI language (auto / 中文 / English) and the log buffer size. These are UI
-  preferences: they live in the WebView's own storage, not in `state.json`.
+- **Settings** — UI language (auto / 中文 / English), the log buffer size, and the tproxy
+  switch (tproxy透明代理): whether device traffic is taken over at each core start, on by
+  default. Language and log buffer are WebView preferences; the tproxy switch is module state
+  (`runtime/tproxy`) and survives neither an uninstall nor an update.
 
 Tabs are hash routes (`#/status`, `#/nodes`, `#/log`, `#/settings`): a reload or a deep link
 lands on the same tab, and anything else falls back to `#/status`. Only the visible tab is
@@ -208,8 +218,9 @@ without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
 the shipped `app.js`.
 `node tests/config.test.js` sources the shipped shell against a fake core and checks template
 assembly, escaping, the idle/takeover render forms, apply's failure paths and the
-start-rollback path. `node tests/tproxy.test.js` runs the rule installer, conflict detection
-and boot path against fake `iptables`/`ip` binaries that log their arguments.
+start-rollback path. `node tests/tproxy.test.js` runs the rule installer, conflict detection,
+the start-time engagement and the switch preference against fake `iptables`/`ip` binaries
+that log their arguments.
 
 The page is a dumb client: every core action runs the same CLI the shell uses, so behaviour
 cannot diverge between the two entry points.
@@ -220,8 +231,8 @@ cannot diverge between the two entry points.
 /data/adb/modules/kernelray/scripts/kernelray.sh start
 /data/adb/modules/kernelray/scripts/kernelray.sh stop
 /data/adb/modules/kernelray/scripts/kernelray.sh apply <node-id>
-/data/adb/modules/kernelray/scripts/kernelray.sh tproxy on     # takeover: needs an applied node
-/data/adb/modules/kernelray/scripts/kernelray.sh tproxy off    # removes the rules, keeps the core
+/data/adb/modules/kernelray/scripts/kernelray.sh tproxy on     # the switch: engages at the next core start
+/data/adb/modules/kernelray/scripts/kernelray.sh tproxy off    # the switch: idle starts until turned on again
 /data/adb/modules/kernelray/scripts/kernelray.sh tproxy status
 ```
 

@@ -2,7 +2,10 @@
 
 Status: accepted (implements the rule-level details left open by
 [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md); refines the DNS
-bypass of [ADR 0006](0006-dns-goes-through-the-core.md))
+bypass of [ADR 0006](0006-dns-goes-through-the-core.md)). The switch semantics — default
+off, immediate toggle, boot-time rules without a node — are superseded by
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the switch is
+default-on, start-coupled, and only ever a preference write.
 
 ## Context
 
@@ -36,7 +39,7 @@ table carries a **copy of the current default route** (parsed from `ip route sho
 all` at install time). Copying is required because Android keeps the default route in a
 per-network table selected by netd's own marks, and rule 32000 is `unreachable` — an
 arbitrary mark with no rule of its own is dead (the v0.6 lesson). A network switch after
-takeover is on invalidates the copy; toggling the switch rebuilds it.
+takeover is on invalidates the copy; a core restart rebuilds it.
 
 **Rule shape.** `KR_TP_OUTPUT` returns core sockets (bypass mark) first, marks DNS (tcp/udp
 53) *before* the bypass ranges so a LAN resolver is captured too (ADR 0006's leak argument
@@ -62,9 +65,11 @@ the bypass mark 19282 while takeover is on and `0` while it is off (Xray treats 
 as unset), so mark and rules always ship together from one place. The template's direct
 outbound keeps its literal 19282: an unused outbound creates no socket.
 
-**Boot with the switch on** (service.sh, before the core starts): re-render the config
-to match the switch — a takeover-form config without rules loses routing, and rules
-without a tproxy listener blackhole traffic, so the stale combination is never started.
+**Boot with the switch on** (superseded by ADR 0011: the engagement now lives inside
+`kr_start_locked` as `kr_tp_engage`, and a start without an applied node installs no rules).
+The on-start path re-renders the config to match the switch — a takeover-form config without
+rules loses routing, and rules without a tproxy listener blackhole traffic, so the stale
+combination is never started.
 Then: conflict → rules are skipped, the idle-form config is written, status is
 `failed/conflict`, and the switch file stays on (intent is never silently rewritten);
 the WebUI shows the reason and a retry button. Rule install failure → idle-form config,
@@ -88,7 +93,10 @@ privacy-extension temporary addresses) or dangles. Without AAAA, every app conne
 is IPv4 and captured. Sites reachable only over IPv6 are unreachable during takeover;
 that is a documented limitation, not a bug.
 
-**Toggle semantics** (`kernelray.sh tproxy on|off`):
+**Toggle semantics** (`kernelray.sh tproxy on|off`) — superseded by
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the command now
+only writes the preference, applied at the next core start. The v0.7 immediate-toggle
+semantics were:
 
 - `on` requires an applied node with a matching outbound and a clean conflict check.
   Order: render + `xray -test` the takeover candidate → install rules (a failure

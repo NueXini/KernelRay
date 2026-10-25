@@ -24,15 +24,8 @@
       <div class="hint" id="hint"></div>
     </section>
 
-    <section class="card">
-      <div class="tp-row">
-        <div class="tp-text">
-          <span id="l-tp">Takeover</span>
-          <div class="hint" id="tp-hint"></div>
-        </div>
-        <button type="button" class="switch" id="tp-switch" role="switch"
-                aria-checked="false" disabled><span class="knob"></span></button>
-      </div>
+    <section class="card" id="tp-card" hidden>
+      <div class="hint" id="tp-hint"></div>
       <button type="button" class="primary mt" id="tp-retry" hidden>Retry</button>
     </section>
 
@@ -84,6 +77,17 @@
         <button type="button" data-v="en">English</button>
       </div>
       <div class="hint" id="l-set-lang-hint"></div>
+    </section>
+
+    <section class="card">
+      <div class="tp-row">
+        <div class="tp-text">
+          <span id="l-set-tp">tproxy transparent proxy</span>
+          <div class="hint" id="set-tp-hint"></div>
+        </div>
+        <button type="button" class="switch" id="set-tp-switch" role="switch"
+                aria-checked="false"><span class="knob"></span></button>
+      </div>
     </section>
 
     <section class="card">

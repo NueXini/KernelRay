@@ -9,8 +9,10 @@ if kr_running; then
   echo "- stopping"
   kr_stop
   if command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on; then
-    echo "! takeover switch is on: the rules stay up (fail-closed), so the device has no"
-    echo "  network until the core starts again, or run: kernelray.sh tproxy off"
+    echo "! tproxy switch is on: the rules stay up (fail-closed), so the device has no"
+    echo "  network until the core starts again -- starting the core brings tproxy back."
+    echo "  For direct traffic, turn the switch off in the WebUI settings (or run:" 
+    echo "  kernelray.sh tproxy off) and start the core."
   fi
 else
   echo "- starting"

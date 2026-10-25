@@ -27,14 +27,15 @@ var DICT_ZH = {
   stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表点一个节点应用，核心才会启动。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
   tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
-  tp: "接管",
-  tpNoNode: "先在节点页点一个节点；没有已应用的节点时不能接管，否则所有流量都会被丢弃。",
-  tpOffHint: "关闭中：设备流量直连。打开后设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发。",
-  tpOnHint: "已接管：设备流量经核心转发；ping 等 ICMP 仍直连。冲突或规则失败时关掉开关即可恢复网络。",
-  tpConflict: "接管被冲突阻止：设备上有别的 VPN 或透明代理在运行。处理后再试；关闭开关也可恢复直连。",
-  tpRules: "接管规则安装失败，已回滚（可能漏流量）。详情见 kernelray.log；关闭开关可恢复直连。",
-  tpRetry: "重试接管",
-  tpOnMsg: "正在开启接管…", tpOffMsg: "正在关闭接管…",
+  setTp: "tproxy透明代理",
+  setTpOn: "已开启：核心下次启动时（开机或状态页「启动」），设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发；ping 等 ICMP 仍直连。",
+  setTpOff: "已关闭：核心启动后设备流量直连；本地 socks/http 入站仍按需使用。",
+  setTpPending: "核心运行中，但 tproxy 尚未生效；停止再启动（或重启设备）后生效。",
+  setTpNoNode: "还没有已应用的节点；应用节点后，核心启动时 tproxy 会自动开启。",
+  tpConflict: "tproxy 被冲突阻止：设备上有别的 VPN 或透明代理在运行。处理后点「重试」；关闭开关并重启核心可恢复直连。",
+  tpRules: "tproxy 规则安装失败，已回滚（可能漏流量）。详情见 kernelray.log；点「重试」再试一次。",
+  tpRetry: "重试",
+  tpOnMsg: "tproxy 已开启；下次启动核心时生效", tpOffMsg: "tproxy 已关闭；下次启动核心时生效",
   "failed/rules": "接管规则", "failed/conflict": "接管冲突",
   applyingMsg: "正在应用节点…", appliedMsg: "节点已应用",
   nodeNoState: "没有 state.json，节点信息无从得知",
@@ -65,7 +66,7 @@ var DICT_ZH = {
   portTp: "这个端口留给透明代理入站（10810），换一个",
   portsSaving: "正在应用端口…", portsSaved: "端口已应用",
   portsSave: "保存",
-  setSoon: "路由与 DNS 目前是内置策略：DNS 由核心的 DNS 模块应答并经节点转发；透明代理开关在状态页。",
+  setSoon: "路由与 DNS 目前是内置策略：DNS 由核心的 DNS 模块应答并经节点转发；透明代理开关在本页上方。",
   addTitle: "添加节点",
   addPlaceholder: "vless://…",
   close: "关闭",
@@ -89,14 +90,15 @@ var DICT_EN = {
   stoppedHintNone: "The core is stopped and no node is applied; tap a node in the node list to apply one — the core only starts with an applied node.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
   tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
-  tp: "Takeover",
-  tpNoNode: "Tap a node on the Nodes page first: capture without an applied node would drop all traffic.",
-  tpOffHint: "Off: device traffic goes out directly. On: it is routed through the applied node (TCP/UDP, IPv4/IPv6).",
-  tpOnHint: "On: device traffic goes through the core; ICMP such as ping stays direct. Turning the switch off restores the network.",
-  tpConflict: "Takeover is blocked by a conflict: another VPN or transparent proxy is running. Resolve it and retry; switching off restores direct access.",
-  tpRules: "Installing the takeover rules failed and was rolled back (traffic may leak). See kernelray.log; switching off restores direct access.",
-  tpRetry: "Retry takeover",
-  tpOnMsg: "Enabling takeover…", tpOffMsg: "Disabling takeover…",
+  setTp: "TPROXY transparent proxy",
+  setTpOn: "On: at the next core start (boot or the Status page's Start), device traffic (TCP/UDP, IPv4/IPv6) goes through the applied node; ICMP such as ping stays direct.",
+  setTpOff: "Off: with the core started, device traffic goes out directly; the local socks/http inbounds remain available.",
+  setTpPending: "The core is running, but tproxy is not in effect yet; stop and start it (or reboot) to apply.",
+  setTpNoNode: "No applied node yet; once a node is applied, tproxy engages automatically when the core starts.",
+  tpConflict: "tproxy is blocked by a conflict: another VPN or transparent proxy is running. Resolve it and retry; switch tproxy off and restart the core to go direct.",
+  tpRules: "Installing the tproxy rules failed and was rolled back (traffic may leak). See kernelray.log; tap Retry to try again.",
+  tpRetry: "Retry",
+  tpOnMsg: "tproxy on; takes effect at the next core start", tpOffMsg: "tproxy off; takes effect at the next core start",
   "failed/rules": "rules", "failed/conflict": "conflict",
   applyingMsg: "Applying node…", appliedMsg: "Node applied",
   nodeNoState: "No state.json, so the nodes are unknown",
@@ -127,7 +129,7 @@ var DICT_EN = {
   portTp: "That port is reserved for the tproxy inbound (10810); pick another",
   portsSaving: "Applying ports…", portsSaved: "Ports applied",
   portsSave: "Save",
-  setSoon: "Routing and DNS are built-in policy for now: DNS is answered by the core's DNS module and sent through the node; the takeover switch lives on the Status page.",
+  setSoon: "Routing and DNS are built-in policy for now: DNS is answered by the core's DNS module and sent through the node; the tproxy switch is on this page.",
   addTitle: "Add node",
   addPlaceholder: "vless://…",
   close: "Close",
@@ -163,7 +165,8 @@ var els = {
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetSoon: $("l-set-soon"),
-  lTp: $("l-tp"), tpHint: $("tp-hint"), tpSwitch: $("tp-switch"), tpRetry: $("tp-retry")
+  tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
+  lSetTp: $("l-set-tp"), setTpHint: $("set-tp-hint"), setTpSwitch: $("set-tp-switch")
 };
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
 var pages = {
@@ -224,7 +227,7 @@ function label(key) {
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
   els.lSetSoon.textContent = T.setSoon;
-  els.lTp.textContent = T.tp;
+  els.lSetTp.textContent = T.setTp;
   els.tpRetry.textContent = T.tpRetry;
   els.tabbar.setAttribute("aria-label", T.navLabel);
 }
@@ -767,7 +770,7 @@ function setButtons() {
   els.stop.disabled = busy || !running;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
-  els.tpSwitch.disabled = busy || !(lastKv && lastKv.node);
+  els.setTpSwitch.disabled = busy;
   els.iSocks.disabled = !hasBridge;
   els.iHttp.disabled = !hasBridge;
   els.portsSave.disabled = busy || !hasBridge;
@@ -1396,23 +1399,35 @@ function renderStatus(kv) {
   els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
-    if (kv.tproxy === "on") { els.hint.textContent = hintText(T.tpRunningHint, kv); }
+    // Rule presence, not the switch preference: a core started while the switch was
+    // off (or before the change could apply) is not capturing anything yet.
+    if (kv.rules === "present") { els.hint.textContent = hintText(T.tpRunningHint, kv); }
     else { els.hint.textContent = hintText(T.runningHint, kv); }
   } else {
     els.hint.textContent = kv.node ? T.stoppedHint : T.stoppedHintNone;
   }
 
-  // The takeover card follows the persisted switch (kv.tproxy), not rule presence: a
-  // conflict or rule failure leaves the switch on but unenforced, and the hint says so.
+  // The status card is failure-only since ADR 0011: the switch itself lives in
+  // Settings. A conflict or rule failure leaves the switch on but unenforced; the
+  // hint says so and the retry runs the same start the button does.
+  var tpFailed = phase === "failed/conflict" || phase === "failed/rules";
+  els.tpCard.hidden = !tpFailed;
+  if (tpFailed) {
+    els.tpHint.textContent = phase === "failed/conflict" ? T.tpConflict : T.tpRules;
+  }
+  els.tpRetry.hidden = !tpFailed || busy;
+
+  // The Settings switch follows the persisted preference (kv.tproxy), with the
+  // next-start semantics spelled out while the running core does not match it yet.
   var tpOn = kv.tproxy === "on";
-  els.tpSwitch.classList.toggle("on", tpOn);
-  els.tpSwitch.setAttribute("aria-checked", tpOn ? "true" : "false");
-  els.tpSwitch.disabled = busy || !kv.node;
-  if (!kv.node) { els.tpHint.textContent = T.tpNoNode; }
-  else if (phase === "failed/conflict") { els.tpHint.textContent = T.tpConflict; }
-  else if (phase === "failed/rules") { els.tpHint.textContent = T.tpRules; }
-  else { els.tpHint.textContent = tpOn ? T.tpOnHint : T.tpOffHint; }
-  els.tpRetry.hidden = phase !== "failed/conflict" || busy;
+  els.setTpSwitch.classList.toggle("on", tpOn);
+  els.setTpSwitch.setAttribute("aria-checked", tpOn ? "true" : "false");
+  if (!kv.node) { els.setTpHint.textContent = T.setTpNoNode; }
+  else if (state === "running" && tpOn && kv.rules !== "present") {
+    els.setTpHint.textContent = T.setTpPending;
+  } else {
+    els.setTpHint.textContent = tpOn ? T.setTpOn : T.setTpOff;
+  }
 
   setButtons();
 }
@@ -1637,11 +1652,11 @@ function run(command, pendingLabel) {
 
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
-els.tpSwitch.addEventListener("click", function () {
+els.setTpSwitch.addEventListener("click", function () {
   var target = lastKv && lastKv.tproxy === "on" ? "off" : "on";
   run("tproxy " + target, target === "on" ? T.tpOnMsg : T.tpOffMsg);
 });
-els.tpRetry.addEventListener("click", function () { run("tproxy on", T.tpOnMsg); });
+els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });
 els.nList.addEventListener("click", function (e) {
   var t = e.target;

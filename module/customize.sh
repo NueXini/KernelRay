@@ -33,14 +33,18 @@ kr_version_refresh
 ui_print "  core: $(kr_version_cached)"
 
 kr_dirs
+# The tproxy switch defaults to on (ADR 0011): the core's next start after a node is
+# applied takes the device over. An update recreates it the same way.
+command -v kr_tp_default_on >/dev/null 2>&1 && kr_tp_default_on
 kr_ensure_config
 kr_status_write installed idle
 
-ui_print "- Installed. Core starts on boot; until a node is applied it runs direct on"
-ui_print "  socks 127.0.0.1:10808 and http 127.0.0.1:10809."
-ui_print "- Select a node in the WebUI (Nodes -> tap a row) to derive the core config."
-ui_print "- Transparent proxy: after a node is applied, switch takeover on in the WebUI."
-ui_print "  It is off by default and never enables itself."
+ui_print "- Installed. Core starts on boot; until a node is applied it stays stopped."
+ui_print "- Select a node in the WebUI (Nodes -> tap a row) to derive the core config;"
+ui_print "  starting the core with a node applied also brings tproxy up."
+ui_print "- TPROXY transparent proxy is ON by default: every core start (boot or the Start"
+ui_print "  button) routes device traffic through the applied node. Turn it off in the"
+ui_print "  WebUI Settings (tproxy透明代理) if you only want the local socks/http inbounds."
 ui_print "- Config: /data/adb/modules/$KR_ID/config.json (generated; do not hand-edit)"
 ui_print "- Log:    /data/adb/modules/$KR_ID/logs/xray.log"
 ui_print "! Everything lives in this module dir. A module update replaces it whole,"

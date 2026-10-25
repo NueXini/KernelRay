@@ -1,6 +1,8 @@
 # 0004 — TPROXY takeover is module-owned, opt-in and fail-closed
 
-Status: accepted
+Status: accepted (the switch's default, its no-node refusal and the after-update behaviour
+are superseded by [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md);
+the switch itself is now the tproxy switch, titled tproxy透明代理)
 
 ## Context
 
@@ -25,9 +27,11 @@ a switch, not a rule-writing tutorial.
   outbound sockets. The core bypasses through a dedicated socket mark and an `ip rule` that
   outranks the capture rule; it is never excluded by UID, which would also exempt every other
   root process.
-- **Opt-in, default off.** The takeover switch is persisted and restored at boot. With no
+- **Opt-in, default off.** The tproxy switch is persisted and restored at boot. With no
   applied node the switch cannot be turned on: capture without an outbound is worse than an
-  idle run.
+  idle run. (The default and the no-node refusal were lifted by
+  [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the switch is on
+  from install, and without an applied node it simply has no effect.)
 - **Fail-closed.** While the switch is on, the rules exist independently of the core's health:
   at boot they are installed before the core starts, and a core that crashes later leaves them
   in place, so traffic is dropped instead of going out directly. A failed *rule install* is the

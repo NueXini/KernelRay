@@ -3,9 +3,9 @@
 # checks that refuse to share them with a foreign VPN, and the persisted switch.
 # Sourced by kernelray.sh, which provides the kr_* helpers and paths.
 #
-# Implements docs/adr/0004 (module-owned, opt-in, fail-closed takeover), docs/adr/0006
-# (DNS through the core's DNS module) and docs/adr/0008 (namespace values, boot and
-# toggle semantics). The namespace — capture fwmark 19283, bypass fwmark 19282, routing
+# Implements docs/adr/0004 (module-owned, fail-closed takeover), docs/adr/0006
+# (DNS through the core's DNS module), docs/adr/0008 (namespace values) and
+# docs/adr/0011 (the switch is a default-on preference coupled to the core's start). The namespace — capture fwmark 19283, bypass fwmark 19282, routing
 # tables 19283/19282, ip rule preferences 9500/9400, the KR_TP_* chains and tproxy port
 # 10810 — is exclusive to this module: only those are ever installed or removed, never
 # another module's rules.
@@ -23,9 +23,47 @@ KR_TPLOG=$KR_LOGDIR/kernelray.log
 
 kr_tp_log() { kr_log "$*"; }
 
-# The persisted takeover switch (接管开关): presence of the file is the user's choice.
-# Off is the default; the module never creates it on its own.
+# The persisted tproxy switch (tproxy透明代理开关): presence of the file is the user's
+# choice that takeover engages when the core starts. It is on from install (ADR 0011)
+# and is a pure preference: writing it never touches a running core or the rules.
 kr_tp_switch_on() { [ -s "$KR_TP_SWITCH" ]; }
+
+# Install-time default (ADR 0011): the switch starts on, so the first core start after
+# a node is applied takes the device over. A user's off is an absent file; only the
+# installer (fresh install or update) recreates it.
+kr_tp_default_on() {
+  [ -s "$KR_TP_SWITCH" ] && return 0
+  kr_dirs
+  printf 'on\n' >"$KR_TP_SWITCH" 2>/dev/null || return 0
+  chmod 600 "$KR_TP_SWITCH" 2>/dev/null
+  kr_tp_log "tproxy switch defaults to on"
+}
+
+# The switch write since ADR 0011: on|off only persists the preference. It is applied
+# by the next core start (kr_start_locked), never immediately -- a running core is
+# left exactly as it is.
+kr_tproxy_set() { # <on|off>
+  kr_dirs
+  case "$1" in
+    on)
+      printf 'on\n' >"$KR_TP_SWITCH" 2>/dev/null || {
+        echo "could not write $KR_TP_SWITCH" >&2
+        return 1
+      }
+      chmod 600 "$KR_TP_SWITCH" 2>/dev/null
+      kr_tp_log "tproxy switch: on (takes effect at the next core start)"
+      ;;
+    off)
+      rm -f "$KR_TP_SWITCH"
+      kr_tp_log "tproxy switch: off (takes effect at the next core start)"
+      ;;
+    *)
+      echo "usage: kr_tproxy_set {on|off}" >&2
+      return 2
+      ;;
+  esac
+  return 0
+}
 
 kr_tp_rules_present() {
   iptables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
@@ -336,37 +374,27 @@ kr_tp_render_blocks() { # sets KR_TP_INBOUND, KR_DNS_OUTBOUND, KR_DNS_BLOCK, KR_
   return 0
 }
 
-# Boot with the switch on (service.sh, before kr_start). The config on disk may be
-# stale relative to the switch, so it is re-rendered to match — a takeover-form config
-# without rules loses routing, and rules without a tproxy listener blackhole traffic.
-kr_tp_boot() {
-  kr_tp_log "boot: takeover switch is on"
+# Engage takeover for a core start with the switch on (called from kr_start_locked
+# after the applied-node gate; ADR 0011 couples takeover to the core's start). The
+# config on disk may be stale relative to the switch, so it is re-rendered to match --
+# a takeover-form config without rules loses routing, and rules without a tproxy
+# listener blackhole traffic. Never fails: a conflict or a rule failure degrades to
+# the idle form and a failed/* phase, and the caller still starts the core.
+kr_tp_engage() {
   _applied=$(kr_applied_id) || _applied=""
-  _ob=""
-  if [ -n "$_applied" ] && [ "$(kr_meta_get id 2>/dev/null)" = "$_applied" ] && [ -s "$KR_OUTBOUND" ]; then
-    _ob=$KR_OUTBOUND
-  fi
-  if [ -z "$_ob" ]; then
-    # No applied node: there is no config to render, and the start gate keeps the core
-    # down (ADR 0010). The switch stays on (intent is never rewritten) and the rules go
-    # in anyway -- fail-closed (ADR 0004): with the switch on, skipping the rules would
-    # leak direct traffic until a node is applied.
-    _why=$(kr_tp_conflict) || _why=""
-    if [ -n "$_why" ]; then
-      kr_tp_log "boot: no applied node and a conflict ($_why); takeover not enforced"
-      return 0
-    fi
-    if ! kr_tp_install; then
-      kr_tp_log "boot: no applied node and the rule install failed; takeover not enforced"
-      return 0
-    fi
-    kr_tp_log "boot: no applied node; rules up, the core stays down until a node is applied"
+  if [ -z "$_applied" ] || [ "$(kr_meta_get id 2>/dev/null)" != "$_applied" ] || [ ! -s "$KR_OUTBOUND" ]; then
+    # No usable outbound: nothing to capture into, so the rules must not go up.
+    # ADR 0011 supersedes the boot-time rules-without-node install of ADR 0004/0008:
+    # with the switch defaulting on, that path would take a freshly installed
+    # device's traffic hostage until a node is applied. The start gate (ADR 0010)
+    # keeps the core down; the rules wait with it.
+    kr_tp_log "engage: no usable outbound for the applied node; takeover skipped"
     return 0
   fi
   _why=$(kr_tp_conflict) || _why=""
   if [ -n "$_why" ]; then
-    kr_tp_log "boot: conflict, takeover not enforced: $_why"
-    kr_tp_swap_config 0 "$_ob" || kr_tp_log "boot: could not rewrite the config for the conflict path"
+    kr_tp_log "engage: conflict, takeover not enforced: $_why"
+    kr_tp_swap_config 0 "$KR_OUTBOUND" || kr_tp_log "engage: could not rewrite the config for the conflict path"
     KR_TP_PHASE=failed/conflict
     kr_status_write stopped failed/conflict
     return 0
@@ -374,23 +402,23 @@ kr_tp_boot() {
   # Resolve while the network is still direct; the rules are not up yet.
   kr_tp_pin_node
   if ! kr_tp_install; then
-    kr_tp_log "boot: rule install failed, takeover not enforced"
-    kr_tp_swap_config 0 "$_ob" || kr_tp_log "boot: could not rewrite the config after the rule failure"
+    kr_tp_log "engage: rule install failed, takeover not enforced"
+    kr_tp_swap_config 0 "$KR_OUTBOUND" || kr_tp_log "engage: could not rewrite the config after the rule failure"
     KR_TP_PHASE=failed/rules
     kr_status_write stopped failed/rules
     return 0
   fi
-  if ! kr_tp_swap_config 1 "$_ob"; then
-    kr_tp_log "boot: takeover config failed to test; removing rules and the switch"
+  if ! kr_tp_swap_config 1 "$KR_OUTBOUND"; then
+    kr_tp_log "engage: takeover config failed to test; removing the rules, keeping the switch"
     kr_tp_remove
-    rm -f "$KR_TP_SWITCH"
-    # The on-disk config may still be takeover-form from the previous session; a
-    # marked node outbound with no rules loses routing, so force the no-takeover form.
-    kr_tp_swap_config 0 "$_ob" || kr_tp_log "boot: could not rewrite the config to the no-takeover form"
+    # The switch is a preference and is never silently rewritten (ADR 0011); the next
+    # start retries. The on-disk config may still be takeover-form; a marked node
+    # outbound with no rules loses routing, so force the no-takeover form.
+    kr_tp_swap_config 0 "$KR_OUTBOUND" || kr_tp_log "engage: could not rewrite the config to the no-takeover form"
     return 0
   fi
   KR_TP_PHASE=idle
-  kr_tp_log "boot: takeover ready, rules installed before the core starts"
+  kr_tp_log "engage: takeover rules installed before the core starts"
   return 0
 }
 
@@ -413,170 +441,6 @@ kr_tp_swap_config() { # <0|1 takeover> <outbound-file>
     return 1
   fi
   chmod 600 "$KR_CONF" 2>/dev/null
-  return 0
-}
-
-kr_tproxy_on() {
-  kr_dirs
-  if kr_tp_switch_on && kr_tp_rules_present; then
-    kr_tp_log "takeover already on"
-    return 0
-  fi
-  if ! kr_core_works; then
-    kr_tp_log "takeover on refused: core missing or not executable"
-    echo "core missing or not executable" >&2
-    return 1
-  fi
-  _applied=$(kr_applied_id) || _applied=""
-  if [ -z "$_applied" ]; then
-    kr_tp_log "takeover on refused: no applied node"
-    echo "apply a node first: there is no outbound to capture into" >&2
-    return 1
-  fi
-  if [ "$(kr_meta_get id 2>/dev/null)" != "$_applied" ] || [ ! -s "$KR_OUTBOUND" ]; then
-    kr_tp_log "takeover on refused: outbound does not match applied node $_applied"
-    echo "outbound.json does not match the applied node; re-tap the node in the WebUI" >&2
-    return 1
-  fi
-  _why=$(kr_tp_conflict) || _why=""
-  if [ -n "$_why" ]; then
-    kr_tp_log "takeover on refused: conflict: $_why"
-    kr_status_write "$(kr_running && echo running || echo stopped)" failed/conflict
-    echo "conflict: $_why" >&2
-    return 1
-  fi
-  # Pin the node address while the network is still direct (rules not installed yet):
-  # the takeover config's DNS module gets a hosts entry, so the node connection never
-  # depends on an upstream resolver.
-  kr_tp_pin_node
-  _tmp=$KR_RUNDIR/config.new.json
-  if ! KR_TAKEOVER=1 kr_render_config "$KR_OUTBOUND" >"$_tmp"; then
-    rm -f "$_tmp"
-    echo "could not render the takeover config" >&2
-    return 1
-  fi
-  chmod 600 "$_tmp" 2>/dev/null
-  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
-    rm -f "$_tmp"
-    kr_tp_log "takeover on: config test failed"
-    echo "config test failed (see $KR_LOG)" >&2
-    return 1
-  fi
-  # Rules first: the window between install and core start drops traffic instead of
-  # leaking it (docs/adr/0004). An install failure is the one leak path; report it.
-  if ! kr_tp_install; then
-    kr_status_write "$(kr_running && echo running || echo stopped)" failed/rules
-    echo "could not install the takeover rules (see $KR_TPLOG)" >&2
-    return 1
-  fi
-  printf 'on\n' >"$KR_TP_SWITCH"
-  chmod 600 "$KR_TP_SWITCH" 2>/dev/null
-  _was=0
-  kr_running && _was=1
-  _prev=$KR_RUNDIR/config.json.prev
-  [ -f "$KR_CONF" ] && cp -f "$KR_CONF" "$_prev" 2>/dev/null
-  [ "$_was" = 1 ] && kr_stop
-  if ! mv -f "$_tmp" "$KR_CONF"; then
-    rm -f "$_tmp"
-    kr_tp_log "takeover on: could not replace the config; rules removed again"
-    kr_tp_remove
-    rm -f "$KR_TP_SWITCH"
-    [ "$_was" = 1 ] && kr_start
-    echo "could not replace the config" >&2
-    return 1
-  fi
-  chmod 600 "$KR_CONF" 2>/dev/null
-  # One gesture: the core comes up with the takeover config, whatever it did before.
-  if ! kr_start; then
-    kr_tp_log "takeover on: the core did not start; rolling back"
-    if [ -f "$_prev" ]; then
-      mv -f "$_prev" "$KR_CONF"
-      chmod 600 "$KR_CONF" 2>/dev/null
-    else
-      rm -f "$KR_CONF"
-    fi
-    kr_tp_remove
-    rm -f "$KR_TP_SWITCH"
-    if kr_start; then
-      echo "the takeover config failed to start; previous config restored, rules removed" >&2
-    else
-      echo "the takeover config failed to start; the core is down and rules are removed" >&2
-    fi
-    return 1
-  fi
-  rm -f "$_prev"
-  kr_tp_log "takeover on"
-  return 0
-}
-
-kr_tproxy_off() {
-  kr_dirs
-  if ! kr_tp_switch_on && ! kr_tp_rules_present; then
-    kr_tp_log "takeover already off"
-    return 0
-  fi
-  # Rules go first: the core keeps running for now, but the moment they are gone its
-  # marked sockets lose routing anyway. Tearing down is the intended direction.
-  kr_tp_remove
-  rm -f "$KR_TP_SWITCH"
-  _applied=$(kr_applied_id) || _applied=""
-  _ob=""
-  if [ -n "$_applied" ] && [ "$(kr_meta_get id 2>/dev/null)" = "$_applied" ] && [ -s "$KR_OUTBOUND" ]; then
-    _ob=$KR_OUTBOUND
-  fi
-  if [ -z "$_ob" ]; then
-    # The applied bookkeeping is broken: no config can be re-rendered, and the one on
-    # disk is takeover-form whose marked outbound loses routing without the rules. The
-    # core stops and the unrunnable derived config is dropped; re-tapping the node
-    # rebuilds everything (ADR 0010).
-    kr_tp_log "takeover off: applied id $_applied has no matching outbound; stopping"
-    kr_running && kr_stop
-    rm -f "$KR_CONF" "$KR_APPLIED"
-    kr_status_write stopped no-node
-    echo "outbound.json does not match the applied node; the core is stopped, re-tap the node in the WebUI" >&2
-    return 1
-  fi
-  _tmp=$KR_RUNDIR/config.new.json
-  if ! KR_TAKEOVER=0 kr_render_config "$_ob" >"$_tmp"; then
-    rm -f "$_tmp"
-    echo "could not render the config" >&2
-    return 1
-  fi
-  chmod 600 "$_tmp" 2>/dev/null
-  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
-    # The applied outbound no longer tests. The takeover-form config on disk must not
-    # survive either (its mark has no rules now); drop the config and the applied id
-    # and stop -- re-tapping the node rebuilds everything (ADR 0010).
-    rm -f "$_tmp"
-    kr_tp_log "takeover off: the applied outbound no longer tests; stopping"
-    kr_running && kr_stop
-    rm -f "$KR_CONF" "$KR_APPLIED"
-    kr_status_write stopped no-node
-    echo "the applied outbound no longer tests; the core is stopped, re-tap the node in the WebUI" >&2
-    return 1
-  fi
-  _was=0
-  kr_running && _was=1
-  [ "$_was" = 1 ] && kr_stop
-  if [ -n "$_tmp" ]; then
-    if ! mv -f "$_tmp" "$KR_CONF"; then
-      rm -f "$_tmp"
-      [ "$_was" = 1 ] && kr_start
-      echo "could not replace the config" >&2
-      return 1
-    fi
-    chmod 600 "$KR_CONF" 2>/dev/null
-  fi
-  if [ "$_was" = 1 ]; then
-    if ! kr_start; then
-      kr_tp_log "takeover off: the core did not restart"
-      echo "the core did not restart (see $KR_LOG)" >&2
-      return 1
-    fi
-  else
-    kr_status_write stopped idle
-  fi
-  kr_tp_log "takeover off"
   return 0
 }
 

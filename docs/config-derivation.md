@@ -20,7 +20,7 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | `state.json` → render | WebUI writes, shell reads | the inbound ports (`settings.socksPort` / `settings.httpPort`), extracted at render time (ADR 0009) |
 | `runtime/applied` | shell | id of the node `config.json` was built from |
 | `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy` |
-| `runtime/tproxy` | shell | persisted takeover switch (docs/adr/0004, 0008) |
+| `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 
 One writer per file: the UI never writes `config.json`, `runtime/applied` or `status.json`; the
 shell never writes `state.json`, `outbound.json` or `outbound.meta`. No locks are needed for
@@ -73,9 +73,9 @@ without takeover) and the takeover form ([ADR 0008](adr/0008-takeover-namespace-
 
 takeover is rendered when the persisted switch (`runtime/tproxy`) is on **and** the rules are
 actually present (`kr_tp_rules_present`, checked against iptables — switch on without rules is
-the boot-conflict state, and a mark without its ip rule loses routing). Callers can force
-either form with `KR_TAKEOVER=1|0`; the toggle and the boot path force the form they are about
-to enforce.
+the failed-start state, and a mark without its ip rule loses routing). Callers can force
+either form with `KR_TAKEOVER=1|0`; the start-time engagement forces the form it is about to
+enforce.
 
 The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
 `dns-out` outbound; the `dns` module (fixed upstream `https://1.1.1.1/dns-query`, ADR 0006);
@@ -85,20 +85,23 @@ tcp/udp goes to `dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholde
 bypass mark 19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is
 written by the UI renderer, which cannot know the switch state.
 
-Applying a node while takeover is on renders the takeover form — the rules are up, so a
-no-takeover config would lose routing for the node outbound. The switch toggle
-(`kernelray.sh tproxy on|off`) reuses the same render → `-test` → swap → restart machinery.
+Applying a node while the rules are up renders the takeover form — a no-takeover config
+would lose routing for the node outbound. Since ADR 0011 the switch (`kernelray.sh tproxy
+on|off`) only writes the preference; the render → `-test` → swap machinery runs at the core
+start: `kr_start_locked` engages takeover (conflict check → rules → takeover config, the
+fail-closed order) when the switch is on, and tears stale rules down when it is off.
 
-## Boot and the switch
+## Start and the switch
 
-`service.sh` runs `kr_tp_boot` before `kr_start` when the switch is on: it re-renders the
-config to match the switch (the on-disk config may be stale), installs the rules before the
-core starts (fail-closed), and on a conflict or a rule failure writes the no-takeover config
-plus the `failed/conflict` / `failed/rules` phase while leaving the switch file untouched —
-intent is never silently rewritten, the WebUI offers a retry (see `docs/adr/0008`). With no
-applied node there is nothing to render: the rules still go in (fail-closed — with the switch
-on, skipping them would leak direct traffic), and the start gate keeps the core down, so the
-device has no network until a node is applied from the local WebUI.
+`kr_start_locked` consults the switch before rendering the config ([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
+with the switch on it runs `kr_tp_engage`, which re-renders the config to match (the on-disk
+config may be stale), installs the rules before the core starts (fail-closed), and on a
+conflict or a rule failure writes the no-takeover config plus the `failed/conflict` /
+`failed/rules` phase while leaving the switch file untouched — the switch is a preference and
+is never silently rewritten; the WebUI offers a retry. With no applied node the start gate
+refuses first: the core stays down and the rules go nowhere, so a default-on switch cannot
+take a nodeless device over. With the switch off, any stale rules come down and the start is
+an idle run.
 
 ## Applying a node
 

@@ -21,7 +21,7 @@ inside it; that cost is deliberate (see `docs/adr/0002`).
 _Avoid_: install dir, app dir, data dir, storage, work dir
 
 **空转 (Idle run)**:
-The core is running the applied node's config with the takeover switch off: it listens on its
+The core is running the applied node's config with the tproxy switch off: it listens on its
 local inbounds and no device traffic is redirected into it. Requires an applied node — the
 core never runs a config that was not derived from one.
 _Avoid_: running, normal mode, passive mode, direct run (that is the abolished no-node state)
@@ -44,8 +44,9 @@ _Avoid_: blocked, busy
 
 **透明代理 (Transparent proxy)**:
 Device traffic entering the core without any app being configured with a proxy address. It is a
-behaviour the user can observe, not a mechanism.
-_Avoid_: tproxy, hijack, redirection
+behaviour the user can observe, not a mechanism. The settings-page switch combines the two on
+purpose — its title is tproxy透明代理 — but alone, the behaviour is still not called tproxy.
+_Avoid_: tproxy (alone, for the behaviour), hijack, redirection
 
 **旁路标记 (Bypass mark)**:
 The socket mark every core-owned outbound socket carries while takeover is on, which the policy
@@ -92,10 +93,14 @@ While takeover is on, a core that dies leaves the rules in place, so traffic is 
 than going out directly.
 _Avoid_: kill switch, safe mode
 
-**接管开关 (Takeover switch)**:
-The persisted user choice that device traffic be taken over. Off is the default and leaves the
-module in an idle run.
-_Avoid_: enabled flag, mode, tproxy on/off (that is the command)
+**tproxy透明代理开关 (tproxy switch)**:
+The persisted user choice that device traffic be taken over when the core starts: on, every
+core start (boot or the status page's start) installs the rules and runs the takeover config;
+off, every start is an idle run. It is created at install and defaults to on, and it is a pure
+preference — changing it never touches a running core, only the next start (see
+`docs/adr/0011`). An update resets it to on with the rest of the module dir.
+_Avoid_: 接管开关 (the name before the settings-page move), enabled flag, mode, tproxy on/off
+(that is the command)
 
 **应用节点 (Apply a node)**:
 Deriving the core's configuration from the selected node and, if the core is running, restarting
