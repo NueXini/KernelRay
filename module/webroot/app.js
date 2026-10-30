@@ -59,11 +59,8 @@ var DICT_ZH = {
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
   setGeneral: "常规设置",
   setTheme: "主题", themeAuto: "自动", themeLight: "日间", themeDark: "夜间",
-  setThemeHint: "「自动」跟随系统的深浅色。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLang: "语言", langAuto: "自动",
-  setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLog: "日志行数",
-  setLogHint: "日志页每次拉取的行数；行数越多看得越早。",
   setPorts: "入站端口",
   setPortsHint: "本地 socks/http 入站在 127.0.0.1 上监听的端口。保存后重写核心配置；核心在运行时会重启。",
   portRange: "端口必须是 1–65535 之间的整数",
@@ -125,11 +122,8 @@ var DICT_EN = {
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
   setGeneral: "General",
   setTheme: "Theme", themeAuto: "Auto", themeLight: "Light", themeDark: "Dark",
-  setThemeHint: "Auto follows the system's light/dark setting. Applies immediately and stays in this WebView; it never touches state.json.",
   setLang: "Language", langAuto: "Auto",
-  setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
   setLog: "Log buffer",
-  setLogHint: "How many lines the Log tab fetches each time; more lines reach further back.",
   setPorts: "Inbound ports",
   setPortsHint: "The ports the local socks/http inbounds listen on, at 127.0.0.1. Saving rewrites the core config; a running core restarts.",
   portRange: "Ports must be integers between 1 and 65535",
@@ -168,10 +162,10 @@ var els = {
   lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log"),
   lTabSettings: $("l-tab-settings"),
   selLang: $("sel-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
-  lSetGeneral: $("l-set-general"), lSetLangHint: $("l-set-lang-hint"),
-  selTheme: $("sel-theme"), lSetTheme: $("l-set-theme"), lSetThemeHint: $("l-set-theme-hint"),
+  lSetGeneral: $("l-set-general"),
+  selTheme: $("sel-theme"), lSetTheme: $("l-set-theme"),
   lThemeAuto: $("l-theme-auto"), lThemeLight: $("l-theme-light"), lThemeDark: $("l-theme-dark"),
-  selLog: $("sel-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
+  selLog: $("sel-log"), lSetLog: $("l-set-log"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetSoon: $("l-set-soon"),
@@ -233,12 +227,9 @@ function label(key) {
   els.lThemeAuto.textContent = T.themeAuto;
   els.lThemeLight.textContent = T.themeLight;
   els.lThemeDark.textContent = T.themeDark;
-  els.lSetThemeHint.textContent = T.setThemeHint;
   els.lSetLang.textContent = T.setLang;
   els.lLangAuto.textContent = T.langAuto;
-  els.lSetLangHint.textContent = T.setLangHint;
   els.lSetLog.textContent = T.setLog;
-  els.lSetLogHint.textContent = T.setLogHint;
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
