@@ -15,6 +15,17 @@ const path = require("path");
 const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
 const js = fs.readFileSync(jsPath, "utf8");
 
+// The prefs block takes its key and its theme validation from theme.js, which <head> loads
+// before app.js on the device. Load it here the same way, with the DOM stubbed out, so the
+// test runs the shipped file and not a copy of its rules.
+const themePath = path.join(__dirname, "..", "module", "webroot", "theme.js");
+global.window = {
+  matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
+};
+global.document = { documentElement: { setAttribute() {} } };
+new Function(fs.readFileSync(themePath, "utf8"))();
+global.KRTheme = global.window.KRTheme;
+
 const START = "// ---- UI preferences ----";
 const END = "// ---- end UI preferences ----";
 const from = js.indexOf(START);
@@ -27,7 +38,7 @@ if (from < 0 || to < 0) {
 const block = js.slice(from, to);
 const P = new Function(block + "\nreturn {" +
   " prefsNormalize: prefsNormalize, prefsLoad: prefsLoad, prefsSave: prefsSave," +
-  " PREFS_KEY: PREFS_KEY, LANGS: LANGS, LOG_LINE_STEPS: LOG_LINE_STEPS" +
+  " PREFS_KEY: PREFS_KEY, LANGS: LANGS, THEMES: THEMES, LOG_LINE_STEPS: LOG_LINE_STEPS" +
 "};")();
 
 // The inbound-port block follows the same extraction contract.
@@ -78,69 +89,103 @@ const denyStore = {
 };
 
 check("no input at all: the defaults", () => {
-  eq(P.prefsNormalize(null), { lang: "auto", logLines: 200 });
-  eq(P.prefsNormalize(undefined), { lang: "auto", logLines: 200 });
-  eq(P.prefsNormalize("junk"), { lang: "auto", logLines: 200 });
+  eq(P.prefsNormalize(null), { theme: "auto", lang: "auto", logLines: 200 });
+  eq(P.prefsNormalize(undefined), { theme: "auto", lang: "auto", logLines: 200 });
+  eq(P.prefsNormalize("junk"), { theme: "auto", lang: "auto", logLines: 200 });
 });
 
 check("valid prefs pass through unchanged", () => {
-  eq(P.prefsNormalize({ lang: "zh", logLines: 500 }), { lang: "zh", logLines: 500 });
-  eq(P.prefsNormalize({ lang: "en", logLines: 100 }), { lang: "en", logLines: 100 });
+  eq(P.prefsNormalize({ theme: "dark", lang: "zh", logLines: 500 }),
+    { theme: "dark", lang: "zh", logLines: 500 });
+  eq(P.prefsNormalize({ theme: "light", lang: "en", logLines: 100 }),
+    { theme: "light", lang: "en", logLines: 100 });
+  eq(P.prefsNormalize({ theme: "auto", lang: "auto", logLines: 200 }),
+    { theme: "auto", lang: "auto", logLines: 200 });
 });
 
 check("unknown values fall back field by field", () => {
-  eq(P.prefsNormalize({ lang: "fr", logLines: 500 }), { lang: "auto", logLines: 500 });
-  eq(P.prefsNormalize({ lang: "zh", logLines: 300 }), { lang: "zh", logLines: 200 });
-  eq(P.prefsNormalize({ lang: true, logLines: "200 lines" }), { lang: "auto", logLines: 200 });
+  eq(P.prefsNormalize({ theme: "dark", lang: "fr", logLines: 500 }),
+    { theme: "dark", lang: "auto", logLines: 500 });
+  eq(P.prefsNormalize({ theme: "dark", lang: "zh", logLines: 300 }),
+    { theme: "dark", lang: "zh", logLines: 200 });
+  eq(P.prefsNormalize({ theme: "dark", lang: true, logLines: "200 lines" }),
+    { theme: "dark", lang: "auto", logLines: 200 });
+});
+
+check("an unknown theme falls back to auto, keeping the other fields", () => {
+  eq(P.prefsNormalize({ theme: "midnight", lang: "zh", logLines: 500 }),
+    { theme: "auto", lang: "zh", logLines: 500 });
+  eq(P.prefsNormalize({ theme: true, lang: "en" }), { theme: "auto", lang: "en", logLines: 200 });
+  eq(P.prefsNormalize({ theme: "DARK" }), { theme: "auto", lang: "auto", logLines: 200 });
 });
 
 check("a logLines given as a numeric string is coerced, not accepted blindly", () => {
-  eq(P.prefsNormalize({ logLines: "500" }), { lang: "auto", logLines: 500 });
-  eq(P.prefsNormalize({ logLines: "abc" }), { lang: "auto", logLines: 200 });
+  eq(P.prefsNormalize({ logLines: "500" }), { theme: "auto", lang: "auto", logLines: 500 });
+  eq(P.prefsNormalize({ logLines: "abc" }), { theme: "auto", lang: "auto", logLines: 200 });
 });
 
 check("extra fields from a future version are dropped, not preserved", () => {
-  eq(P.prefsNormalize({ lang: "en", logLines: 100, v: 9, theme: "dark" }),
-    { lang: "en", logLines: 100 });
+  eq(P.prefsNormalize({ theme: "dark", lang: "en", logLines: 100, v: 9, fontSize: 18 }),
+    { theme: "dark", lang: "en", logLines: 100 });
+});
+
+check("a blob written before theme existed loads as auto", () => {
+  const store = memStore();
+  store.setItem("kernelray.prefs", JSON.stringify({ v: 1, lang: "zh", logLines: 500 }));
+  eq(P.prefsLoad(store), { theme: "auto", lang: "zh", logLines: 500 });
 });
 
 check("prefsLoad reads the kernelray.prefs key", () => {
   const store = memStore();
-  store.setItem("kernelray.prefs", JSON.stringify({ v: 1, lang: "zh", logLines: 500 }));
-  eq(P.prefsLoad(store), { lang: "zh", logLines: 500 });
+  store.setItem("kernelray.prefs",
+    JSON.stringify({ v: 1, theme: "dark", lang: "zh", logLines: 500 }));
+  eq(P.prefsLoad(store), { theme: "dark", lang: "zh", logLines: 500 });
 });
 
 check("prefsLoad with nothing stored returns the defaults", () => {
-  eq(P.prefsLoad(memStore()), { lang: "auto", logLines: 200 });
+  eq(P.prefsLoad(memStore()), { theme: "auto", lang: "auto", logLines: 200 });
 });
 
 check("prefsLoad survives invalid JSON and a null-ish store", () => {
   const store = memStore();
   store.setItem("kernelray.prefs", "{not json");
-  eq(P.prefsLoad(store), { lang: "auto", logLines: 200 });
-  eq(P.prefsLoad(null), { lang: "auto", logLines: 200 });
-  eq(P.prefsLoad(denyStore), { lang: "auto", logLines: 200 });
+  eq(P.prefsLoad(store), { theme: "auto", lang: "auto", logLines: 200 });
+  eq(P.prefsLoad(null), { theme: "auto", lang: "auto", logLines: 200 });
+  eq(P.prefsLoad(denyStore), { theme: "auto", lang: "auto", logLines: 200 });
 });
 
-check("prefsSave writes v/lang/logLines and round-trips through prefsLoad", () => {
+check("prefsSave writes v/theme/lang/logLines and round-trips through prefsLoad", () => {
   const store = memStore();
-  P.prefsSave(store, P.prefsNormalize({ lang: "en", logLines: 100 }));
-  eq(JSON.parse(store.getItem("kernelray.prefs")), { v: 1, lang: "en", logLines: 100 });
-  eq(P.prefsLoad(store), { lang: "en", logLines: 100 });
+  P.prefsSave(store, P.prefsNormalize({ theme: "dark", lang: "en", logLines: 100 }));
+  eq(JSON.parse(store.getItem("kernelray.prefs")),
+    { v: 1, theme: "dark", lang: "en", logLines: 100 });
+  eq(P.prefsLoad(store), { theme: "dark", lang: "en", logLines: 100 });
 });
 
 check("prefsSave normalises before persisting", () => {
   const store = memStore();
-  P.prefsSave(store, { lang: "zh", logLines: 999, extra: 1 });
-  eq(JSON.parse(store.getItem("kernelray.prefs")), { v: 1, lang: "zh", logLines: 200 });
+  P.prefsSave(store, { theme: "sepia", lang: "zh", logLines: 999, extra: 1 });
+  eq(JSON.parse(store.getItem("kernelray.prefs")),
+    { v: 1, theme: "auto", lang: "zh", logLines: 200 });
+});
+
+check("saving one pref does not drop the others", () => {
+  const store = memStore();
+  const prefs = P.prefsLoad(store);
+  prefs.lang = "zh";
+  P.prefsSave(store, prefs);
+  prefs.theme = "dark";
+  P.prefsSave(store, prefs);
+  eq(P.prefsLoad(store), { theme: "dark", lang: "zh", logLines: 200 });
 });
 
 check("prefsSave against a denied store does not throw", () => {
-  P.prefsSave(denyStore, { lang: "zh", logLines: 200 });
+  P.prefsSave(denyStore, { theme: "dark", lang: "zh", logLines: 200 });
 });
 
 check("the presets the Settings page offers are the ones normalise accepts", () => {
   eq(P.LANGS, ["auto", "zh", "en"]);
+  eq(P.THEMES, ["auto", "light", "dark"]);
   eq(P.LOG_LINE_STEPS, [100, 200, 500]);
 });
 

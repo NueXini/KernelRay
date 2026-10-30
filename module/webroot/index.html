@@ -1,10 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KernelRay</title>
 <link rel="stylesheet" href="app.css">
+<!-- Before the body paints: resolves the stored theme preference and stamps data-theme. -->
+<script src="theme.js"></script>
 </head>
 <body>
 <div class="banner" id="banner"></div>
@@ -69,6 +71,17 @@
   <section class="page" id="page-settings" hidden>
     <section class="card">
       <div class="cardtitle" id="l-set-general">General</div>
+      <div class="cardsec">
+        <div class="setrow">
+          <label class="setlabel" id="l-set-theme" for="sel-theme">Theme</label>
+          <select id="sel-theme">
+            <option value="auto" id="l-theme-auto">Auto</option>
+            <option value="light" id="l-theme-light">Light</option>
+            <option value="dark" id="l-theme-dark">Dark</option>
+          </select>
+        </div>
+        <div class="hint" id="l-set-theme-hint"></div>
+      </div>
       <div class="cardsec">
         <div class="setrow">
           <label class="setlabel" id="l-set-lang" for="sel-lang">Language</label>

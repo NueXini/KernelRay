@@ -12,9 +12,11 @@ var OUTBOUND_META = MOD + "/outbound.meta";
 var logLines = 200;
 var POLL_MS = 2000;
 
-// Language is a Settings-page preference, not a boot-time fact: applyLang() reassigns T,
-// and every T.x read picks the current dictionary because nothing captures the object.
+// Language and theme are Settings-page preferences, not boot-time facts: applyLang()
+// reassigns T, applyTheme() (theme.js) stamps data-theme, and every T.x read picks the
+// current dictionary because nothing captures the object.
 var langPref = "auto"; // "auto" | "zh" | "en"; resolved against navigator.language when "auto"
+var themePref = "auto"; // "auto" | "light" | "dark"; resolved against the system when "auto"
 var DICT_ZH = {
   start: "启动", stop: "停止", follow: "跟随", refresh: "刷新",
   log: "日志", pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
@@ -56,6 +58,8 @@ var DICT_ZH = {
   editHint: "勾选要删除的节点，点「删除」批量删除；已应用的节点不能删除。",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
   setGeneral: "常规设置",
+  setTheme: "主题", themeAuto: "自动", themeLight: "日间", themeDark: "夜间",
+  setThemeHint: "「自动」跟随系统的深浅色。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLang: "语言", langAuto: "自动",
   setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLog: "日志行数",
@@ -120,6 +124,8 @@ var DICT_EN = {
   editHint: "Check the nodes to delete, then tap Delete; the applied node cannot be deleted.",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
   setGeneral: "General",
+  setTheme: "Theme", themeAuto: "Auto", themeLight: "Light", themeDark: "Dark",
+  setThemeHint: "Auto follows the system's light/dark setting. Applies immediately and stays in this WebView; it never touches state.json.",
   setLang: "Language", langAuto: "Auto",
   setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
   setLog: "Log buffer",
@@ -163,6 +169,8 @@ var els = {
   lTabSettings: $("l-tab-settings"),
   selLang: $("sel-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
   lSetGeneral: $("l-set-general"), lSetLangHint: $("l-set-lang-hint"),
+  selTheme: $("sel-theme"), lSetTheme: $("l-set-theme"), lSetThemeHint: $("l-set-theme-hint"),
+  lThemeAuto: $("l-theme-auto"), lThemeLight: $("l-theme-light"), lThemeDark: $("l-theme-dark"),
   selLog: $("sel-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
@@ -221,6 +229,11 @@ function label(key) {
   els.lTabLog.textContent = T.tabLog;
   els.lTabSettings.textContent = T.tabSettings;
   els.lSetGeneral.textContent = T.setGeneral;
+  els.lSetTheme.textContent = T.setTheme;
+  els.lThemeAuto.textContent = T.themeAuto;
+  els.lThemeLight.textContent = T.themeLight;
+  els.lThemeDark.textContent = T.themeDark;
+  els.lSetThemeHint.textContent = T.setThemeHint;
   els.lSetLang.textContent = T.setLang;
   els.lLangAuto.textContent = T.langAuto;
   els.lSetLangHint.textContent = T.setLangHint;
@@ -275,6 +288,7 @@ function applyLang() {
 // The selects render straight from the prefs: a language switch reassigns T and the
 // Auto option's label, so both run through here.
 function renderPrefs() {
+  els.selTheme.value = themePref;
   els.selLang.value = langPref;
   els.selLog.value = String(logLines);
 }
@@ -308,18 +322,23 @@ function parseKv(text) {
 }
 
 // ---- UI preferences ----
-// Language and log-buffer size are UI prefs, not intent: state.json's `settings` object is
-// reserved for routing/DNS (docs/state-schema.md) and is wiped by every module upgrade
-// anyway, so these live in the WebView's localStorage and degrade to session-only when the
-// manager ships a WebView with storage disabled. tests/prefs.test.js runs this block.
+// Theme, language and log-buffer size are UI prefs, not intent: state.json's `settings`
+// object is reserved for routing/DNS (docs/state-schema.md) and is wiped by every module
+// upgrade anyway, so these live in the WebView's localStorage and degrade to session-only
+// when the manager ships a WebView with storage disabled. tests/prefs.test.js runs this block.
+//
+// The theme's own model (valid values, "auto" resolution, application) is theme.js, which
+// <head> loads before this file: one key, one validator, and the first paint already right.
 
-var PREFS_KEY = "kernelray.prefs";
+var PREFS_KEY = KRTheme.PREFS_KEY;
 var LANGS = ["auto", "zh", "en"];
+var THEMES = KRTheme.THEMES;
 var LOG_LINE_STEPS = [100, 200, 500];
 
 function prefsNormalize(raw) {
-  var p = { lang: "auto", logLines: 200 };
+  var p = { theme: "auto", lang: "auto", logLines: 200 };
   if (!raw || typeof raw !== "object") { return p; }
+  p.theme = KRTheme.themeNormalize(raw.theme);
   if (LANGS.indexOf(raw.lang) >= 0) { p.lang = String(raw.lang); }
   var n = Number(raw.logLines);
   if (LOG_LINE_STEPS.indexOf(n) >= 0) { p.logLines = n; }
@@ -335,7 +354,7 @@ function prefsLoad(store) {
 function prefsSave(store, prefs) {
   try {
     var p = prefsNormalize(prefs);
-    store.setItem(PREFS_KEY, JSON.stringify({ v: 1, lang: p.lang, logLines: p.logLines }));
+    store.setItem(PREFS_KEY, JSON.stringify({ v: 1, theme: p.theme, lang: p.lang, logLines: p.logLines }));
   } catch (e) { /* no storage: the choice lasts for this session only */ }
 }
 // ---- end UI preferences ----
@@ -1722,6 +1741,16 @@ els.overlay.addEventListener("click", function (e) {
 els.iText.addEventListener("input", function () {
   els.iApply.disabled = busy || !els.iText.value.trim();
 });
+// A theme change repaints through the CSS variables alone, so nothing has to be re-rendered —
+// unlike a language switch, which invalidates every rendered string.
+els.selTheme.addEventListener("change", function () {
+  var v = els.selTheme.value;
+  if (THEMES.indexOf(v) < 0 || v === themePref) { return; }
+  themePref = v;
+  prefs.theme = v;
+  prefsSave(prefsStore(), prefs);
+  KRTheme.applyTheme(v);
+});
 els.selLang.addEventListener("change", function () {
   var v = els.selLang.value;
   if (LANGS.indexOf(v) < 0 || v === langPref) { return; }
@@ -1763,8 +1792,10 @@ document.addEventListener("visibilitychange", function () {
 });
 
 var prefs = prefsLoad(prefsStore());
+themePref = prefs.theme;
 langPref = prefs.lang;
 logLines = prefs.logLines;
+KRTheme.applyTheme(themePref);
 applyLang();
 initNav();
 if (!hasBridge) {

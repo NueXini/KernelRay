@@ -85,7 +85,8 @@ and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, apply, status; also the CLI used by the WebUI |
 | `module/scripts/tproxy.sh` | takeover: rule install/remove, conflict detection, the start-time engagement, the switch preference and the `tproxy` CLI; sourced by `kernelray.sh` |
 | `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
-| `module/webroot/app.css` | WebUI styles, including the light/dark palettes |
+| `module/webroot/app.css` | WebUI styles; both palettes live here, keyed on the `data-theme` attribute |
+| `module/webroot/theme.js` | the theme preference: valid values, `auto` resolution, and the `data-theme` stamp `<head>` runs before the first paint |
 | `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, renders the node list, renders the tapped node as an Xray outbound, drives the CLI |
 | `docs/state-schema.md` | what `state.json` contains — the authority the UI writes against |
 | `docs/config-derivation.md` | how `config.json` is generated, applied and rolled back |
@@ -93,7 +94,8 @@ and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 | `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped `app.js` |
 | `tests/outbound.test.js` | node → Xray outbound renderer tests, run against the shipped block |
 | `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
-| `tests/prefs.test.js` | Settings-page preference (language, log buffer) normalise/load/save tests, run against the shipped block |
+| `tests/prefs.test.js` | Settings-page preference (theme, language, log buffer) normalise/load/save tests, run against the shipped block |
+| `tests/theme.test.js` | theme pref → `data-theme` resolution, the system-following subscription and the head-time stamp, run against the shipped `theme.js` |
 | `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths and start rollback, run against the shipped shell + a fake core |
 | `tests/tproxy.test.js` | rule install/remove, conflict detection, the start-time engagement and the switch preference, run against fake iptables/ip binaries |
 | `docs/webui.png` | screenshot of the WebUI |
@@ -170,11 +172,11 @@ them:
   ports, core version and config path.
 - **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
-- **Settings** — a **General** card with the UI language (auto / 中文 / English) and the log
-  buffer size, the inbound ports, and the tproxy switch (tproxy透明代理): whether device
-  traffic is taken over at each core start, on by default. Language and log buffer are WebView
-  preferences; the ports live in `state.json` and the tproxy switch in `runtime/tproxy`, so
-  neither survives an update or uninstall.
+- **Settings** — a **General** card with the theme (auto / 日间 / 夜间), the UI language
+  (auto / 中文 / English) and the log buffer size, the inbound ports, and the tproxy switch
+  (tproxy透明代理): whether device traffic is taken over at each core start, on by default.
+  Theme, language and log buffer are WebView preferences; the ports live in `state.json` and
+  the tproxy switch in `runtime/tproxy`, so neither survives an update or uninstall.
 
 Tabs are hash routes (`#/status`, `#/nodes`, `#/log`, `#/settings`): a reload or a deep link
 lands on the same tab, and anything else falls back to `#/status`. Only the visible tab is
@@ -216,7 +218,8 @@ rendered outbound are cleaned up the same way.
 The parser, the node list model, the outbound renderer and the UI preferences are tested
 without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
 `node tests/outbound.test.js` and `node tests/prefs.test.js` extract the marked blocks from
-the shipped `app.js`.
+the shipped `app.js`; `node tests/theme.test.js` evaluates the shipped `theme.js` with
+`window`/`document` stubbed, the way `<head>` runs it.
 `node tests/config.test.js` sources the shipped shell against a fake core and checks template
 assembly, escaping, the idle/takeover render forms, apply's failure paths and the
 start-rollback path. `node tests/tproxy.test.js` runs the rule installer, conflict detection,

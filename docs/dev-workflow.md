@@ -23,15 +23,19 @@ node --check module/webroot/app.js     # 页面语法（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 parser tests passing
 node tests/outbound.test.js            # 17 outbound tests passing
-node tests/nodelist.test.js            # 12 node list tests passing
-node tests/prefs.test.js               # 12 prefs tests passing
-node tests/config.test.js              # 16 config tests passing（需要 bash 和 /proc）
+node tests/nodelist.test.js            # 18 node list tests passing
+node tests/prefs.test.js               # 22 prefs tests passing
+node tests/theme.test.js               # 14 theme tests passing
+node tests/config.test.js              # 32 config tests passing（需要 bash 和 /proc）
+node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
 ```
 
-前五个测试从 `module/webroot/app.js` 里抽出带标记的代码块跑，测的就是要发布的那个文件。
+`parse` / `outbound` / `nodelist` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
+`theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份），测的都是要发布的文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、apply 的失败路径和启动回滚；假核心只在回滚用例里运行，用 `/proc` 识别
-进程，不碰 iptables。
+进程，不碰 iptables。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、冲突检测和启动时
+接管。
 
 ## 2. 打包
 
