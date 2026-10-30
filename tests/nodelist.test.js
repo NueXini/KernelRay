@@ -1,9 +1,10 @@
-// Node list and import-switch tests for the WebUI.
+// Node list, delete-gate and import-switch tests for the WebUI.
 //
 // Both blocks live inside module/webroot/app.js; this harness extracts the marked blocks from
 // the shipped file, exactly like tests/parse.test.js does for the parser. The list is a pure
-// state.json + runtime/applied → rows mapping and the import switch rule is a pure
-// state.json + runtime/applied → id decision, so both run without a browser.
+// state.json + runtime/applied → rows mapping, the delete gate and the unapply decision are
+// pure functions of those rows plus the core's running fact, and the import switch rule is a
+// pure state.json + runtime/applied → id decision, so all of them run without a browser.
 //
 //   node tests/nodelist.test.js
 
@@ -28,7 +29,8 @@ function marked(start, end) {
 const block = marked("// ---- node list model ----", "// ---- end node list model ----") +
   marked("// ---- import switch rule ----", "// ---- end import switch rule ----");
 const L = new Function(block +
-  "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel, applyAfterImport: applyAfterImport };"
+  "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel, deleteGate: deleteGate, " +
+  "willUnapply: willUnapply, applyAfterImport: applyAfterImport };"
 )();
 
 let pass = 0;
@@ -148,8 +150,8 @@ check("applied comparison uses the string form of the id", () => {
 
 // ---- batch check set (edit mode) ----
 
-function batch(model, checks) {
-  const bm = L.batchModel(model, checks);
+function batch(model, checks, allowApplied) {
+  const bm = L.batchModel(model, checks, allowApplied);
   return [bm.checkableIds, bm.checkedIds, bm.allChecked];
 }
 
@@ -181,6 +183,72 @@ check("batch: no checkable rows is never allChecked", () => {
 check("batch: empty list is never allChecked", () => {
   const model = L.nodeListModel(state([], ""), "");
   eq(batch(model, {}), [[], [], false]);
+});
+
+check("batch: the delete gate lets the applied last row join", () => {
+  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  eq(batch(model, {}, true), [["a"], [], false]);
+  eq(batch(model, { a: true }, true), [["a"], ["a"], true]);
+});
+
+// ---- the delete gate (ADR 0013) ----
+
+check("gate: the applied node is deletable when it is the last row and the core is stopped", () => {
+  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  eq(L.deleteGate(model, false), true);
+});
+
+check("gate: a running core refuses the applied node", () => {
+  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  eq(L.deleteGate(model, true), false);
+});
+
+check("gate: a list with another node still in it refuses the applied node", () => {
+  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  eq(L.deleteGate(model, false), false);
+});
+
+check("gate: a last row that is not applied is deleted without the gate", () => {
+  const model = L.nodeListModel(state([node("a")], ""), "gone");
+  eq(L.deleteGate(model, false), false);
+  eq(L.deleteGate(model, true), false);
+});
+
+check("gate: an empty list has nothing to delete", () => {
+  const model = L.nodeListModel(state([], ""), "");
+  eq(L.deleteGate(model, false), false);
+});
+
+// ---- the unapply decision ----
+
+check("unapply: deleting the whole list while the core is stopped", () => {
+  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  eq(L.willUnapply(model, ["a"], false), true);
+});
+
+check("unapply: a running core is never unapplied", () => {
+  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  eq(L.willUnapply(model, ["a"], true), false);
+});
+
+check("unapply: deleting one of several nodes leaves the applied one alone", () => {
+  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  eq(L.willUnapply(model, ["b"], false), false);
+});
+
+check("unapply: an emptied list with a dangling applied id is unapplied too", () => {
+  const model = L.nodeListModel(state([node("b")], "b"), "gone");
+  eq(L.willUnapply(model, ["b"], false), true);
+});
+
+check("unapply: a partial delete with a dangling applied id does not unapply", () => {
+  const model = L.nodeListModel(state([node("b"), node("c")], "b"), "gone");
+  eq(L.willUnapply(model, ["b"], false), false);
+});
+
+check("unapply: an already empty list has nothing to unapply", () => {
+  const model = L.nodeListModel(state([], ""), "");
+  eq(L.willUnapply(model, [], false), false);
 });
 
 // ---- the import switch rule (ADR 0012) ----

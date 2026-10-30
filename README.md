@@ -208,15 +208,19 @@ Import normally only fills the node list and leaves the selection alone; tap a r
 switch and apply. The exception is an import into a store with no applied node: it applies
 `selected` when that still resolves, else the first node the list shows, so the module is usable
 without an extra tap — it never starts a stopped core ([ADR 0012](docs/adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)).
-Deleting a node needs a second tap; the applied node cannot be deleted, and deleting the selected
-node clears the selection.
+Deleting a node needs a second tap; deleting the selected node clears the selection. The applied
+node is refused while the core is running or while another node is still in the list. It can be
+deleted only when it is the last node and the core is stopped, and that delete is an unapply: the
+core config, `runtime/applied`, the rendered outbound and the tproxy rules all go, so the core can
+no longer start until a node is applied again
+([ADR 0013](docs/adr/0013-deleting-the-last-node-while-stopped-unapplies-it.md)).
 
 **Batch delete.** *Edit* turns the list into a check UI: each row gets a checkbox, tapping a
 row toggles its check, and a toolbar offers select-all and a delete with the checked count.
 The check set lives in memory only — leaving edit mode or the page discards it, and it never
-touches `state.json`. The applied row's checkbox is disabled (it cannot be deleted), and the
-deletion goes through the same path as a single delete, so the selected pointer and the
-rendered outbound are cleaned up the same way.
+touches `state.json`. The applied row's checkbox follows the same gate as its ✕ (it joins only
+when it is the last node and the core is stopped), and the deletion goes through the same path as
+a single delete, so the selected pointer and the rendered outbound are cleaned up the same way.
 
 The parser, the node list model, the outbound renderer and the UI preferences are tested
 without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
@@ -238,6 +242,7 @@ cannot diverge between the two entry points.
 /data/adb/modules/kernelray/scripts/kernelray.sh start
 /data/adb/modules/kernelray/scripts/kernelray.sh stop
 /data/adb/modules/kernelray/scripts/kernelray.sh apply <node-id>
+/data/adb/modules/kernelray/scripts/kernelray.sh unapply    # forget the applied node: rules, config, applied id, outbound
 /data/adb/modules/kernelray/scripts/kernelray.sh tproxy on     # the switch: engages at the next core start
 /data/adb/modules/kernelray/scripts/kernelray.sh tproxy off    # the switch: idle starts until turned on again
 /data/adb/modules/kernelray/scripts/kernelray.sh tproxy status

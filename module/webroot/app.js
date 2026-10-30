@@ -50,12 +50,16 @@ var DICT_ZH = {
   selectedMissing: "state.json 的 selected 指向了一个不存在的节点。",
   appliedMissing: "runtime/applied 指向的节点不在节点库里。",
   delete: "删除", deleteApplied: "已应用的节点不能删除；先切换到别的节点。",
-  deleteConfirm: "删除这个节点？", cancel: "取消", deleted: "已删除",
+  deleteRunning: "核心正在运行；先停止核心，再删除最后一个节点。",
+  deleteConfirm: "删除这个节点？",
+  deleteConfirmApplied: "删除已应用的节点会取消应用：核心将无法启动，代理规则会被移除。",
+  cancel: "取消", deleted: "已删除",
   edit: "编辑", done: "完成",
   checkAll: "全选", uncheckAll: "取消全选",
   batchDelete: "删除", deleteConfirmN: "删除 {n} 个节点？",
+  deleteConfirmNApplied: "删除这些节点会取消应用：核心将无法启动，代理规则会被移除。",
   deletedN: "已删除 {n} 个节点",
-  editHint: "勾选要删除的节点，点「删除」批量删除；已应用的节点不能删除。",
+  editHint: "勾选要删除的节点，点「删除」批量删除；已应用的节点只有在核心停止、且它是最后一个节点时才能删。",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
   setGeneral: "常规设置",
   setTheme: "主题", themeAuto: "自动", themeLight: "日间", themeDark: "夜间",
@@ -113,12 +117,16 @@ var DICT_EN = {
   selectedMissing: "state.json points selected at a node that is not in the store.",
   appliedMissing: "runtime/applied points at a node that is not in the store.",
   delete: "Delete", deleteApplied: "The applied node cannot be deleted; switch to another node first.",
-  deleteConfirm: "Delete this node?", cancel: "Cancel", deleted: "Deleted",
+  deleteRunning: "The core is running; stop it first, then delete the last node.",
+  deleteConfirm: "Delete this node?",
+  deleteConfirmApplied: "Deleting the applied node unapplies it: the core can no longer start and the proxy rules are removed.",
+  cancel: "Cancel", deleted: "Deleted",
   edit: "Edit", done: "Done",
   checkAll: "Select all", uncheckAll: "Deselect all",
   batchDelete: "Delete", deleteConfirmN: "Delete {n} node(s)?",
+  deleteConfirmNApplied: "Deleting these nodes unapplies the applied one: the core can no longer start and the proxy rules are removed.",
   deletedN: "Deleted {n} node(s)",
-  editHint: "Check the nodes to delete, then tap Delete; the applied node cannot be deleted.",
+  editHint: "Check the nodes to delete, then tap Delete; the applied node can only be deleted when the core is stopped and it is the last node.",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
   setGeneral: "General",
   setTheme: "Theme", themeAuto: "Auto", themeLight: "Light", themeDark: "Dark",
@@ -189,6 +197,9 @@ var lastApplied = "";
 var lastMetaId = "";
 var confirmId = null;
 var listSig = "";
+// The runtime fact the current list was rendered with: renderStatus only re-renders the list
+// when it flips, so a 2s poll does not rebuild the toolbar under a finger.
+var listRunning = null;
 // Edit-mode check set: which rows a batch delete would remove. In memory only — a check is
 // a temporary intent, not a wish like `selected` — and cleared when edit mode ends.
 var editMode = false;
@@ -776,6 +787,25 @@ function setButtons() {
   if (els.nList) { els.nList.classList.toggle("busy", busy); }
 }
 
+// The delete gate and the unapply decision need the live fact, and only a status read that
+// says "stopped" proves the core is down: an unknown or unreadable status counts as running.
+function coreRunning() {
+  return !(lastKv && lastKv.state === "stopped");
+}
+
+// Why a delete of the applied row was refused: a list with another node in it is not a dead
+// end (switch, then delete); a running core is.
+function deleteRefusal(model) {
+  return model.rows.length > 1 ? T.deleteApplied : T.deleteRunning;
+}
+
+// Edit mode may check the applied row only when the delete gate allows deleting it, so the
+// batch and the row's ✕ agree.
+function canCheckNode(node) {
+  if (!(lastApplied && lastApplied === node.id)) { return true; }
+  return deleteGate(nodeListModel(lastStateObj, lastApplied), coreRunning());
+}
+
 function findNodeById(state, id) {
   if (!state || !id || !Array.isArray(state.manual)) { return null; }
   for (var i = 0; i < state.manual.length; i++) {
@@ -829,16 +859,44 @@ function nodeListModel(state, appliedId) {
   };
 }
 
+// The delete gate: the applied node is deletable only when the core is stopped and it is the
+// last row, so the delete empties the store. One rule for both gestures (the row's ✕ and the
+// edit-mode batch). `running` means "not provably stopped": the caller counts an unreadable
+// status as running, so a delete can never race a core that just started.
+function deleteGate(model, running) {
+  return !running && model.rows.length === 1 && model.rows[0].applied;
+}
+
+// Whether deleting `ids` must also unapply (remove config.json, runtime/applied, the rendered
+// outbound and the takeover rules). The trigger is the resulting state, not the deleted row:
+// an emptied list with a stopped core has nothing left to run, and a dangling applied id (one
+// with no row) would otherwise keep its credentials in config.json while the start gate still
+// lets the next start run it (ADR 0013).
+function emptiesList(model, ids) {
+  if (model.rows.length === 0) { return false; }
+  var gone = {};
+  ids.forEach(function (id) { gone[id] = true; });
+  for (var i = 0; i < model.rows.length; i++) {
+    if (!gone[model.rows[i].id]) { return false; }
+  }
+  return true;
+}
+
+function willUnapply(model, ids, running) {
+  return !running && emptiesList(model, ids);
+}
+
 // The edit-mode check set → what a batch delete may act on. Pure so tests/nodelist.test.js
-// can run it: the applied row never joins (single delete refuses it too), and check ids
-// that no longer have a row (a stale set after a refresh) are simply ignored.
-function batchModel(model, checks) {
+// can run it: the applied row joins only when the caller's delete gate allows deleting it
+// (the ✕ refuses it in exactly the same cases), and check ids that no longer have a row (a
+// stale set after a refresh) are simply ignored.
+function batchModel(model, checks, allowApplied) {
   var set = checks || {};
   var checkable = [];
   var checked = [];
   for (var i = 0; i < model.rows.length; i++) {
     var row = model.rows[i];
-    if (row.applied) { continue; }
+    if (row.applied && !allowApplied) { continue; }
     checkable.push(row.id);
     if (set[row.id]) { checked.push(row.id); }
   }
@@ -891,7 +949,7 @@ function rowSig(row) {
 
 // Every row is built with createElement/textContent: node names come from imported links and
 // must never reach innerHTML.
-function renderRow(row) {
+function renderRow(row, allowDelete) {
   var el = document.createElement("div");
   el.className = "nrow" + (row.applied ? " applied" : "") +
     (confirmId === row.id && !editMode ? " confirming" : "") +
@@ -913,7 +971,7 @@ function renderRow(row) {
   if (confirmId === row.id) {
     var q = document.createElement("div");
     q.className = "nrow-q";
-    q.textContent = T.deleteConfirm;
+    q.textContent = row.applied ? T.deleteConfirmApplied : T.deleteConfirm;
     main.appendChild(q);
     var actions = document.createElement("div");
     actions.className = "nactions";
@@ -937,15 +995,17 @@ function renderRow(row) {
     el.setAttribute("role", "button");
     el.tabIndex = 0;
   } else {
-    // In edit mode the whole row is the check toggle; the applied row's box is disabled
-    // because a delete refuses it too. The switch gesture waits outside edit mode.
+    // In edit mode the whole row is the check toggle; the applied row's box follows the same
+    // delete gate as the ✕. The switch gesture waits outside edit mode.
     var check = document.createElement("input");
     check.type = "checkbox";
     check.className = "ncheck";
     check.setAttribute("data-action", "check");
     check.setAttribute("aria-label", row.node.name || row.id);
-    check.checked = !!checkSet[row.id];
-    if (row.applied) { check.disabled = true; }
+    // A check left over from before the gate closed (the core started elsewhere) must not
+    // show as checked on a box that is now disabled; batchModel ignores it either way.
+    check.checked = !!checkSet[row.id] && !(row.applied && !allowDelete);
+    if (row.applied && !allowDelete) { check.disabled = true; }
     el.insertBefore(check, el.firstChild);
   }
 
@@ -960,7 +1020,7 @@ function renderRow(row) {
 
   var del = document.createElement("button");
   del.type = "button";
-  del.className = "ndel" + (row.applied ? " muted" : "");
+  del.className = "ndel" + (row.applied && !allowDelete ? " muted" : "");
   del.setAttribute("data-action", "delete");
   del.setAttribute("aria-label", T.delete);
   del.textContent = "✕";
@@ -970,7 +1030,7 @@ function renderRow(row) {
 
 // The edit-mode toolbar: select-all, the batch delete and its inline confirm. Built with
 // createElement/textContent like every row; the count comes from the check set.
-function renderBatchBar(model, bm) {
+function renderBatchBar(model, bm, unapplies) {
   var bar = els.nToolbar;
   if (!editMode || model.empty) {
     bar.hidden = true;
@@ -982,7 +1042,8 @@ function renderBatchBar(model, bm) {
   if (batchConfirm) {
     var q = document.createElement("span");
     q.className = "nbatch-q";
-    q.textContent = T.deleteConfirmN.replace("{n}", String(bm.checkedIds.length));
+    q.textContent = (unapplies ? T.deleteConfirmNApplied : T.deleteConfirmN)
+      .replace("{n}", String(bm.checkedIds.length));
     bar.appendChild(q);
     var yes = document.createElement("button");
     yes.type = "button";
@@ -1019,16 +1080,20 @@ function renderBatchBar(model, bm) {
 function renderNodeList() {
   var state = lastStateObj;
   var model = nodeListModel(state, lastApplied);
-  var bm = batchModel(model, checkSet);
+  var running = coreRunning();
+  listRunning = running;
+  var gate = deleteGate(model, running);
+  var bm = batchModel(model, checkSet, gate);
+  // The gate follows the runtime, so a Stop/Start has to invalidate the list too.
   var sig = [String(state && state.schema), lastApplied, confirmId || "",
-    editMode ? "edit" : "", batchConfirm ? "batch" : ""];
+    editMode ? "edit" : "", batchConfirm ? "batch" : "", gate ? "gate" : ""];
   bm.checkedIds.forEach(function (id) { sig.push(id); });
   model.rows.forEach(function (row) { sig.push(rowSig(row)); });
   var signature = sig.join("\n");
   if (signature !== listSig) {
     listSig = signature;
     els.nList.textContent = "";
-    model.rows.forEach(function (row) { els.nList.appendChild(renderRow(row)); });
+    model.rows.forEach(function (row) { els.nList.appendChild(renderRow(row, gate)); });
     if (model.empty) {
       // An empty list must still offer the one gesture that fills it, not just the + in
       // the card header: a first-time user looks at the middle of the page.
@@ -1040,7 +1105,7 @@ function renderNodeList() {
       els.nList.appendChild(addBtn);
     }
   }
-  renderBatchBar(model, bm);
+  renderBatchBar(model, bm, willUnapply(model, bm.checkedIds, running));
   els.editNode.textContent = editMode ? T.done : T.edit;
   els.editNode.disabled = busy || model.empty;
   var hint = listHint(model, state);
@@ -1135,7 +1200,11 @@ function switchTo(n) {
 
 function askDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  if (lastApplied && lastApplied === n.id) { toast(T.deleteApplied); return; }
+  var model = nodeListModel(lastStateObj, lastApplied);
+  if (lastApplied && lastApplied === n.id && !deleteGate(model, coreRunning())) {
+    toast(deleteRefusal(model));
+    return;
+  }
   confirmId = n.id;
   renderNodeList();
 }
@@ -1143,9 +1212,11 @@ function askDelete(n) {
 // One deletion path for one id or many: filter the manual store, clear the selected pointer
 // when it named a deleted node, drop the rendered outbound when it belonged to one, then
 // persist. The rm runs before the write: a failed rm must leave the node in the store so the
-// removal can be retried.
+// removal can be retried. A delete that empties the list while the core is stopped is an
+// unapply (ADR 0013) and it goes first for the same reason.
 function deleteNodes(ids) {
   var state = lastStateObj;
+  var unapply = willUnapply(nodeListModel(state, lastApplied), ids, coreRunning());
   var gone = {};
   ids.forEach(function (id) { gone[id] = true; });
   state.manual = (Array.isArray(state.manual) ? state.manual : []).filter(function (x) {
@@ -1156,11 +1227,20 @@ function deleteNodes(ids) {
   busy = true;
   setButtons();
   renderNodeList();
-  var removeRendered = lastMetaId && gone[lastMetaId];
-  var chain = removeRendered ? exec("rm -f " + OUTBOUND + " " + OUTBOUND_META).then(function (r) {
-    if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
-    lastMetaId = "";
-  }) : Promise.resolve();
+  var chain;
+  if (unapply) {
+    chain = exec(CLI + " unapply").then(function (r) {
+      if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
+      lastApplied = "";
+      lastMetaId = "";
+    });
+  } else {
+    var removeRendered = lastMetaId && gone[lastMetaId];
+    chain = removeRendered ? exec("rm -f " + OUTBOUND + " " + OUTBOUND_META).then(function (r) {
+      if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
+      lastMetaId = "";
+    }) : Promise.resolve();
+  }
   return chain.then(function () {
     return writeState(state);
   });
@@ -1168,10 +1248,11 @@ function deleteNodes(ids) {
 
 function confirmDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  if (lastApplied && lastApplied === n.id) {
+  var model = nodeListModel(lastStateObj, lastApplied);
+  if (lastApplied && lastApplied === n.id && !deleteGate(model, coreRunning())) {
     confirmId = null;
     renderNodeList();
-    toast(T.deleteApplied);
+    toast(deleteRefusal(model));
     return;
   }
   deleteNodes([n.id]).then(function () {
@@ -1188,18 +1269,20 @@ function confirmDelete(n) {
 
 function confirmBatchDelete() {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var ids = batchModel(nodeListModel(lastStateObj, lastApplied), checkSet).checkedIds;
+  var model = nodeListModel(lastStateObj, lastApplied);
+  var gate = deleteGate(model, coreRunning());
+  var ids = batchModel(model, checkSet, gate).checkedIds;
   if (ids.length === 0) {
     batchConfirm = false;
     renderNodeList();
     return;
   }
-  // The check set never holds the applied row, but a refresh between check and confirm
-  // must not let it sneak in.
-  if (lastApplied && ids.indexOf(lastApplied) >= 0) {
+  // The check set never holds the applied row unless the gate allows it, but a refresh
+  // between check and confirm must not let it sneak in.
+  if (!gate && lastApplied && ids.indexOf(lastApplied) >= 0) {
     batchConfirm = false;
     renderNodeList();
-    toast(T.deleteApplied);
+    toast(deleteRefusal(model));
     return;
   }
   var n = ids.length;
@@ -1468,6 +1551,8 @@ function renderStatus(kv) {
   }
 
   setButtons();
+  // The delete gate depends on the runtime, so a Stop or Start has to re-evaluate the list.
+  if (coreRunning() !== listRunning) { renderNodeList(); }
 }
 
 function renderLog(text) {
@@ -1704,10 +1789,10 @@ els.nList.addEventListener("click", function (e) {
   if (!row) { return; }
   var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
   if (!node) { return; }
-  // In edit mode the whole row is the check toggle; the applied row is excluded and
-  // ADR 0007's switch gesture waits outside edit mode.
+  // In edit mode the whole row is the check toggle; the applied row is excluded unless the
+  // delete gate allows deleting it, and ADR 0007's switch gesture waits outside edit mode.
   if (editMode) {
-    if (lastApplied && lastApplied === node.id) { return; }
+    if (!canCheckNode(node)) { return; }
     if (checkSet[node.id]) { delete checkSet[node.id]; } else { checkSet[node.id] = true; }
     renderNodeList();
     return;
@@ -1726,7 +1811,7 @@ els.nList.addEventListener("keydown", function (e) {
   var node = findNodeById(lastStateObj, e.target.getAttribute("data-id"));
   if (!node) { return; }
   if (editMode) {
-    if (lastApplied && lastApplied === node.id) { return; }
+    if (!canCheckNode(node)) { return; }
     if (checkSet[node.id]) { delete checkSet[node.id]; } else { checkSet[node.id] = true; }
     renderNodeList();
     return;
@@ -1744,7 +1829,8 @@ els.nToolbar.addEventListener("click", function (e) {
   var t = e.target;
   var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
   if (act === "checkall") {
-    var bm = batchModel(nodeListModel(lastStateObj, lastApplied), checkSet);
+    var model = nodeListModel(lastStateObj, lastApplied);
+    var bm = batchModel(model, checkSet, deleteGate(model, coreRunning()));
     if (bm.allChecked) {
       bm.checkableIds.forEach(function (id) { delete checkSet[id]; });
     } else {

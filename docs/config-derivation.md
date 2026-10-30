@@ -13,8 +13,8 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | Path | Writer | Kind |
 | --- | --- | --- |
 | `state.json` | WebUI | user intent: the node store and `selected` |
-| `outbound.json` | WebUI | the node being applied rendered as **one** Xray outbound |
-| `outbound.meta` | WebUI | `id=<node-id>` and `host=<address>` for that outbound |
+| `outbound.json` | WebUI | the node being applied rendered as **one** Xray outbound; `unapply` removes it |
+| `outbound.meta` | WebUI | `id=<node-id>` and `host=<address>` for that outbound; `unapply` removes it |
 | `config.example.json` | repo | the config template (not runnable on its own) |
 | `config.json` | shell | the config the core actually runs |
 | `state.json` → render | WebUI writes, shell reads | the inbound ports (`settings.socksPort` / `settings.httpPort`), extracted at render time (ADR 0009) |
@@ -23,8 +23,10 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 
 One writer per file: the UI never writes `config.json`, `runtime/applied` or `status.json`; the
-shell never writes `state.json`, `outbound.json` or `outbound.meta`. No locks are needed for
-that split.
+shell never writes `state.json`, `outbound.json` or `outbound.meta`. The one exception is
+`unapply`, which removes the rendered outbound along with everything else derived from the
+applied node ([ADR 0013](adr/0013-deleting-the-last-node-while-stopped-unapplies-it.md)) but
+never rewrites it. No locks are needed for that split.
 
 `outbound.json` contains credentials; both it and `outbound.meta` are written atomically with
 mode `0600`, like `state.json`. `pack.sh` excludes them.

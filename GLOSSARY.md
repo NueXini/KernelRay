@@ -114,6 +114,13 @@ switch failed, or lag behind that node's fields when a re-import kept the id; th
 latter as changed until it is applied again.
 _Avoid_: active node, running node
 
+**取消应用 (Unapply)**:
+Forgetting the applied node: the core config, `runtime/applied`, the rendered outbound and the
+takeover rules are all removed, so the module is back to the never-applied state and the core
+cannot start until a node is applied again. The one trigger is a delete that empties the node
+list while the core is stopped; the tproxy switch is a preference and stays as it is.
+_Avoid_: reset, clear, wipe, uninstall
+
 **切换节点 (Switch node)**:
 Tapping a node in the node list: it becomes the selected node and is applied, so the core runs
 it, restarting a running core. Normally the only gesture that changes which node carries
@@ -160,7 +167,8 @@ _Avoid_: node store (that is the data), pool
 **勾选 (Check)**:
 The edit-mode mark a user puts on node rows to say which ones a batch delete would remove.
 It is a temporary intent held only while edit mode lasts, and it never moves the selected
-pointer or touches the core. The applied node cannot be checked, because it cannot be deleted.
+pointer or touches the core. The applied node can be checked only when it is the last node and
+the core is stopped — the one case in which deleting it is allowed (see 取消应用).
 _Avoid_: select (that names the 当前节点 pointer), pick, mark
 
 **添加弹窗 (Add-node dialog)**:

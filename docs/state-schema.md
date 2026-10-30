@@ -49,10 +49,16 @@ The Nodes page renders `manual` only. It writes `state.json`; it never writes `c
   calls `apply <id>`. Tapping the **applied** node whose fields have not changed does nothing to
   the core (it only re-syncs `selected` if a failed switch left it elsewhere). Tapping the
   applied node after a re-import changed it (`dirty`) re-applies it.
-- **Delete** is refused for the applied node. Deleting the selected node clears `selected`;
-  deleting a node whose rendered outbound is on disk (its id is in `outbound.meta`) also removes
-  `outbound.json` and `outbound.meta`, so credentials do not outlive the node. Deletion needs a
-  second tap to confirm.
+- **Delete** is refused for the applied node while the core runs or while another node is still
+  in the list. It is allowed when the applied node is the last node and the core is stopped:
+  the UI then calls `kernelray.sh unapply` before writing `state.json`, which removes the
+  takeover rules, `config.json`, `runtime/applied`, `outbound.json` and `outbound.meta` and
+  writes `stopped`/`no-node` — the module is back to the never-applied state
+  ([ADR 0013](adr/0013-deleting-the-last-node-while-stopped-unapplies-it.md)). A delete that
+  empties the list also unapplies when the applied id was already dangling. Deleting the
+  selected node clears `selected`; deleting a node whose rendered outbound is on disk (its id
+  is in `outbound.meta`) also removes `outbound.json` and `outbound.meta`, so credentials do
+  not outlive the node. Deletion needs a second tap to confirm.
 - A **failed switch** leaves `selected` on the attempted node. The list marks it `not applied`
   and keeps the old node marked `applied`; tapping the attempted node retries.
 

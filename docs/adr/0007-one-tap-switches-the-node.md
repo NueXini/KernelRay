@@ -1,6 +1,8 @@
 # 0007 — One tap on a node switches it
 
-Status: accepted (amends ADR 0005's rule that the UI never applies a selection implicitly)
+Status: accepted (amends ADR 0005's rule that the UI never applies a selection implicitly; its
+rule that the applied node can never be deleted is amended by
+[ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md))
 
 ## Context
 
@@ -45,7 +47,9 @@ Switching to another node restarts a running core through the existing atomic
 - The shell still refuses an outbound whose `outbound.meta` id does not match the requested id,
   so the write order (selected → meta → outbound → CLI) remains part of the contract.
 - Deleting the applied node is refused; a delete that succeeded clears `selected` when it named
-  that node and removes the rendered outbound when it belonged to it.
+  that node and removes the rendered outbound when it belonged to it. (Amended by
+  [ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md): the applied node may be
+  deleted when it is the last node and the core is stopped, and that delete is an unapply.)
 - Subscriptions stay out of scope: the list renders `state.manual` only and preserves
   `subscriptions` untouched.
 

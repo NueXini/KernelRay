@@ -182,6 +182,7 @@ const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$
 const BODY_ENSURE = '. "$KR_TEST_SCRIPT"; kr_ensure_config';
 const BODY_STATUS = '. "$KR_TEST_SCRIPT"; kr_status_write "$1" "$2"';
 const BODY_APPLY = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply "$1"';
+const BODY_UNAPPLY = '. "$KR_TEST_SCRIPT"; kr_unapply';
 const BODY_PORTS = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply_ports';
 const BODY_START = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
@@ -607,6 +608,56 @@ check("apply: a failed start with no previous config leaves the core stopped wit
     const st = readJson(m.status);
     eq(st.state, "stopped", "state");
     eq(st.phase, "no-node", "phase");
+  } finally {
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+  }
+});
+
+// ---- kr_unapply -------------------------------------------------------------------------
+
+check("unapply: config, applied id and the rendered outbound all go, status says no-node", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  fs.writeFileSync(m.config, '{"sentinel":true}\n');
+  runShell(m.dir, BODY_UNAPPLY);
+  if (fs.existsSync(m.config)) { throw new Error("config.json must be removed"); }
+  if (fs.existsSync(m.applied)) { throw new Error("runtime/applied must be removed"); }
+  if (fs.existsSync(m.outbound)) { throw new Error("outbound.json must be removed"); }
+  if (fs.existsSync(m.meta)) { throw new Error("outbound.meta must be removed"); }
+  const st = readJson(m.status);
+  eq(st.state, "stopped", "state");
+  eq(st.phase, "no-node", "phase");
+  eq(st.node, "", "node");
+});
+
+check("unapply: nothing applied is an idempotent success", () => {
+  const m = makeModule();
+  runShell(m.dir, BODY_UNAPPLY);
+  const st = readJson(m.status);
+  eq(st.state, "stopped", "state");
+  eq(st.phase, "no-node", "phase");
+  if (fs.existsSync(m.config)) { throw new Error("no config must appear"); }
+});
+
+check("unapply: a running core is refused and keeps its config and applied id", () => {
+  const m = makeModule(loopingCore);
+  try {
+    const oldFixture = JSON.parse(JSON.stringify(fixture));
+    oldFixture.settings.servers[0].address = "old.example.com";
+    fs.writeFileSync(m.outbound, JSON.stringify(oldFixture));
+    fs.writeFileSync(m.meta, "id=" + OTHER_ID + "\nhost=old.example.com\n");
+    fs.writeFileSync(m.applied, OTHER_ID + "\n");
+    runShell(m.dir, BODY_START);
+    eq(readJson(m.status).state, "running", "the core did start");
+
+    const r = runFail(m.dir, BODY_UNAPPLY);
+    if (!/core is running/.test(r.stderr)) {
+      throw new Error("expected the running refusal, got: " + r.stderr);
+    }
+    if (!fs.existsSync(m.config)) { throw new Error("a running core's config must stay"); }
+    eq(fs.readFileSync(m.applied, "utf8").trim(), OTHER_ID, "applied id kept");
+    eq(readJson(m.status).state, "running", "status untouched");
   } finally {
     try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
   }

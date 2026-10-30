@@ -504,6 +504,31 @@ kr_apply_ports() {
   return 0
 }
 
+# unapply: forget the applied node -- the inverse of apply. Everything derived from it
+# goes: the takeover rules (they capture into a core that no longer has a node to run),
+# config.json, runtime/applied, the rendered outbound and the pinned node address, and the
+# status says stopped/no-node so the start gate (ADR 0010) keeps the core down until a node
+# is applied again. state.json and the tproxy switch belong to the caller and are left alone
+# (ADR 0013). Idempotent: with nothing applied it still lands on stopped/no-node.
+kr_unapply() {
+  kr_dirs
+  # Never pull the config out from under a live core: that would be a stop, and a stop is
+  # a different gesture with a different consequence (fail-closed rules stay up).
+  if kr_running; then
+    kr_log "unapply: the core is running; stop it first"
+    echo "core is running; stop it first" >&2
+    return 1
+  fi
+  if command -v kr_tp_remove >/dev/null 2>&1; then
+    kr_tp_remove
+  fi
+  rm -f "$KR_CONF" "$KR_APPLIED" "$KR_OUTBOUND" "$KR_OUTBOUND_META" \
+    "$KR_PIDFILE" "$KR_STARTED" "$KR_RUNDIR/nodeip"
+  kr_log "unapplied: config, applied id, rendered outbound and takeover rules removed"
+  kr_status_write stopped no-node
+  return 0
+}
+
 kr_start() {
   kr_dirs
   kr_cleanup_legacy
@@ -692,6 +717,7 @@ kr_cli() {
     start) kr_start ;;
     stop) kr_stop ;;
     apply) kr_apply "${1:-}" ;;
+    unapply) kr_unapply ;;
     ports) kr_apply_ports ;;
     status) kr_status_kv ;;
     log) kr_tail "${1:-200}" ;;
@@ -706,7 +732,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|ports|tproxy {on|off|status}|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|status|log [lines]}" >&2
       return 2
       ;;
   esac
