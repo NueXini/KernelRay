@@ -54,6 +54,8 @@ h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
   padding: 12px; margin-bottom: 12px;
 }
 .row { display: flex; gap: 10px; }
+.cardtitle { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.cardsec + .cardsec { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .tp-row { display: flex; align-items: flex-start; gap: 10px; }
 .tp-text { flex: 1; min-width: 0; }
 .tp-text > span { font-weight: 600; }
@@ -169,9 +171,14 @@ button.small { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; border-radius
 .nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }
 .nodehint.warn { color: var(--warn); }
 .nodehint.ok { color: var(--ok); }
-.seg { display: flex; gap: 8px; margin-top: 6px; }
-.seg button { padding: 8px 6px; font-size: 13px; font-weight: 500; }
-.seg button.on { background: var(--accent); border-color: transparent; color: #fff; }
+.setrow { display: flex; align-items: center; gap: 10px; }
+.setlabel { flex: 1; min-width: 0; font-weight: 600; }
+.setrow select {
+  flex: none; max-width: 55%; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font: inherit; font-weight: 500;
+}
+.setrow select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .row[hidden] { display: none; }
 textarea {
   width: 100%; margin-top: 4px; padding: 10px; border-radius: 10px;

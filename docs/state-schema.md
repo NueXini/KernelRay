@@ -63,9 +63,9 @@ the pair before writing (1–65535, distinct, never 10810 — the tproxy inbound
 applies them by calling `kernelray.sh ports`, which re-renders and restarts like a node
 apply. Every other field in `settings` is preserved verbatim and not interpreted yet.
 
-The WebUI's other Settings-page entries (language, log buffer size) deliberately do **not**
-live here — those are UI preferences, not core intent, and they stay in the WebView's own
-localStorage.
+The WebUI's other Settings-page entries — the language and log buffer size in the General
+card — deliberately do **not** live here: those are UI preferences, not core intent, and they
+stay in the WebView's own localStorage.
 
 ## Node
 

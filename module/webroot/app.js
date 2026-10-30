@@ -55,6 +55,7 @@ var DICT_ZH = {
   deletedN: "已删除 {n} 个节点",
   editHint: "勾选要删除的节点，点「删除」批量删除；已应用的节点不能删除。",
   tabStatus: "状态", tabNodes: "节点", tabLog: "日志", tabSettings: "设置", navLabel: "页面",
+  setGeneral: "常规设置",
   setLang: "语言", langAuto: "自动",
   setLangHint: "「自动」跟随系统语言。改动立即生效，只存在本机 WebView 里，不写入 state.json。",
   setLog: "日志行数",
@@ -118,6 +119,7 @@ var DICT_EN = {
   deletedN: "Deleted {n} node(s)",
   editHint: "Check the nodes to delete, then tap Delete; the applied node cannot be deleted.",
   tabStatus: "Status", tabNodes: "Nodes", tabLog: "Log", tabSettings: "Settings", navLabel: "Sections",
+  setGeneral: "General",
   setLang: "Language", langAuto: "Auto",
   setLangHint: "Auto follows the system language. Applies immediately and stays in this WebView; it never touches state.json.",
   setLog: "Log buffer",
@@ -159,9 +161,9 @@ var els = {
   overlay: $("add-overlay"), addClose: $("add-close"), tabbar: $("tabbar"),
   lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log"),
   lTabSettings: $("l-tab-settings"),
-  segLang: $("seg-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
-  lSetLangHint: $("l-set-lang-hint"),
-  segLog: $("seg-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
+  selLang: $("sel-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
+  lSetGeneral: $("l-set-general"), lSetLangHint: $("l-set-lang-hint"),
+  selLog: $("sel-log"), lSetLog: $("l-set-log"), lSetLogHint: $("l-set-log-hint"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetSoon: $("l-set-soon"),
@@ -218,6 +220,7 @@ function label(key) {
   els.lTabNodes.textContent = T.tabNodes;
   els.lTabLog.textContent = T.tabLog;
   els.lTabSettings.textContent = T.tabSettings;
+  els.lSetGeneral.textContent = T.setGeneral;
   els.lSetLang.textContent = T.setLang;
   els.lLangAuto.textContent = T.langAuto;
   els.lSetLangHint.textContent = T.setLangHint;
@@ -256,7 +259,7 @@ function applyLang() {
   T = lang === "zh" ? DICT_ZH : DICT_EN;
   document.documentElement.lang = lang;
   label();
-  renderSegs();
+  renderPrefs();
   listSig = "";
   renderNodeList();
   els.iHint.textContent = T.notAppliedYet;
@@ -269,25 +272,11 @@ function applyLang() {
   }
 }
 
-function markSeg(container, value) {
-  if (!container) { return; }
-  var btns = container.querySelectorAll("button");
-  for (var i = 0; i < btns.length; i++) {
-    var on = btns[i].getAttribute("data-v") === String(value);
-    btns[i].classList.toggle("on", on);
-    btns[i].setAttribute("aria-pressed", on ? "true" : "false");
-  }
-}
-
-function renderSegs() {
-  markSeg(els.segLang, langPref);
-  markSeg(els.segLog, logLines);
-}
-
-// Taps may land on the label span inside a button, so resolve through closest().
-function segValue(e) {
-  var b = e.target && e.target.closest ? e.target.closest("button[data-v]") : null;
-  return b ? b.getAttribute("data-v") : null;
+// The selects render straight from the prefs: a language switch reassigns T and the
+// Auto option's label, so both run through here.
+function renderPrefs() {
+  els.selLang.value = langPref;
+  els.selLog.value = String(logLines);
 }
 
 // ksu.exec is callback-based: ksu.exec(cmd, optionsJson, callbackName) and the
@@ -1733,9 +1722,9 @@ els.overlay.addEventListener("click", function (e) {
 els.iText.addEventListener("input", function () {
   els.iApply.disabled = busy || !els.iText.value.trim();
 });
-els.segLang.addEventListener("click", function (e) {
-  var v = segValue(e);
-  if (!v || LANGS.indexOf(v) < 0 || v === langPref) { return; }
+els.selLang.addEventListener("change", function () {
+  var v = els.selLang.value;
+  if (LANGS.indexOf(v) < 0 || v === langPref) { return; }
   langPref = v;
   prefs.lang = v;
   prefsSave(prefsStore(), prefs);
@@ -1745,14 +1734,13 @@ els.segLang.addEventListener("click", function (e) {
     if (currentRoute === "log") { refreshLog(); }
   }
 });
-els.segLog.addEventListener("click", function (e) {
-  var v = segValue(e);
-  var n = Number(v);
-  if (!v || LOG_LINE_STEPS.indexOf(n) < 0 || n === logLines) { return; }
+els.selLog.addEventListener("change", function () {
+  var n = Number(els.selLog.value);
+  if (LOG_LINE_STEPS.indexOf(n) < 0 || n === logLines) { return; }
   logLines = n;
   prefs.logLines = n;
   prefsSave(prefsStore(), prefs);
-  renderSegs();
+  renderPrefs();
   if (hasBridge && currentRoute === "log") { refreshLog(); }
 });
 els.portsSave.addEventListener("click", doSavePorts);

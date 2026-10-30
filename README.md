@@ -170,10 +170,11 @@ them:
   ports, core version and config path.
 - **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
-- **Settings** — UI language (auto / 中文 / English), the log buffer size, and the tproxy
-  switch (tproxy透明代理): whether device traffic is taken over at each core start, on by
-  default. Language and log buffer are WebView preferences; the tproxy switch is module state
-  (`runtime/tproxy`) and survives neither an uninstall nor an update.
+- **Settings** — a **General** card with the UI language (auto / 中文 / English) and the log
+  buffer size, the inbound ports, and the tproxy switch (tproxy透明代理): whether device
+  traffic is taken over at each core start, on by default. Language and log buffer are WebView
+  preferences; the ports live in `state.json` and the tproxy switch in `runtime/tproxy`, so
+  neither survives an update or uninstall.
 
 Tabs are hash routes (`#/status`, `#/nodes`, `#/log`, `#/settings`): a reload or a deep link
 lands on the same tab, and anything else falls back to `#/status`. Only the visible tab is

@@ -68,15 +68,29 @@
 
   <section class="page" id="page-settings" hidden>
     <section class="card">
-      <div class="nodehead">
-        <span id="l-set-lang">Language</span>
+      <div class="cardtitle" id="l-set-general">General</div>
+      <div class="cardsec">
+        <div class="setrow">
+          <label class="setlabel" id="l-set-lang" for="sel-lang">Language</label>
+          <select id="sel-lang">
+            <option value="auto" id="l-lang-auto">Auto</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="hint" id="l-set-lang-hint"></div>
       </div>
-      <div class="seg" id="seg-lang">
-        <button type="button" data-v="auto"><span id="l-lang-auto">Auto</span></button>
-        <button type="button" data-v="zh">中文</button>
-        <button type="button" data-v="en">English</button>
+      <div class="cardsec">
+        <div class="setrow">
+          <label class="setlabel" id="l-set-log" for="sel-log">Log buffer</label>
+          <select id="sel-log">
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+        <div class="hint" id="l-set-log-hint"></div>
       </div>
-      <div class="hint" id="l-set-lang-hint"></div>
     </section>
 
     <section class="card">
@@ -88,18 +102,6 @@
         <button type="button" class="switch" id="set-tp-switch" role="switch"
                 aria-checked="false"><span class="knob"></span></button>
       </div>
-    </section>
-
-    <section class="card">
-      <div class="nodehead">
-        <span id="l-set-log">Log buffer</span>
-      </div>
-      <div class="seg" id="seg-log">
-        <button type="button" data-v="100">100</button>
-        <button type="button" data-v="200">200</button>
-        <button type="button" data-v="500">500</button>
-      </div>
-      <div class="hint" id="l-set-log-hint"></div>
     </section>
 
     <section class="card">
