@@ -149,7 +149,8 @@ Applying always restarts a running core. The node list marks the applied node an
 failed switch, the selected-but-unapplied node. Tapping the applied node with no changes does
 nothing to the core; tapping it after a re-import kept its id and marked it `dirty` re-applies
 it, and the `dirty` flag clears on success. Importing a node changes nothing until a row is
-tapped.
+tapped — except into a store with no applied node, where the import itself applies a node
+([ADR 0012](adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)).
 
 ## Why the shell reads (almost) nothing from `state.json`
 

@@ -116,7 +116,9 @@ _Avoid_: active node, running node
 
 **切换节点 (Switch node)**:
 Tapping a node in the node list: it becomes the selected node and is applied, so the core runs
-it, restarting a running core. The one gesture that changes which node carries traffic.
+it, restarting a running core. Normally the only gesture that changes which node carries
+traffic; the exception is an import into a store with no applied node, which switches without
+a tap (see 添加弹窗).
 _Avoid_: select, choose (those move the pointer, not the traffic)
 
 **节点出站 (Node outbound)**:
@@ -165,7 +167,9 @@ _Avoid_: select (that names the 当前节点 pointer), pick, mark
 The dialog the node list's + entry opens: share links are pasted and imported there, and
 parsing is the first half of that one import gesture, not a separate step. Success closes
 the dialog with a toast; failed lines stay in the dialog for fixing and retrying. Opening
-it or importing from it never switches or applies a node.
+it never switches or applies anything. Importing into a store with no applied node also
+switches a node — the selected one when the pointer still resolves, else the first node the
+list shows (see 切换节点); any other import only fills the store.
 _Avoid_: add page, import page, subscription page (that is the 订阅 feature), parse step
 
 **订阅 (Subscription)**:
@@ -177,5 +181,6 @@ _Avoid_: feed, provider, source
 The node the user last chose to use: the pointer `state.json` records. It normally equals the
 applied node; a failed switch leaves it on the attempted node. It is a pointer, not a copy, so
 a node that disappears from the store without being deleted (a subscription refresh) leaves the
-selection dangling rather than stale; deleting the selected node clears it.
+selection dangling rather than stale; deleting the selected node clears it, and an import into
+a store with no applied node sets it to the node it switches, applying it in the same gesture.
 _Avoid_: active node, current proxy, main node

@@ -23,7 +23,7 @@ node --check module/webroot/app.js     # 页面语法（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 parser tests passing
 node tests/outbound.test.js            # 17 outbound tests passing
-node tests/nodelist.test.js            # 18 node list tests passing
+node tests/nodelist.test.js            # 26 node list + import-switch tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
 node tests/config.test.js              # 32 config tests passing（需要 bash 和 /proc）
@@ -135,7 +135,8 @@ adb -s $D shell 'su -c "ksud module action kernelray"'   # = 点 ▶，跑 actio
 ```
 
 **切换节点（v0.6）**：在 Nodes 页导入节点，然后直接点列表里的一行 —— 点行就是选中 + 应用。
-导入只写节点库，不改 `selected`。切换成功后验证：
+导入只写节点库、不改 `selected`；但库里还没有已应用节点时，导入会顺带应用（`selected` 仍能
+解析就用它，否则用列表第一个），等于替你点了一次行（ADR 0012）。切换成功后验证：
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status' | grep node=

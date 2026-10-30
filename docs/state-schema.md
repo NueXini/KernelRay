@@ -39,8 +39,12 @@ candidate; only `runtime/applied` says whether the swap actually succeeded.
 The Nodes page renders `manual` only. It writes `state.json`; it never writes `config.json` or
 `runtime/applied`.
 
-- **Import** appends new identities and updates existing ones in place (keeping the id). It never
-  changes `selected`; the user switches by tapping a row afterwards.
+- **Import** appends new identities and updates existing ones in place (keeping the id). If
+  nothing is applied yet (`runtime/applied` absent or empty), the import also switches to the
+  node `selected` names when that still resolves, else to the first node the list shows: it
+  writes `selected` and applies it, exactly like a tapped row (see 切换节点 and
+  [ADR 0012](adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)). With a node
+  already applied it changes no pointer; the user switches by tapping a row afterwards.
 - **Tap a node** writes `selected`, renders the node to `outbound.json` + `outbound.meta`, and
   calls `apply <id>`. Tapping the **applied** node whose fields have not changed does nothing to
   the core (it only re-syncs `selected` if a failed switch left it elsewhere). Tapping the

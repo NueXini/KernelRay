@@ -78,7 +78,7 @@ var DICT_ZH = {
   importDone: "已导入",
   importUpdated: "，更新",
   importFailedN: "，{n} 行失败",
-  notAppliedYet: "导入只写入节点库，不会切换；点列表里的节点即可切换并应用。"
+  notAppliedYet: "导入只写入节点库；还没有已应用节点时会顺带应用一个，否则点列表里的节点即可切换并应用。"
 };
 var DICT_EN = {
   start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
@@ -141,7 +141,7 @@ var DICT_EN = {
   importDone: "Imported",
   importUpdated: ", updated",
   importFailedN: ", {n} line(s) failed",
-  notAppliedYet: "Importing only fills the node list; tap a node there to switch and apply it."
+  notAppliedYet: "Importing only fills the node list; with no node applied yet it also applies one, otherwise tap a node there to switch and apply it."
 };
 var T = DICT_EN; // applyLang() reassigns this before anything renders
 
@@ -1235,6 +1235,33 @@ function refreshNodes() {
     }).catch(function () {});
 }
 
+// ---- import switch rule ----
+
+// An import leaves the store usable only if something is applied, and the first import is the
+// moment the user wants the node they just pasted to run. The node to switch to is the pointer
+// they already set when it still resolves (a failed switch leaves it there), else the first node
+// the list can show. "" means "switch nothing": a node is already applied. Pure, so the import
+// tests can run it without a browser.
+function applyAfterImport(state, appliedId) {
+  if (appliedId) { return ""; }
+  var manual = state && Array.isArray(state.manual) ? state.manual : [];
+  var selected = state && typeof state.selected === "string" ? state.selected : "";
+  var first = "";
+  for (var i = 0; i < manual.length; i++) {
+    var n = manual[i];
+    // The same filter as nodeListModel: a node without an id has no row to mark as applied.
+    if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") {
+      continue;
+    }
+    var id = String(n.id);
+    if (first === "") { first = id; }
+    if (selected !== "" && id === selected) { return id; }
+  }
+  return first;
+}
+
+// ---- end import switch rule ----
+
 // ---- node import UI ----
 
 // Import dedupes inside the manual store: subscriptions are out of scope in this version and
@@ -1325,8 +1352,9 @@ function renderFailedRows(rows) {
   });
 }
 
-// One gesture: parse the input and merge the parseable rows into the store. Nothing here
-// switches or applies a node — the list's tap gesture owns that.
+// One gesture: parse the input and merge the parseable rows into the store. With no node
+// applied yet the same gesture also switches the node applyAfterImport names (ADR 0012);
+// with one already applied nothing but the store changes.
 function doImport() {
   if (busy || !hasBridge) { return; }
   var rows = parseInput(els.iText.value);
@@ -1337,6 +1365,7 @@ function doImport() {
     return;
   }
   var bad = rows.filter(function (r) { return !r.ok; });
+  var nextId = "";
 
   busy = true;
   setButtons();
@@ -1350,6 +1379,10 @@ function doImport() {
     var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
     state.revision = (Number(state.revision) || 0) + 1;
     return writeState(state).then(function () {
+      // The page must hold what was just written: switchTo reads lastStateObj, and a stale copy
+      // would leave a re-imported node marked dirty after its own apply succeeded.
+      lastStateObj = state;
+      nextId = applyAfterImport(state, lastApplied);
       var msg = T.importDone + " " + res.added;
       if (res.updated) { msg += T.importUpdated + " " + res.updated; }
       if (!bad.length) {
@@ -1364,11 +1397,17 @@ function doImport() {
       }
     });
   }).catch(function (e) {
+    nextId = "";
     toast(T.actionFailed + ": " + e.message);
   }).then(function () {
     busy = false;
     setButtons();
     els.iApply.disabled = !els.iText.value.trim();
+    // After busy clears: switchTo refuses to run while another action holds the page.
+    if (!nextId) { return; }
+    var node = findNodeById(lastStateObj, nextId);
+    nextId = "";
+    if (node) { switchTo(node); }
   });
 }
 

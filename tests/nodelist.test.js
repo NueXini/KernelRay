@@ -1,8 +1,9 @@
-// Node list model tests for the WebUI.
+// Node list and import-switch tests for the WebUI.
 //
-// The model lives inside module/webroot/app.js; this harness extracts the marked block from
+// Both blocks live inside module/webroot/app.js; this harness extracts the marked blocks from
 // the shipped file, exactly like tests/parse.test.js does for the parser. The list is a pure
-// state.json + runtime/applied → rows mapping, so it can be tested without a browser.
+// state.json + runtime/applied → rows mapping and the import switch rule is a pure
+// state.json + runtime/applied → id decision, so both run without a browser.
 //
 //   node tests/nodelist.test.js
 
@@ -14,17 +15,21 @@ const path = require("path");
 const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
 const js = fs.readFileSync(jsPath, "utf8");
 
-const START = "// ---- node list model ----";
-const END = "// ---- end node list model ----";
-const from = js.indexOf(START);
-const to = js.indexOf(END);
-if (from < 0 || to < 0) {
-  console.error("could not find the node list model block markers in app.js");
-  process.exit(1);
+function marked(start, end) {
+  const from = js.indexOf(start);
+  const to = js.indexOf(end);
+  if (from < 0 || to < 0) {
+    console.error("could not find the " + start + " block markers in app.js");
+    process.exit(1);
+  }
+  return js.slice(from, to);
 }
 
-const block = js.slice(from, to);
-const L = new Function(block + "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel };")();
+const block = marked("// ---- node list model ----", "// ---- end node list model ----") +
+  marked("// ---- import switch rule ----", "// ---- end import switch rule ----");
+const L = new Function(block +
+  "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel, applyAfterImport: applyAfterImport };"
+)();
 
 let pass = 0;
 const failures = [];
@@ -176,6 +181,44 @@ check("batch: no checkable rows is never allChecked", () => {
 check("batch: empty list is never allChecked", () => {
   const model = L.nodeListModel(state([], ""), "");
   eq(batch(model, {}), [[], [], false]);
+});
+
+// ---- the import switch rule (ADR 0012) ----
+
+check("import into a store with nothing applied switches the first node", () => {
+  eq(L.applyAfterImport(state([node("a"), node("b")], ""), ""), "a");
+});
+
+check("import with a node already applied switches nothing", () => {
+  eq(L.applyAfterImport(state([node("a"), node("b")], ""), "a"), "");
+});
+
+check("import into an empty store switches nothing", () => {
+  eq(L.applyAfterImport(state([], ""), ""), "");
+});
+
+check("import skips entries the list cannot render", () => {
+  eq(L.applyAfterImport(state([{ id: "" }, null, node("b")], ""), ""), "b");
+});
+
+check("a selection that still resolves wins over the first node", () => {
+  eq(L.applyAfterImport(state([node("a"), node("b")], "b"), ""), "b");
+});
+
+check("a dangling selection falls back to the first node", () => {
+  eq(L.applyAfterImport(state([node("a")], "gone"), ""), "a");
+});
+
+check("a selection pointing at a subscription node falls back to the first node", () => {
+  const s = {
+    schema: 1, selected: "s1", manual: [node("a")],
+    subscriptions: [{ name: "sub", nodes: [node("s1")] }]
+  };
+  eq(L.applyAfterImport(s, ""), "a");
+});
+
+check("a malformed store switches nothing", () => {
+  eq(L.applyAfterImport({ schema: 1, manual: "nope" }, ""), "");
 });
 
 if (failures.length) {

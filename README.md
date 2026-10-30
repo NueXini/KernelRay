@@ -204,9 +204,12 @@ plugin is not supported, and so on). Supported: `vless`, `vmess` (base64 JSON), 
 (SIP002 and the legacy form). *Import* merges into `state.json` — re-importing the same node
 updates it in place and keeps its id, so a rename does not create a duplicate.
 
-Import only fills the node list; it does not change the selection or how traffic flows. Tap a
-node row afterwards to switch and apply it. Deleting a node needs a second tap; the applied
-node cannot be deleted, and deleting the selected node clears the selection.
+Import normally only fills the node list and leaves the selection alone; tap a row afterwards to
+switch and apply. The exception is an import into a store with no applied node: it applies
+`selected` when that still resolves, else the first node the list shows, so the module is usable
+without an extra tap — it never starts a stopped core ([ADR 0012](docs/adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)).
+Deleting a node needs a second tap; the applied node cannot be deleted, and deleting the selected
+node clears the selection.
 
 **Batch delete.** *Edit* turns the list into a check UI: each row gets a checkbox, tapping a
 row toggles its check, and a toolbar offers select-all and a delete with the checked count.
