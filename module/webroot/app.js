@@ -21,7 +21,7 @@ var LOG_LEVELS = ["none", "error", "warning", "info", "debug"];
 var langPref = "auto"; // "auto" | "zh" | "en"; resolved against navigator.language when "auto"
 var themePref = "auto"; // "auto" | "light" | "dark"; resolved against the system when "auto"
 var DICT_ZH = {
-  start: "启动", stop: "停止", follow: "跟随", refresh: "刷新",
+  start: "启动", stop: "停止", follow: "跟随", pause: "暂停", refresh: "刷新",
   log: "日志", pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
   running: "运行中", stopped: "已停止", starting: "启动中", stopping: "停止中",
   failed: "启动失败", unknown: "未知",
@@ -101,7 +101,7 @@ var DICT_ZH = {
   notAppliedYet: "导入只写入节点库；还没有已应用节点时会顺带应用一个，否则点列表里的节点即可切换并应用。"
 };
 var DICT_EN = {
-  start: "Start", stop: "Stop", follow: "Follow", refresh: "Refresh",
+  start: "Start", stop: "Stop", follow: "Follow", pause: "Pause", refresh: "Refresh",
   log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
   running: "running", stopped: "stopped", starting: "starting", stopping: "stopping",
   failed: "failed", unknown: "unknown",
@@ -187,9 +187,9 @@ var els = {
   banner: $("banner"), badge: $("badge"), start: $("start"), stop: $("stop"),
   hint: $("hint"), pid: $("v-pid"), up: $("v-up"), port: $("v-port"),
   core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
-  refresh: $("refresh"), toast: $("toast"),
+  refresh: $("refresh"), pause: $("pause"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
-  lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"),
+  lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"), lPause: $("l-pause"),
   addNode: $("add-node"),
   nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
   editNode: $("edit-node"), nToolbar: $("n-toolbar"),
@@ -250,6 +250,7 @@ function label(key) {
   els.stop.textContent = T.stop;
   els.refresh.textContent = T.refresh;
   els.lFollow.textContent = T.follow;
+  els.lPause.textContent = T.pause;
   els.lLog.textContent = T.log;
   els.lPid.textContent = T.pid;
   els.lUp.textContent = T.up;
@@ -1814,11 +1815,15 @@ function initNav() {
   });
 }
 
-function refreshPage() {
+// The pause checkbox only freezes the 2s poll, not the log itself: a manual fetch
+// (Refresh button) still goes through while paused.
+function refreshPage(manual) {
   if (!hasBridge) { return; }
   refreshStatus();
   if (currentRoute === "nodes") { refreshNodes(); }
-  else if (currentRoute === "log") { refreshLog(); }
+  else if (currentRoute === "log") {
+    if (!els.pause.checked || manual) { refreshLog(); }
+  }
   else if (currentRoute === "settings") { refreshSettings(); }
 }
 
@@ -1867,7 +1872,7 @@ els.selLogLevel.addEventListener("change", function () {
   run("loglevel " + target, T.logLevelToast);
 });
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
-els.refresh.addEventListener("click", function () { refreshPage(); });
+els.refresh.addEventListener("click", function () { refreshPage(true); });
 els.nList.addEventListener("click", function (e) {
   var t = e.target;
   var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
