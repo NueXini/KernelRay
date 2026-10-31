@@ -39,6 +39,7 @@ var DICT_ZH = {
   tpRetry: "重试",
   tpOnMsg: "tproxy 已开启；下次启动核心时生效", tpOffMsg: "tproxy 已关闭；下次启动核心时生效",
   "failed/rules": "接管规则", "failed/conflict": "接管冲突",
+  crashed: "核心已退出",
   applyingMsg: "正在应用节点…", appliedMsg: "节点已应用",
   nodeNoState: "没有 state.json，节点信息无从得知",
   nodeSchema: "state.json 的 schema 版本未识别：",
@@ -72,7 +73,14 @@ var DICT_ZH = {
   portTp: "这个端口留给透明代理入站（10810），换一个",
   portsSaving: "正在应用端口…", portsSaved: "端口已应用",
   portsSave: "保存",
-  setSoon: "路由与 DNS 目前是内置策略：DNS 由核心的 DNS 模块应答并经节点转发；透明代理开关在本页上方。",
+  setRoute: "分流模式", setRouteMode: "模式",
+  routeGlobal: "全局", routeCn: "大陆直连",
+  routeGlobalHint: "所有流量都走已应用的节点（默认）。",
+  routeCnHint: "大陆的域名与 IP 直连，其余走节点；DNS 也随之分流。切换后立即重写配置并重启核心。",
+  routeCnNoGeodata: "geo 数据缺失（geodata/geosite.dat、geoip.dat）：大陆直连当前按全局渲染，补齐文件后才真正生效。",
+  routeSwitching: "正在切换分流模式…",
+  geodataLabel: "geo 数据：{v}",
+  geodataMissing: "缺失",
   addTitle: "添加节点",
   addPlaceholder: "vless://…",
   close: "关闭",
@@ -106,6 +114,7 @@ var DICT_EN = {
   tpRetry: "Retry",
   tpOnMsg: "tproxy on; takes effect at the next core start", tpOffMsg: "tproxy off; takes effect at the next core start",
   "failed/rules": "rules", "failed/conflict": "conflict",
+  crashed: "core exited",
   applyingMsg: "Applying node…", appliedMsg: "Node applied",
   nodeNoState: "No state.json, so the nodes are unknown",
   nodeSchema: "Unrecognised state.json schema: ",
@@ -139,7 +148,14 @@ var DICT_EN = {
   portTp: "That port is reserved for the tproxy inbound (10810); pick another",
   portsSaving: "Applying ports…", portsSaved: "Ports applied",
   portsSave: "Save",
-  setSoon: "Routing and DNS are built-in policy for now: DNS is answered by the core's DNS module and sent through the node; the tproxy switch is on this page.",
+  setRoute: "Routing mode", setRouteMode: "Mode",
+  routeGlobal: "Global", routeCn: "Direct-CN",
+  routeGlobalHint: "Every destination goes through the applied node (the default).",
+  routeCnHint: "Mainland domains and addresses go direct and everything else goes through the node, with DNS split to match. Switching re-renders the config and restarts the core.",
+  routeCnNoGeodata: "Geo data is missing (geodata/geosite.dat, geoip.dat): Direct-CN renders as Global until the files are back.",
+  routeSwitching: "Switching routing mode…",
+  geodataLabel: "Geo data: {v}",
+  geodataMissing: "missing",
   addTitle: "Add node",
   addPlaceholder: "vless://…",
   close: "Close",
@@ -176,7 +192,9 @@ var els = {
   selLog: $("sel-log"), lSetLog: $("l-set-log"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
-  lSetSoon: $("l-set-soon"),
+  lSetRoute: $("l-set-route"), lSetRouteMode: $("l-set-route-mode"),
+  selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
+  setRouteHint: $("set-route-hint"), setGeodataHint: $("set-geodata-hint"),
   tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
   lSetTp: $("l-set-tp"), setTpHint: $("set-tp-hint"), setTpSwitch: $("set-tp-switch")
 };
@@ -244,7 +262,10 @@ function label(key) {
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
-  els.lSetSoon.textContent = T.setSoon;
+  els.lSetRoute.textContent = T.setRoute;
+  els.lSetRouteMode.textContent = T.setRouteMode;
+  els.lRouteGlobal.textContent = T.routeGlobal;
+  els.lRouteCn.textContent = T.routeCn;
   els.lSetTp.textContent = T.setTp;
   els.tpRetry.textContent = T.tpRetry;
   els.tabbar.setAttribute("aria-label", T.navLabel);
@@ -325,9 +346,10 @@ function parseKv(text) {
 
 // ---- UI preferences ----
 // Theme, language and log-buffer size are UI prefs, not intent: state.json's `settings`
-// object is reserved for routing/DNS (docs/state-schema.md) and is wiped by every module
-// upgrade anyway, so these live in the WebView's localStorage and degrade to session-only
-// when the manager ships a WebView with storage disabled. tests/prefs.test.js runs this block.
+// object carries the inbound ports and the 分流模式 is the shell's own preference
+// (docs/state-schema.md); both are wiped by every module upgrade anyway, so these live in the
+// WebView's localStorage and degrade to session-only when the manager ships a WebView with
+// storage disabled. tests/prefs.test.js runs this block.
 //
 // The theme's own model (valid values, "auto" resolution, application) is theme.js, which
 // <head> loads before this file: one key, one validator, and the first paint already right.
@@ -1550,6 +1572,19 @@ function renderStatus(kv) {
     els.setTpHint.textContent = tpOn ? T.setTpOn : T.setTpOff;
   }
 
+  // The 分流模式 follows the preference (kv.route). kv.routing is what the config may
+  // actually use, and the two differ only while the geo data is missing (ADR 0014), which is
+  // why the geodata line sits under the select instead of being a footnote in the log.
+  var routeMode = kv.route === "cn" ? "cn" : "global";
+  els.selRoute.value = routeMode;
+  if (routeMode === "cn") {
+    els.setRouteHint.textContent = kv.geodata === "missing" ? T.routeCnNoGeodata : T.routeCnHint;
+  } else {
+    els.setRouteHint.textContent = T.routeGlobalHint;
+  }
+  els.setGeodataHint.textContent = T.geodataLabel.replace("{v}",
+    kv.geodata === "missing" ? T.geodataMissing : (kv.geodataver || T.unknown));
+
   setButtons();
   // The delete gate depends on the runtime, so a Stop or Start has to re-evaluate the list.
   if (coreRunning() !== listRunning) { renderNodeList(); }
@@ -1778,6 +1813,17 @@ els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
 els.setTpSwitch.addEventListener("click", function () {
   var target = lastKv && lastKv.tproxy === "on" ? "off" : "on";
   run("tproxy " + target, target === "on" ? T.tpOnMsg : T.tpOffMsg);
+});
+els.selRoute.addEventListener("change", function () {
+  var target = els.selRoute.value === "cn" ? "cn" : "global";
+  if (lastKv && lastKv.route === target) { return; }
+  // A change made while another action holds the page is not sent: put the select back where
+  // the shell says it is, instead of leaving it lying until the next poll.
+  if (busy) {
+    els.selRoute.value = lastKv && lastKv.route === "cn" ? "cn" : "global";
+    return;
+  }
+  run("routing " + target, T.routeSwitching);
 });
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });

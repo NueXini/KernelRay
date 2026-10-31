@@ -33,9 +33,10 @@ in old logs and issues.
 _Avoid_: idle run, direct mode, freedom mode
 
 **失败规则 (failed/rules)**:
-The status phase meaning rule installation failed and was rolled back — the one takeover
-failure that can leak traffic. It is written, never inferred by callers.
-_Avoid_: rules error, install failed
+The status phase meaning 接管规则 installation failed and was rolled back — the one takeover
+failure that can leak traffic. It is written, never inferred by callers, and it never refers to
+the 分流规则, which are refused before the core ever runs them.
+_Avoid_: rules error, install failed, 分流规则失败
 
 **失败冲突 (failed/conflict)**:
 The status phase meaning takeover was refused because a foreign VPN/TUN or TPROXY setup owns
@@ -73,10 +74,46 @@ The module's act of making device traffic enter the core instead of going out di
 run is the absence of takeover.
 _Avoid_: hijack, capture, redirect
 
+**接管规则 (Takeover rules)**:
+The module's own iptables chains, marks and policy routing that put device traffic into the
+core. They decide *whether* traffic is captured; the 分流规则 decide where it leaves once it is.
+_Avoid_: iptables 规则, TPROXY 规则, 路由规则
+
 **旁路 (Bypass)**:
 Traffic the module deliberately leaves outside takeover: loopback, the local network ranges, and
-the core's own connections.
-_Avoid_: whitelist, exception list (a per-app list is a different, later feature)
+the core's own connections. Bypass traffic never enters the core; a destination the 分流规则
+sends `direct` did enter it and left again by another outbound, so that is 分流, not 旁路.
+_Avoid_: whitelist, exception list (a per-app list is a different, later feature), 分流直连
+
+**分流 (Split routing)**:
+The core's own choice, taken from the 分流规则, that a destination leaves by the `direct`
+outbound instead of the applied node. It happens to traffic the core already has — taken over
+or handed to a 本地入站 — and it is a routing decision, not a capture one.
+_Avoid_: 绕过 (as a noun), split tunnel, 白名单模式 (that names a mode, not the mechanism)
+
+**分流模式 (Routing mode)**:
+The persisted user choice of how the core routes: 全局 sends every destination through the
+applied node, 大陆直连 sends mainland destinations out `direct`. It is a preference of its own
+and changing it re-derives the core config at once — unlike the tproxy switch, which waits for
+the next core start.
+_Avoid_: 路由模式 (that is Xray's word for the mechanism), 分流开关, 黑白名单
+
+**全局 (Global)**:
+The default 分流模式: the applied node carries every destination, and only the module's own
+fixed policy (DNS, the node host's own lookup, 旁路) routes anything elsewhere.
+_Avoid_: 全局代理, global mode, 直连模式 (that is 空转)
+
+**大陆直连 (Direct-CN)**:
+The 分流模式 where a destination the 地理数据 names as mainland goes out `direct` and
+everything else still goes through the applied node. It answers "mainland sites should not
+leave the country", not "these sites should be blocked".
+_Avoid_: 绕过大陆, 大陆白名单, 智能分流
+
+**分流规则 (Routing rules)**:
+The core's ordered rules that decide 分流. The module authors them in this version; the user
+only picks the 分流模式. Distinct from 接管规则, the iptables rules that put traffic into the
+core in the first place.
+_Avoid_: 路由规则, 规则 (alone: in this project that word means 接管规则)
 
 **冲突 (Conflict)**:
 A foreign VPN/TUN or TPROXY setup already running on the device. Takeover refuses to start
@@ -137,6 +174,12 @@ _Avoid_: node config, proxy JSON
 `config.example.json`, the fixed Xray config skeleton — inbounds, the fixed outbounds and, from
 v0.7, routing and DNS — from which the core config is generated.
 _Avoid_: default config, preset, profile
+
+**地理数据 (Geo data)**:
+The `geosite.dat` and `geoip.dat` files the 分流规则 name categories from. They ship with the
+核心 inside the module rather than being fetched on the device, so a category a release does not
+carry is a config error, never an empty match.
+_Avoid_: geo 文件, 规则库, 数据库, 订阅规则
 
 **核心配置 (Core config)**:
 `config.json`, the config the core actually runs, generated from the template, the applied node

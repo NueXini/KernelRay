@@ -73,6 +73,12 @@ the pair before writing (1–65535, distinct, never 10810 — the tproxy inbound
 applies them by calling `kernelray.sh ports`, which re-renders and restarts like a node
 apply. Every other field in `settings` is preserved verbatim and not interpreted yet.
 
+The 分流模式 is deliberately **not** in here: it is the shell's own preference, like the tproxy
+switch — `runtime/route`, written by `kernelray.sh routing global|cn`
+([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)) — because
+the shell must be able to change it without the UI, and because a `cn` render has to check the
+geo data before it can promise anything. `state.json` stays the UI's file.
+
 The WebUI's other Settings-page entries — the language and log buffer size in the General
 card — deliberately do **not** live here: those are UI preferences, not core intent, and they
 stay in the WebView's own localStorage.

@@ -32,6 +32,14 @@ fi
 kr_version_refresh
 ui_print "  core: $(kr_version_cached)"
 
+if kr_geodata_ok 2>/dev/null; then
+  _geo=$(sed -n '1p' "$MODPATH/geodata/VERSION" 2>/dev/null)
+  ui_print "  geo data: ${_geo:-present}"
+else
+  ui_print "! geodata/geosite.dat or geodata/geoip.dat is missing: the 分流模式"
+  ui_print "! 大陆直连 (Direct-CN) will refuse to switch until both files are back."
+fi
+
 kr_dirs
 # The tproxy switch defaults to on (ADR 0011): the core's next start after a node is
 # applied takes the device over. An update recreates it the same way.
@@ -45,6 +53,9 @@ ui_print "  starting the core with a node applied also brings tproxy up."
 ui_print "- TPROXY transparent proxy is ON by default: every core start (boot or the Start"
 ui_print "  button) routes device traffic through the applied node. Turn it off in the"
 ui_print "  WebUI Settings (tproxy透明代理) if you only want the local socks/http inbounds."
+ui_print "- 分流模式 (Settings) defaults to 全局: everything through the applied node."
+ui_print "  大陆直连 sends mainland domains and addresses direct, with DNS split to match;"
+ui_print "  switching it re-renders the config and restarts a running core."
 ui_print "- Config: /data/adb/modules/$KR_ID/config.json (generated; do not hand-edit)"
 ui_print "- Log:    /data/adb/modules/$KR_ID/logs/xray.log"
 ui_print "! Everything lives in this module dir. A module update replaces it whole,"

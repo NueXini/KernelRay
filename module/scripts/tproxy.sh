@@ -5,7 +5,9 @@
 #
 # Implements docs/adr/0004 (module-owned, fail-closed takeover), docs/adr/0006
 # (DNS through the core's DNS module), docs/adr/0008 (namespace values) and
-# docs/adr/0011 (the switch is a default-on preference coupled to the core's start). The namespace — capture fwmark 19283, bypass fwmark 19282, routing
+# docs/adr/0011 (the switch is a default-on preference coupled to the core's start) and
+# docs/adr/0014 (geo data ships in the module; the 分流模式 is a shell-owned preference applied
+# at once). The namespace — capture fwmark 19283, bypass fwmark 19282, routing
 # tables 19283/19282, ip rule preferences 9500/9400, the KR_TP_* chains and tproxy port
 # 10810 — is exclusive to this module: only those are ever installed or removed, never
 # another module's rules.
@@ -20,6 +22,13 @@ KR_BYPASS_PREF=9400
 KR_TP_SWITCH=$KR_RUNDIR/tproxy
 KR_NODEIP=$KR_RUNDIR/nodeip
 KR_TPLOG=$KR_LOGDIR/kernelray.log
+# 分流模式 (docs/adr/0014): the shell's preference, like the tproxy switch but applied at
+# once. Presence of the file means 大陆直连; absence means 全局, which is what every earlier
+# version did. The two domestic resolvers are what the cn mode resolves mainland domains
+# with.
+KR_ROUTE=$KR_RUNDIR/route
+KR_CN_DNS1=223.5.5.5
+KR_CN_DNS2=119.29.29.29
 
 kr_tp_log() { kr_log "$*"; }
 
@@ -344,33 +353,194 @@ kr_tp_pin_node() {
   fi
 }
 
+# ---- geo data and the 分流模式 (docs/adr/0014) ------------------------------------------
+
+# Both .dat files are required together: a config that names geosite:cn without geosite.dat
+# fails `xray -test`, and a missing geoip.dat is the same dead end one rule later.
+kr_geodata_ok() {
+  [ -s "$KR_GEODATA/geosite.dat" ] && [ -s "$KR_GEODATA/geoip.dat" ]
+}
+
+# The persisted 分流模式: presence of the file is 大陆直连, absence is 全局 (the default, and
+# what every earlier version did). Written by `kernelray.sh routing`.
+kr_route_mode() { [ -s "$KR_ROUTE" ] && printf 'cn\n' || printf 'global\n'; }
+
+kr_route_write() { # <global|cn>
+  kr_dirs
+  if [ "$1" = cn ]; then
+    printf 'cn\n' >"$KR_ROUTE" 2>/dev/null || {
+      echo "could not write $KR_ROUTE" >&2
+      return 1
+    }
+    chmod 600 "$KR_ROUTE" 2>/dev/null
+  else
+    rm -f "$KR_ROUTE"
+  fi
+  return 0
+}
+
+# What the render may use: KR_ROUTE_EFFECTIVE (cn|global), plus KR_ROUTE_DEGRADED when the
+# preference asked for cn and the geo data is gone. Sets variables instead of printing -- a
+# render's stdout is the config, so a degradation must not be able to corrupt it -- and never
+# touches the preference: the preference is intent, the render is fact. The degradation
+# direction is deliberate: everything through the node is slow, not broken. The optional
+# argument is the caller's "render this mode, not the saved one" (routing's switch renders the
+# candidate before it writes the preference).
+kr_route_effective() { # [mode override]
+  _m=${1:-}
+  [ -n "$_m" ] || _m=$(kr_route_mode)
+  KR_ROUTE_DEGRADED=0
+  if [ "$_m" = cn ] && ! kr_geodata_ok; then
+    _m=global
+    KR_ROUTE_DEGRADED=1
+  fi
+  KR_ROUTE_EFFECTIVE=$_m
+  return 0
+}
+
+# The DNS module block. 全局 keeps the single DoH upstream (docs/adr/0006). 大陆直连 asks the
+# domestic resolvers first for mainland domains, so the answers are the ones the CDN expects;
+# an answer outside geoip:cn is rejected and the query falls through to the DoH, which still
+# leaves through the node. <host> <escaped host> are the applied node's own name.
+kr_tp_dns_block() { # <host> <escaped host> -> KR_DNS_BLOCK
+  _servers='"https://1.1.1.1/dns-query"'
+  if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+    _servers='{"address":"'$KR_CN_DNS1'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
+    _servers=$_servers'{"address":"'$KR_CN_DNS2'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
+    _servers=$_servers'"https://1.1.1.1/dns-query"'
+  fi
+  # A pinned node address removes the bootstrap dependence on any upstream resolver: the DNS
+  # module answers the node domain from hosts without asking anyone.
+  _hosts=""
+  _nodeip=$(cat "$KR_NODEIP" 2>/dev/null)
+  if [ -n "$1" ] && [ -n "$_nodeip" ]; then
+    _hosts=',"hosts":{"full:'$2'":"'$_nodeip'"}'
+  fi
+  KR_DNS_BLOCK='{"servers":['$_servers'],"queryStrategy":"UseIPv4"'$_hosts'}'
+  return 0
+}
+
+# The routing block. <1|0 takeover> <host> <escaped host> -> KR_ROUTING
+# Only the takeover form has a dns inbound, so only it owns the DNS-module rules and the
+# port-53 capture. The geo rules are the same in both forms: a local socks client gets the
+# same 分流 as the device.
+kr_tp_routing_block() { # <1|0> <host> <escaped host>
+  _rules=""
+  if [ "$1" = 1 ]; then
+    # The applied node's own hostname resolves through the direct outbound (bootstrap,
+    # docs/adr/0006); an IP node needs no exception.
+    if [ -n "$2" ]; then
+      _rules='{"inboundTag":["dns"],"domain":["full:'$3'"],"outboundTag":"direct"}'
+    fi
+    # Domestic resolver queries leave direct; everything else the DNS module asks goes
+    # through the proxy.
+    if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+      _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"ip":["'$KR_CN_DNS1'","'$KR_CN_DNS2'"],"outboundTag":"direct"}'
+    fi
+    _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"outboundTag":"proxy"}'
+    _rules=$_rules',{"network":"tcp,udp","port":53,"outboundTag":"dns-out"}'
+  fi
+  if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+    # Private destinations stay local. Takeover's iptables bypass already keeps them out of
+    # the core, but the 空转 form has no bypass, and a router's admin page is not a proxy
+    # target.
+    _rules=$_rules${_rules:+,}'{"ip":["geoip:private"],"outboundTag":"direct"}'
+    _rules=$_rules',{"domain":["geosite:private"],"outboundTag":"direct"}'
+    _rules=$_rules',{"domain":["geosite:cn"],"outboundTag":"direct"}'
+    _rules=$_rules',{"ip":["geoip:cn"],"outboundTag":"direct"}'
+  fi
+  # AsIs in 全局 keeps the pre-0014 block byte for byte. IPIfNonMatch in 大陆直连 is what lets
+  # a domain no geosite category knows still match geoip:cn after resolution.
+  _strategy=AsIs
+  [ "$KR_ROUTE_EFFECTIVE" = cn ] && _strategy=IPIfNonMatch
+  KR_ROUTING='{"domainStrategy":"'$_strategy'","rules":['$_rules']}'
+  return 0
+}
+
 # The takeover JSON blocks spliced into the template placeholders. Authored here, not
 # in the UI: inbounds, DNS and routing are module-owned layout (docs/adr/0005).
-kr_tp_render_blocks() { # sets KR_TP_INBOUND, KR_DNS_OUTBOUND, KR_DNS_BLOCK, KR_ROUTING
+kr_tp_render_blocks() { # [route override]; sets KR_TP_INBOUND, KR_DNS_OUTBOUND, KR_DNS_BLOCK, KR_ROUTING
   KR_TP_INBOUND='{"tag":"tp-in","listen":"::","port":'"$KR_TP_PORT"',"protocol":"dokodemo-door","settings":{"network":"tcp,udp","followRedirect":true},"streamSettings":{"sockopt":{"tproxy":"tproxy"}}}'
   KR_DNS_OUTBOUND='{"tag":"dns-out","protocol":"dns","settings":{}}'
-  KR_DNS_BLOCK='{"servers":["https://1.1.1.1/dns-query"],"queryStrategy":"UseIPv4"}'
-  # The applied node's own hostname resolves through the direct outbound (bootstrap,
-  # docs/adr/0006); an IP node needs no exception. Everything else the DNS module asks
-  # goes through the proxy.
-  _rules='{"inboundTag":["dns"],"outboundTag":"proxy"},{"network":"tcp,udp","port":53,"outboundTag":"dns-out"}'
+  kr_route_effective "${1:-}"
   _host=$(kr_meta_get host 2>/dev/null)
   case "$_host" in
     *:*) _host="" ;; # an IPv6 literal: nothing to resolve
     *[!0-9.]*) : ;; # a domain: keep the exception
     *) _host="" ;; # an IPv4 literal (digits and dots only): nothing to resolve
   esac
-  if [ -n "$_host" ]; then
-    _e=$(kr_tp_json_escape "$_host")
-    _rules='{"inboundTag":["dns"],"domain":["full:'$_e'"],"outboundTag":"direct"},'$_rules
+  _e=$(kr_tp_json_escape "$_host")
+  kr_tp_dns_block "$_host" "$_e"
+  kr_tp_routing_block 1 "$_host" "$_e"
+  return 0
+}
+
+# routing <global|cn>: the 分流模式 preference. Unlike the tproxy switch it re-derives the
+# config at once (docs/adr/0014): render the new form, test it, write the preference, then
+# swap. A swap that fails restores the preference, so it never claims a form the core does
+# not run. With no applied node there is nothing to re-render: the preference is saved and
+# the next apply renders it.
+kr_route_set() { # <global|cn>
+  case "$1" in
+    global|cn) ;;
+    *)
+      echo "usage: kernelray.sh routing {global|cn|status}" >&2
+      return 2
+      ;;
+  esac
+  kr_dirs
+  _cur=$(kr_route_mode)
+  if [ "$_cur" = "$1" ]; then
+    kr_log "routing: already $1"
+    return 0
   fi
-  KR_ROUTING='{"domainStrategy":"AsIs","rules":['$_rules']}'
-  # A pinned node address removes the bootstrap dependence on any upstream resolver:
-  # the DNS module answers the node domain from hosts without asking anyone.
-  _nodeip=$(cat "$KR_NODEIP" 2>/dev/null)
-  if [ -n "$_host" ] && [ -n "$_nodeip" ]; then
-    KR_DNS_BLOCK='{"servers":["https://1.1.1.1/dns-query"],"queryStrategy":"UseIPv4","hosts":{"full:'$_e'":"'$_nodeip'"}}'
+  if [ "$1" = cn ] && ! kr_geodata_ok; then
+    kr_log "routing: cn needs $KR_GEODATA/{geosite,geoip}.dat"
+    echo "geo data is missing ($KR_GEODATA); the routing mode stays $_cur" >&2
+    return 1
   fi
+  _n=$(kr_applied_id) || _n=""
+  if [ -z "$_n" ] || [ "$(kr_meta_get id 2>/dev/null)" != "$_n" ] || [ ! -s "$KR_OUTBOUND" ]; then
+    kr_route_write "$1" || return 1
+    kr_log "routing: $_cur -> $1 (no applied node; the next apply renders it)"
+    return 0
+  fi
+  if ! kr_core_works; then
+    kr_log "routing: core missing or not executable"
+    echo "core missing or not executable" >&2
+    return 1
+  fi
+  _tmp=$KR_RUNDIR/config.new.json
+  if ! kr_render_config "$KR_OUTBOUND" "$1" >"$_tmp"; then
+    rm -f "$_tmp"
+    echo "could not render config" >&2
+    return 1
+  fi
+  chmod 600 "$_tmp" 2>/dev/null
+  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
+    rm -f "$_tmp"
+    kr_log "routing: xray -test rejected the $1 config"
+    echo "config test failed (see $KR_LOG)" >&2
+    return 1
+  fi
+  if ! kr_route_write "$1"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  if ! kr_swap_config "$_tmp" ""; then
+    kr_route_write "$_cur"
+    kr_log "routing: the $1 config did not start; the mode is back to $_cur"
+    return 1
+  fi
+  kr_log "routing: $_cur -> $1"
+  return 0
+}
+
+kr_route_status() {
+  printf 'mode=%s\n' "$(kr_route_mode)"
+  kr_route_effective
+  printf 'effective=%s\n' "$KR_ROUTE_EFFECTIVE"
+  kr_geodata_ok && echo "geodata=ok" || echo "geodata=missing"
   return 0
 }
 

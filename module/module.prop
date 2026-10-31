@@ -1,7 +1,7 @@
 id=kernelray
 name=KernelRay
-version=v0.8.0
-versionCode=72
+version=v0.9.0
+versionCode=73
 author=KernelRay
-description=Starts an Xray core on boot, applies one imported node, and takes over device traffic via TPROXY (on by default, coupled to the core start).
+description=Starts an Xray core on boot, applies one imported node, takes over device traffic via TPROXY (on by default, coupled to the core start), and routes by 分流模式: 全局 or 大陆直连 (geosite/geoip, shipped in the module).
 updateJson=https://modules.kernelsu.org/api/v1/modules/kernelray/update.json

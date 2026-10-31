@@ -19,8 +19,10 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | `config.json` | shell | the config the core actually runs |
 | `state.json` → render | WebUI writes, shell reads | the inbound ports (`settings.socksPort` / `settings.httpPort`), extracted at render time (ADR 0009) |
 | `runtime/applied` | shell | id of the node `config.json` was built from |
-| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy` |
+| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route` |
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
+| `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
+| `geodata/` | repo | `geosite.dat`, `geoip.dat` and the `VERSION` the 分流规则 name categories from (docs/adr/0014) |
 
 One writer per file: the UI never writes `config.json`, `runtime/applied` or `status.json`; the
 shell never writes `state.json`, `outbound.json` or `outbound.meta`. The one exception is
@@ -59,8 +61,10 @@ and four outbounds —
   leading comma: `,"__KERNELRAY_TPROXY_INBOUND__"` in `inbounds` and
   `,"__KERNELRAY_DNS_OUTBOUND__"` in `outbounds`, plus the top-level `"dns"` and `"routing"`
   keys whose values are quoted placeholders. With takeover on the line is replaced by the
-  real block (authored in `tproxy.sh`); with takeover off the whole line disappears. Both
-  results are valid JSON, and so is the template itself — every placeholder is a quoted string.
+  real block (authored in `tproxy.sh`); with takeover off the line disappears — except
+  `routing`, which exists in both forms since ADR 0014 (spliced in 大陆直连, dropped in 全局)
+  and is handled by the renderer before the form branch. Both results are valid JSON, and so
+  is the template itself — every placeholder is a quoted string.
 - `config.json` never contains a placeholder. `kr_render_config` refuses a template without
   the outbound one.
 
@@ -80,12 +84,15 @@ either form with `KR_TAKEOVER=1|0`; the start-time engagement forces the form it
 enforce.
 
 The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
-`dns-out` outbound; the `dns` module (fixed upstream `https://1.1.1.1/dns-query`, ADR 0006);
-and the routing rules — the applied node's hostname resolves through `direct` (skipped when
-the host is an IP literal), the DNS module's upstream queries go through `proxy`, and port 53
-tcp/udp goes to `dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholder becomes the
-bypass mark 19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is
-written by the UI renderer, which cannot know the switch state.
+`dns-out` outbound; the `dns` module (upstream depends on the 分流模式, below); and the routing
+rules — the applied node's hostname resolves through `direct` (skipped when the host is an IP
+literal), the DNS module's upstream queries go through `proxy`, and port 53 tcp/udp goes to
+`dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholder becomes the bypass mark
+19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is written by
+the UI renderer, which cannot know the switch state.
+
+The 空转 form keeps the 分流 rules when the mode is 大陆直连 (there is no `dns` inbound, so only
+the geo rules are authored); in 全局 it has no `routing` key at all.
 
 Applying a node while the rules are up renders the takeover form — a no-takeover config
 would lose routing for the node outbound. Since ADR 0011 the switch (`kernelray.sh tproxy
@@ -104,6 +111,14 @@ is never silently rewritten; the WebUI offers a retry. With no applied node the 
 refuses first: the core stays down and the rules go nowhere, so a default-on switch cannot
 take a nodeless device over. With the switch off, any stale rules come down and the start is
 an idle run.
+
+A config that cannot work for this start is repaired before the `-test`: one that is *more*
+takeover-y than the switch allows (the switch went off while a takeover config was on disk — the
+documented "turn it off and start again" recovery, which would otherwise leave the node's
+outbound carrying a bypass mark with no ip rule), one that is *less* takeover-y than the rules
+that are up (a capture into a core with no tproxy inbound blackholes traffic), and a 大陆直连
+config whose geo data has gone (ADR 0014). A global config while the preference says `cn` is
+left alone: that is what a failed switch's rollback deliberately leaves behind.
 
 ## Applying a node
 
@@ -161,8 +176,9 @@ liability ADR 0003 rejected for share links, so the UI renders the node there an
 shell one flat outbound. The one exception is the inbound ports
 ([ADR 0009](adr/0009-shell-reads-state-settings-for-inbound-ports.md)): `kr_render_config`
 extracts exactly two flat integer keys from the `settings` object with `sed` and falls back
-per field to 10808/10809 when anything is off. If that exception ever wants to grow
-(routing/DNS settings), revisit the ADR rather than widening the `sed`.
+per field to 10808/10809 when anything is off. The 分流模式 did not grow that exception: it is
+the shell's own preference file ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)),
+like the tproxy switch, so the `sed` still reads two integers.
 
 ## Applying the inbound ports
 
@@ -201,6 +217,33 @@ the start gate demands an applied node: without one, nothing starts and status.j
 The normal boot path never rewrites the config. An upgrade replaces the whole module directory
 (ADR 0002), so config, outbound and applied id are reset together.
 
+## 分流模式 (routing mode)
+
+`kernelray.sh routing global|cn` writes the preference and re-derives the config at once
+([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)): render the
+new form → `xray -test` → write `runtime/route` → swap (the `ports` path, including its stop,
+restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `0600`.
+
+- **Refusals.** `routing cn` exits non-zero, changing nothing, when the geo data is missing
+  or when `-test` rejects the candidate. A swap that fails restores the preference to the old
+  mode, so it never claims a form the core does not run.
+- **No applied node.** There is nothing to re-render: the preference is written and the next
+  apply renders it.
+- **Degradation.** `kr_route_effective` is what the render may use: `cn` only while
+  `geodata/geosite.dat` and `geodata/geoip.dat` both exist and are non-empty, else `global`
+  plus a line in `kernelray.log`. The preference is never rewritten — a start that finds the
+  data gone runs everything through the node rather than a config that cannot load.
+- **The blocks.** 大陆直连 adds to the takeover form: two domestic resolvers
+  (`223.5.5.5`, `119.29.29.29`) filtered by `expectIPs: ["geoip:cn"]` for `domains:
+  ["geosite:cn"]`, with the DoH kept as the fallback for everything else; a routing rule that
+  sends those resolvers' own queries `direct`; `domainStrategy: IPIfNonMatch`; and
+  `geoip:private`, `geosite:private`, `geosite:cn`, `geoip:cn` → `direct`. The 空转 form gets
+  the last four only. 全局 keeps the pre-0014 blocks byte for byte (`AsIs`, one DoH, three
+  rules).
+- **The asset path.** `kernelray.sh` exports `XRAY_LOCATION_ASSET=$KR_GEODATA` once, so every
+  `xray -test` and `xray run` reads the data from the module dir; Xray's own fallback search
+  starts at the process cwd, which is not ours.
+
 ## Invariants
 
 - `state.selected` is intent; `runtime/applied` is fact. The UI shows both and never equates
@@ -215,3 +258,6 @@ The normal boot path never rewrites the config. An upgrade replaces the whole mo
   `outbound.json`, every start needs `runtime/applied`, and every fallback that used to
   produce a direct (freedom) config is gone (ADR 0010).
 - `xray -test` precedes every swap; a candidate that fails never replaces a working config.
+- `config.json` is generated from files inside the module dir only: the template, the outbound,
+  `state.json`'s ports, the two preference files and `geodata/`. Nothing is fetched at run
+  time, and `XRAY_LOCATION_ASSET` is exported by `kernelray.sh` so the core agrees.

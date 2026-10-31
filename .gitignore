@@ -5,6 +5,11 @@ node_modules/
 #   module/bin/xray   (arm64-v8a)
 module/bin/*
 !module/bin/README.md
+
+# Geo data is supplied by the maintainer, never committed (docs/adr/0014):
+#   module/geodata/geosite.dat, geoip.dat, VERSION   (see module/geodata/README.md)
+module/geodata/*
+!module/geodata/README.md
 build/
 
 # Runtime files written on the device (or by a local test run); never ship them.

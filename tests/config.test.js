@@ -61,6 +61,20 @@ const fakeCore = [
 // A fake core that stays up only for a config built from the "old" node outbound
 // (address old.example.com). It lets the rollback tests exercise the "candidate tests
 // but exits right after start" path while a real config is running.
+// A fake core that stays up for any config: the start-path tests need a live pid, and /proc is
+// what kr_running checks.
+const aliveCore = [
+  "#!/bin/sh",
+  'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
+  'if [ "$1" = "run" ] && [ "$2" = "-test" ]; then exit 0; fi',
+  'if [ "$1" = "run" ] && [ "$2" = "-c" ]; then',
+  '  trap "exit 0" TERM INT',
+  "  while :; do sleep 0.2; done",
+  "fi",
+  "exit 0",
+  ""
+].join("\n");
+
 const loopingCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then',
@@ -680,6 +694,67 @@ check("status: an invalid applied file is reported as no node", () => {
   fs.writeFileSync(m.applied, "not a node id\n");
   runShell(m.dir, BODY_STATUS, ["stopped", "idle"]);
   eq(readJson(m.status).node, "", "node");
+});
+
+check("status: a core that died on its own is reported as crashed, not as the stale phase", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.applied, ID + "\n");
+  fs.writeFileSync(path.join(m.dir, "runtime", "started"),
+    String(Math.floor(Date.now() / 1000)) + "\n");
+  fs.writeFileSync(path.join(m.dir, "runtime", "xray.pid"), "999999\n");
+  runShell(m.dir, BODY_STATUS, ["running", "idle"]);
+  const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
+  if (!/^state=stopped$/m.test(kv)) { throw new Error("state: " + kv); }
+  if (!/^phase=crashed$/m.test(kv)) {
+    throw new Error("a pidfile that outlived its process is a crash, not idle: " + kv);
+  }
+});
+
+check("status: a stopped core is not reported as crashed", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  runShell(m.dir, BODY_START);
+  runShell(m.dir, BODY_STOP);
+  const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
+  if (/^phase=crashed$/m.test(kv)) { throw new Error("a stop is not a crash: " + kv); }
+  if (!/^state=stopped$/m.test(kv)) { throw new Error("state: " + kv); }
+});
+
+// ---- start-path form drift ---------------------------------------------------------------
+
+check("start: a takeover config left on disk is re-rendered when the switch is off", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  // What the previous start left behind: the takeover form, with the node outbound marked.
+  const cfg = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  fs.writeFileSync(m.config, cfg);
+  if (!/"tag":"tp-in"/.test(cfg)) { throw new Error("fixture: expected a takeover config"); }
+
+  // No runtime/tproxy file: the switch is off, so this start must be an idle run.
+  runShell(m.dir, BODY_START);
+  const after = fs.readFileSync(m.config, "utf8");
+  if (/"tag":"tp-in"/.test(after)) {
+    throw new Error("the idle form has no tproxy inbound: " + after);
+  }
+  if (!/"mark":0/.test(after)) {
+    throw new Error("a bypass mark with no ip rule loses routing (docs/adr/0008): " + after);
+  }
+  runShell(m.dir, BODY_STOP);
+});
+
+check("start: a config that already matches this start is left alone", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" });
+  fs.writeFileSync(m.config, cfg);
+  const before = fs.statSync(m.config).mtimeMs;
+  runShell(m.dir, BODY_START);
+  eq(fs.readFileSync(m.config, "utf8"), cfg, "the config is not rewritten");
+  eq(fs.statSync(m.config).mtimeMs, before, "not even touched");
+  runShell(m.dir, BODY_STOP);
 });
 
 // ---- report -----------------------------------------------------------------------------

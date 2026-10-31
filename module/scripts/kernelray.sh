@@ -25,6 +25,13 @@ KR_OUTBOUND=$KR_MODDIR/outbound.json
 KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
 
+# Geo data (docs/adr/0014): geosite.dat and geoip.dat ship inside the module ZIP, and the core
+# finds them only because we say so -- Xray's own fallback search starts at the process cwd,
+# which is not ours. Exported once, so every `xray -test` and `xray run` inherits it.
+KR_GEODATA=$KR_MODDIR/geodata
+XRAY_LOCATION_ASSET=$KR_GEODATA
+export XRAY_LOCATION_ASSET
+
 # Takeover support (v0.7). Sourced so every entry point -- CLI, service, action,
 # uninstall -- sees the same switch and rule helpers. Missing file (an older layout)
 # only disables the takeover functions; the rest of the module keeps working.
@@ -38,6 +45,15 @@ kr_now() { date +%s; }
 # log dir (before kr_dirs) is tolerated silently.
 kr_log() {
   printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*"
+  kr_log_file "$@"
+}
+
+# The module log without the console copy: for lines written from inside a render, whose
+# stdout is the config itself.
+kr_log_file() {
+  # A log line creates its own directory: the first line can be written by a render, before
+  # any entry point called kr_dirs.
+  [ -d "$KR_LOGDIR" ] || mkdir -p "$KR_LOGDIR" 2>/dev/null
   # 2>/dev/null first: a missing log dir (before kr_dirs) must not print redirection errors.
   printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*" 2>/dev/null \
     >>"$KR_LOGDIR/kernelray.log"
@@ -50,6 +66,7 @@ kr_dirs() {
   chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" \
     "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" 2>/dev/null
   [ -n "${KR_TP_SWITCH:-}" ] && chmod 600 "$KR_TP_SWITCH" 2>/dev/null
+  [ -n "${KR_ROUTE:-}" ] && chmod 600 "$KR_ROUTE" 2>/dev/null
 }
 
 # There is exactly one core: bin/xray. A core is usable only if it executes here.
@@ -182,9 +199,11 @@ kr_status_write() { # <state> <phase>
   _n=$(kr_applied_id) || _n=""
   _tp=off
   command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on && _tp=on
+  _rt=global
+  command -v kr_route_mode >/dev/null 2>&1 && _rt=$(kr_route_mode)
   kr_dirs
-  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","tproxy":"%s"}\n' \
-    "$1" "$2" "$_s" "$_n" "$_tp" >"$KR_STATUS" 2>/dev/null
+  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","tproxy":"%s","route":"%s"}\n' \
+    "$1" "$2" "$_s" "$_n" "$_tp" "$_rt" >"$KR_STATUS" 2>/dev/null
 }
 
 # Render the template with one outbound. The outbound is passed through the
@@ -193,7 +212,7 @@ kr_status_write() { # <state> <phase>
 # expansion would reinterpret. The placeholder is a quoted string so the template stays
 # valid JSON for tooling, but replacing the whole string leaves a runnable config only
 # after the module renders it.
-kr_render_config() { # <outbound-file>
+kr_render_config() { # <outbound-file> [route-mode override]
   _ob=${1:-}
   if [ ! -f "$KR_TMPL" ]; then
     kr_log "missing config template $KR_TMPL"
@@ -214,6 +233,7 @@ kr_render_config() { # <outbound-file>
     return 1
   fi
   _line=$(cat "$_ob") || return 1
+  _route=${2:-}
 
   # The config form follows the switch unless the caller forces one: toggle and boot
   # render the exact form they are about to enforce. Switch on without rules (a boot
@@ -232,7 +252,7 @@ kr_render_config() { # <outbound-file>
   _routing=""
   _mark=0
   if [ "$_takeover" = 1 ]; then
-    if ! kr_tp_render_blocks; then
+    if ! kr_tp_render_blocks "$_route"; then
       kr_log "could not build the takeover blocks"
       return 1
     fi
@@ -241,6 +261,20 @@ kr_render_config() { # <outbound-file>
     _dns=$KR_DNS_BLOCK
     _routing=$KR_ROUTING
     _mark=$KR_BYPASS
+  elif command -v kr_route_effective >/dev/null 2>&1; then
+    # The 空转 form keeps the 分流 -- a local socks client gets it too -- but has no dns
+    # inbound, so only the geo rules are authored (docs/adr/0014). 全局 renders no routing.
+    kr_route_effective "$_route"
+    if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+      kr_tp_routing_block 0 "" ""
+      _routing=$KR_ROUTING
+    fi
+  fi
+  if [ "${KR_ROUTE_DEGRADED:-0}" = 1 ]; then
+    # The preference asked for cn and the geo data is gone: the safe direction is everything
+    # through the node, never a dead core. Log file only -- this function's stdout is the
+    # config.
+    kr_log_file "geo data missing under $KR_GEODATA; rendered the global routing form"
   fi
   # The outbound and the takeover blocks pass through the environment, not interpolated
   # into awk's program or a shell string: JSON contains backslashes, quotes and `` $ ``, all
@@ -276,9 +310,18 @@ kr_render_config() { # <outbound-file>
       ph = "\"__KERNELRAY_HTTP_PORT__\""
       p = index(line, ph)
       if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_HTTP_PORT"] substr(line, p + length(ph))
+      # The routing block exists in both forms since ADR 0014: spliced when the mode authored
+      # one, dropped when it did not.
+      ph = "\"__KERNELRAY_ROUTING__\""
+      p = index(line, ph)
+      if (p > 0) {
+        if (ENVIRON["KR_ROUTING_BLOCK"] == "") next
+        print substr(line, 1, p - 1) ENVIRON["KR_ROUTING_BLOCK"] substr(line, p + length(ph))
+        next
+      }
       if (!tp) {
         if (line ~ /^[ \t]*,"__(KERNELRAY_TPROXY_INBOUND|KERNELRAY_DNS_OUTBOUND)__"[ \t]*$/) next
-        if (line ~ /^[ \t]*,"(dns|routing)": "__KERNELRAY_(DNS|ROUTING)__"[ \t]*$/) next
+        if (line ~ /^[ \t]*,"dns": "__KERNELRAY_DNS__"[ \t]*$/) next
         print line
         next
       }
@@ -291,9 +334,6 @@ kr_render_config() { # <outbound-file>
       ph = "\"__KERNELRAY_DNS__\""
       p = index(line, ph)
       if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_DNS_BLOCK"] substr(line, p + length(ph))
-      ph = "\"__KERNELRAY_ROUTING__\""
-      p = index(line, ph)
-      if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_ROUTING_BLOCK"] substr(line, p + length(ph))
       print line
     }
   ' "$KR_TMPL"
@@ -581,6 +621,39 @@ kr_start_locked() {
       kr_tp_remove
     fi
   fi
+  # The config on disk must match the form this start will run. Two ways it can drift:
+  #   * the switch moved -- off with a takeover config left on disk means the node outbound
+  #     still carries the bypass mark while no ip rule exists, and a mark without its rule
+  #     loses routing (docs/adr/0008). This is the documented "switch off, start again"
+  #     recovery path, so it must actually re-render.
+  #   * 大陆直连's geo data went missing (docs/adr/0014).
+  # Both are repaired the same way, before the -test below. A config that cannot be re-rendered
+  # (no outbound) is left to the start gate, which refuses it.
+  if [ -f "$KR_CONF" ] && command -v kr_route_effective >/dev/null 2>&1; then
+    kr_route_effective
+    _want_tp=0
+    kr_tp_switch_on && kr_tp_rules_present && _want_tp=1
+    _have_tp=0
+    grep -q '"tag":"tp-in"' "$KR_CONF" 2>/dev/null && _have_tp=1
+    _have_cn=global
+    grep -q 'geosite:cn' "$KR_CONF" 2>/dev/null && _have_cn=cn
+    # Only the directions that cannot work are repaired: a config that is *more* takeover-y than
+    # this start (the switch went off), one that is *less* takeover-y than the rules that are up
+    # (capturing into a core with no tproxy inbound blackholes traffic, docs/adr/0011), and a cn
+    # config whose geo data is gone (docs/adr/0014). A global config while the preference says
+    # cn is left alone: that is what a failed switch's rollback deliberately leaves behind.
+    _drift=0
+    [ "$_have_tp" != "$_want_tp" ] && _drift=1
+    [ "$_have_cn" = cn ] && [ "$KR_ROUTE_EFFECTIVE" = global ] && _drift=1
+    if [ "$_drift" = 1 ]; then
+      kr_tp_log "start: the config on disk does not match this start (takeover $_have_tp->$_want_tp, routing $_have_cn->$KR_ROUTE_EFFECTIVE); re-rendering"
+      if ! kr_tp_swap_config "$_want_tp" "$KR_OUTBOUND"; then
+        kr_log "start: could not re-render the config for this start"
+        kr_status_write failed no-config
+        return 1
+      fi
+    fi
+  fi
   kr_ensure_config || {
     kr_status_write failed no-config
     return 1
@@ -650,6 +723,15 @@ kr_report() {
   else
     echo "tproxy: off"
   fi
+  if command -v kr_route_mode >/dev/null 2>&1; then
+    _rt=$(kr_route_mode)
+    kr_route_effective
+    if [ "$KR_ROUTE_DEGRADED" = 1 ]; then
+      echo "route: $_rt (geo data missing: rendering $KR_ROUTE_EFFECTIVE)"
+    else
+      echo "route: $_rt"
+    fi
+  fi
   echo "log:   $KR_LOG"
   if kr_running; then
     echo "pid:   $(kr_pid)"
@@ -674,6 +756,24 @@ kr_status_kv() {
   fi
   _phase=$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)
   [ -n "$_phase" ] || _phase=unknown
+  # A pidfile that outlived its process means the core died on its own: nothing ran to write
+  # failed/crashed, so the status file still claims running. Report the fact instead of the
+  # stale phase -- unless that status predates this boot, where "not started yet" is the
+  # honest reading.
+  if [ "$_state" = stopped ] && [ -s "$KR_PIDFILE" ] &&
+    [ "$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)" = running ]; then
+    _up=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+    _since=$(cat "$KR_STARTED" 2>/dev/null)
+    case "$_up" in
+      '' | *[!0-9]*) _phase=crashed ;; # no uptime to compare: the pidfile is the evidence
+      *)
+        case "$_since" in
+          '' | *[!0-9]*) _phase=crashed ;;
+          *) [ "$_since" -ge $(( $(date +%s) - _up )) ] && _phase=crashed ;;
+        esac
+        ;;
+    esac
+  fi
   _node=$(kr_applied_id) || _node=""
   _ver=-
   [ -x "$(kr_core)" ] && _ver=$(kr_version_cached)
@@ -683,6 +783,19 @@ kr_status_kv() {
   if command -v kr_tp_switch_on >/dev/null 2>&1; then
     kr_tp_switch_on && _tp=on
     kr_tp_rules_present && _rules=present
+  fi
+  # route is the preference, routing what the config may actually use (they differ only while
+  # the geo data is missing, docs/adr/0014), geodata says which of the two it is.
+  _rt=global
+  _rte=global
+  _geo=missing
+  _geover=""
+  if command -v kr_route_mode >/dev/null 2>&1; then
+    _rt=$(kr_route_mode)
+    kr_route_effective
+    _rte=$KR_ROUTE_EFFECTIVE
+    kr_geodata_ok && _geo=ok
+    _geover=$(sed -n '1p' "$KR_GEODATA/VERSION" 2>/dev/null)
   fi
   echo "state=$_state"
   echo "phase=$_phase"
@@ -695,6 +808,10 @@ kr_status_kv() {
   echo "node=$_node"
   echo "tproxy=$_tp"
   echo "rules=$_rules"
+  echo "route=$_rt"
+  echo "routing=$_rte"
+  echo "geodata=$_geo"
+  echo "geodataver=$_geover"
   echo "socks=$(kr_setting_port socksPort 10808)"
   echo "http=$(kr_setting_port httpPort 10809)"
 }
@@ -719,6 +836,16 @@ kr_cli() {
     apply) kr_apply "${1:-}" ;;
     unapply) kr_unapply ;;
     ports) kr_apply_ports ;;
+    routing)
+      case "${1:-status}" in
+        global|cn) kr_route_set "$1" ;;
+        status) kr_route_status ;;
+        *)
+          echo "usage: kernelray.sh routing {global|cn|status}" >&2
+          return 2
+          ;;
+      esac
+      ;;
     status) kr_status_kv ;;
     log) kr_tail "${1:-200}" ;;
     tproxy)
@@ -732,7 +859,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|status|log [lines]}" >&2
       return 2
       ;;
   esac

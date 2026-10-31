@@ -28,6 +28,7 @@ node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
 node tests/config.test.js              # 35 config tests passing（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
+node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
 ```
 
 `parse` / `outbound` / `nodelist` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
@@ -168,6 +169,21 @@ adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh tproxy s
 验证接管真的生效要用普通（非 socks）请求看出口 IP，见 README 的 Verify 一节。关掉：设置页的
 tproxy透明代理开关，或 `tproxy off`，**下次启动核心时生效**。**规则在而核心死 = 断网**
 （fail-closed，设计行为）：再启动核心即恢复接管；想直连就关掉开关再启动。
+
+**分流模式（v0.9）**：和 tproxy 开关不同，它**立即生效**——写偏好 → 重渲染 → `-test` →
+重启核心，启动失败会把偏好一起退回。偏好是 `runtime/route`（`cn` 或不存在 = `global`）：
+
+```sh
+adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh routing status'
+# mode=cn / effective=cn / geodata=ok
+adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh routing cn'
+adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/kernelray/config.json"'
+adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.com"'
+```
+
+`geodata/` 里两个 `.dat` 由 `scripts/pack.sh` 强制要求（`xray -test` 会加载它们）。设备上删掉一个
+再 `routing cn`：CLI 拒绝切换；若偏好已是 `cn` 而文件没了，启动会降级成 `全局` 并在
+`logs/kernelray.log` 留一行 `geo data missing`——**不会**因为缺文件起不来。
 
 ## 8. 在 WebUI 里输入文字（最容易上当的一步）
 
