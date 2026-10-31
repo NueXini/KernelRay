@@ -137,6 +137,7 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `docs/state-schema.md` | what `state.json` contains — the authority the UI writes against |
 | `docs/config-derivation.md` | how `config.json` is generated, applied and rolled back |
 | `docs/dev-workflow.md` | the adb install / verify / drive-the-UI loop we actually use, plus its traps |
+| `docs/xray-guide.md` | the Xray official documentation, mapped onto what this module actually renders — which config block comes from where, every protocol/link we use, and where the official tutorials don't apply to us |
 | `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped `app.js` |
 | `tests/outbound.test.js` | node → Xray outbound renderer tests, run against the shipped block |
 | `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
