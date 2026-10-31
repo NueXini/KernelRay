@@ -81,7 +81,7 @@ var DICT_ZH = {
   portTp: "这个端口留给透明代理入站（10810），换一个",
   portsSaving: "正在应用端口…", portsSaved: "端口已应用",
   portsSave: "保存",
-  setRoute: "分流模式", setRouteMode: "模式",
+  setProxy: "代理与路由", setRouteMode: "模式",
   routeGlobal: "全局", routeCn: "大陆直连",
   routeGlobalHint: "所有流量都走已应用的节点（默认）。",
   routeCnHint: "大陆的域名与 IP 直连，其余走节点；DNS 也随之分流。切换后立即重写配置并重启核心。",
@@ -161,7 +161,7 @@ var DICT_EN = {
   portTp: "That port is reserved for the tproxy inbound (10810); pick another",
   portsSaving: "Applying ports…", portsSaved: "Ports applied",
   portsSave: "Save",
-  setRoute: "Routing mode", setRouteMode: "Mode",
+  setProxy: "Proxy & routing", setRouteMode: "Mode",
   routeGlobal: "Global", routeCn: "Direct-CN",
   routeGlobalHint: "Every destination goes through the applied node (the default).",
   routeCnHint: "Mainland domains and addresses go direct and everything else goes through the node, with DNS split to match. Switching re-renders the config and restarts the core.",
@@ -210,7 +210,7 @@ var els = {
   lLogLevelDebug: $("l-loglevel-debug"), setLogLevelHint: $("set-loglevel-hint"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
-  lSetRoute: $("l-set-route"), lSetRouteMode: $("l-set-route-mode"),
+  lSetProxy: $("l-set-proxy"), lSetRouteMode: $("l-set-route-mode"),
   selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
   setRouteHint: $("set-route-hint"), setGeodataHint: $("set-geodata-hint"),
   tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
@@ -288,7 +288,7 @@ function label(key) {
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
-  els.lSetRoute.textContent = T.setRoute;
+  els.lSetProxy.textContent = T.setProxy;
   els.lSetRouteMode.textContent = T.setRouteMode;
   els.lRouteGlobal.textContent = T.routeGlobal;
   els.lRouteCn.textContent = T.routeCn;

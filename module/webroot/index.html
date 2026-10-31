@@ -132,13 +132,27 @@
     </section>
 
     <section class="card">
-      <div class="tp-row">
-        <div class="tp-text">
-          <span id="l-set-tp">tproxy transparent proxy</span>
-          <div class="hint" id="set-tp-hint"></div>
+      <div class="cardtitle" id="l-set-proxy">Proxy &amp; routing</div>
+      <div class="cardsec">
+        <div class="tp-row">
+          <div class="tp-text">
+            <span id="l-set-tp">tproxy transparent proxy</span>
+            <div class="hint" id="set-tp-hint"></div>
+          </div>
+          <button type="button" class="switch" id="set-tp-switch" role="switch"
+                  aria-checked="false"><span class="knob"></span></button>
         </div>
-        <button type="button" class="switch" id="set-tp-switch" role="switch"
-                aria-checked="false"><span class="knob"></span></button>
+      </div>
+      <div class="cardsec">
+        <div class="setrow">
+          <label class="setlabel" id="l-set-route-mode" for="sel-route">Mode</label>
+          <select id="sel-route">
+            <option value="global" id="l-route-global">Global</option>
+            <option value="cn" id="l-route-cn">Direct-CN</option>
+          </select>
+        </div>
+        <div class="hint" id="set-route-hint"></div>
+        <div class="hint" id="set-geodata-hint"></div>
       </div>
     </section>
 
@@ -160,21 +174,6 @@
       </div>
       <button type="button" class="primary mt" id="ports-save" disabled>Save</button>
       <div class="hint" id="l-set-ports-hint"></div>
-    </section>
-
-    <section class="card">
-      <div class="cardtitle" id="l-set-route">Routing mode</div>
-      <div class="cardsec">
-        <div class="setrow">
-          <label class="setlabel" id="l-set-route-mode" for="sel-route">Mode</label>
-          <select id="sel-route">
-            <option value="global" id="l-route-global">Global</option>
-            <option value="cn" id="l-route-cn">Direct-CN</option>
-          </select>
-        </div>
-      </div>
-      <div class="hint" id="set-route-hint"></div>
-      <div class="hint" id="set-geodata-hint"></div>
     </section>
   </section>
 </main>
