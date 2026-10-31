@@ -89,6 +89,7 @@ dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; f
 dt { color: var(--muted); white-space: nowrap; }
 dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .logcard {
+  position: relative;
   padding: 0; overflow: hidden;
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   margin-bottom: 0;
@@ -113,6 +114,22 @@ pre {
   font: 12px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* Floating scroll buttons over the log's bottom-right corner. They sit on the dark log
+   background, so the card colour at .85 opacity keeps them readable without shouting. */
+.lognav {
+  position: absolute; right: 10px; bottom: 10px; z-index: 2;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.lognav[hidden] { display: none; }
+.lognavbtn {
+  width: 34px; height: 34px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--card); border: 1px solid var(--line); color: var(--muted);
+  opacity: .85; box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+}
+.lognavbtn svg { width: 18px; height: 18px; }
+.lognavbtn:active { opacity: 1; color: var(--text); }
 .banner {
   display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--bad); color: var(--bad); font-size: 13px;

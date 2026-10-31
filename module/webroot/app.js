@@ -187,6 +187,7 @@ var els = {
   banner: $("banner"), badge: $("badge"), start: $("start"), stop: $("stop"),
   hint: $("hint"), pid: $("v-pid"), up: $("v-up"), port: $("v-port"),
   core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
+  logNav: $("lognav"), logTop: $("log-top"), logBottom: $("log-bottom"),
   refresh: $("refresh"), pause: $("pause"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
   lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"), lPause: $("l-pause"),
@@ -1628,6 +1629,14 @@ function renderLog(text) {
   var atBottom = els.log.scrollTop + els.log.clientHeight >= els.log.scrollHeight - 24;
   els.log.textContent = text || T.noLog;
   if (els.follow.checked && atBottom) { els.log.scrollTop = els.log.scrollHeight; }
+  updateLogNav();
+}
+
+// The floating scroll buttons exist only while the log actually overflows: a short log
+// gets no buttons. A hidden page has no layout (both measures read 0), so the same check
+// also covers being on another tab; renderLog re-evaluates it whenever the text changes.
+function updateLogNav() {
+  els.logNav.hidden = els.log.scrollHeight <= els.log.clientHeight;
 }
 
 function refreshStatus() {
@@ -1758,6 +1767,7 @@ function showRoute(route, opts) {
   }
   // Entering the log page with Follow on should land on the newest lines even
   // when the text itself did not change since the last visit.
+  if (route === "log") { updateLogNav(); }
   if (route === "log" && els.follow.checked) {
     var toBottom = function () { els.log.scrollTop = els.log.scrollHeight; };
     if (typeof requestAnimationFrame === "function") { requestAnimationFrame(toBottom); }
@@ -1873,6 +1883,10 @@ els.selLogLevel.addEventListener("change", function () {
 });
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(true); });
+// Pure navigation: an instant scrollTop and nothing else — no fetch, no checkbox moves.
+els.logTop.addEventListener("click", function () { els.log.scrollTop = 0; });
+els.logBottom.addEventListener("click", function () { els.log.scrollTop = els.log.scrollHeight; });
+window.addEventListener("resize", updateLogNav);
 els.nList.addEventListener("click", function (e) {
   var t = e.target;
   var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
