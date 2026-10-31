@@ -268,10 +268,53 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   position: fixed; inset: 0; z-index: 20;
   display: flex; align-items: center; justify-content: center;
   padding: 16px; background: rgba(0, 0, 0, .45);
+  overscroll-behavior: contain;
 }
+body.dialog-open { overflow: hidden; }
 .overlay[hidden] { display: none; }
 .addcard {
   width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
   overflow: auto; margin-bottom: 0;
 }
 .addcard > .primary { margin-top: 10px; width: 100%; }
+
+/* Node detail dialog: the row tap opens it read-only; only its Apply button switches. */
+.nodecard {
+  width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
+  overflow: auto; margin-bottom: 0;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+}
+.nodecard .nodehead > span:first-child {
+  color: var(--text); font-size: 16px; font-weight: 650;
+  letter-spacing: 0; text-transform: none; overflow-wrap: anywhere;
+}
+.ndpills { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 8px; }
+.ndsec {
+  margin-top: 12px; color: var(--muted); font-size: 12px;
+  font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+.ndinfo { margin-top: 4px; }
+.nderror { color: var(--bad); overflow-wrap: anywhere; }
+#nd-copyhint { overflow-wrap: anywhere; }
+.ndfoot { display: flex; align-items: stretch; gap: 10px; margin-top: 14px; }
+.ndcopy { position: relative; display: flex; flex: 1; min-width: 0; }
+.ndcopy > button { flex: 0 0 auto; }
+#nd-copy { flex: 1; min-width: 0; border-radius: 10px 0 0 10px; }
+#nd-copy-menu {
+  width: 38px; padding: 0; border-radius: 0 10px 10px 0; border-left: 0;
+  font-size: 14px; font-weight: 500;
+}
+#nd-apply { flex: 0 0 auto; min-width: 96px; }
+.ndmenu {
+  position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 2;
+  min-width: 200px; max-width: calc(100vw - 64px); padding: 4px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .25);
+}
+.ndmenu[hidden] { display: none; }
+.ndmenu button {
+  display: block; width: 100%; flex: none; text-align: left;
+  padding: 9px 10px; border: 0; background: transparent; border-radius: 7px;
+  font-size: 13px; font-weight: 500; overflow-wrap: anywhere;
+}
+.ndmenu button:active { background: var(--line); }

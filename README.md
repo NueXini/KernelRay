@@ -4,8 +4,9 @@ A [KernelSU](https://kernelsu.org) module that runs an [Xray-core](https://githu
 on an Android device.
 
 **v0.7 — transparent proxy (TPROXY takeover).** The core starts on boot and exposes local
-`socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node switches
-the core to it. The tproxy switch in the WebUI settings (tproxy透明代理) decides whether
+`socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node opens a
+detail dialog and its **Apply** button switches the core to it. The tproxy switch in the WebUI
+settings (tproxy透明代理) decides whether
 device traffic is taken over at each core start: **on by default**, so once a node is applied
 every start installs iptables TPROXY rules and policy routing and all device traffic
 (TCP/UDP, IPv4/IPv6, every UID) enters the core, with DNS answered by the core's DNS module
@@ -28,7 +29,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node, or `direct` for a destination the 分流规则 match; nothing starts until a node is applied |
-| switches to a node | tapping a row in the WebUI writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core |
+| switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core |
 | takes over device traffic | the tproxy switch (WebUI settings, on by default) makes every core start install the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
 | routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `geodata/` |
@@ -44,7 +45,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 
 Point any app, Termux command or adb-forwarded client at the socks port to check that the
 core really is forwarding traffic — a live pid alone proves nothing. Without an applied node
-the core forwards direct; after tapping a node in the WebUI the same request exits through it.
+the core forwards direct; after applying a node in the WebUI the same request exits through it.
 
 ## Transparent proxy (takeover)
 
@@ -133,14 +134,15 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
 | `module/webroot/app.css` | WebUI styles; both palettes live here, keyed on the `data-theme` attribute |
 | `module/webroot/theme.js` | the theme preference: valid values, `auto` resolution, and the `data-theme` stamp `<head>` runs before the first paint |
-| `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, renders the node list, renders the tapped node as an Xray outbound, drives the CLI |
+| `module/webroot/app.js` | WebUI logic: reads `state.json`, imports nodes, renders the node list and detail dialog, renders the applied node as an Xray outbound, drives the CLI |
 | `docs/state-schema.md` | what `state.json` contains — the authority the UI writes against |
 | `docs/config-derivation.md` | how `config.json` is generated, applied and rolled back |
 | `docs/dev-workflow.md` | the adb install / verify / drive-the-UI loop we actually use, plus its traps |
 | `docs/xray-guide.md` | the Xray official documentation, mapped onto what this module actually renders — which config block comes from where, every protocol/link we use, and where the official tutorials don't apply to us |
 | `tests/parse.test.js` | share-link parser tests, run against the parser block inside the shipped `app.js` |
 | `tests/outbound.test.js` | node → Xray outbound renderer tests, run against the shipped block |
-| `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
+| `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) and detail-dialog button-state tests, run against the shipped block |
+| `tests/link.test.js` | node → share-link and subscription-Base64 tests, round-tripped through the shipped parser |
 | `tests/prefs.test.js` | Settings-page preference (theme, language, log buffer) normalise/load/save tests, run against the shipped block |
 | `tests/theme.test.js` | theme pref → `data-theme` resolution, the system-following subscription and the head-time stamp, run against the shipped `theme.js` |
 | `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths, start rollback and the 日志等级's start-time repair, run against the shipped shell + a fake core |
@@ -226,7 +228,8 @@ grep -i "geo data missing" /data/adb/modules/kernelray/logs/kernelray.log   # mu
 
 <p align="center"><img src="docs/webui.png" width="300" alt="KernelRay WebUI"></p>
 
-*The screenshot predates the node list; the Nodes tab is now a list of tappable rows.*
+*The screenshot predates the node list and the node detail dialog; the Nodes tab is now a list
+whose rows open a detail dialog.*
 
 Open the module card in the KernelSU manager and tap **WebUI**. The page has four tabs —
 **Status**, **Nodes**, **Log** and **Settings** — with the title and runtime badge pinned above
@@ -234,7 +237,7 @@ them:
 
 - **Status** — start / stop the core, conflict / failure hints with a retry, and pid, uptime,
   ports, core version and config path.
-- **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
+- **Nodes** — the node list (tap a row to open its detail dialog; **Apply** there switches), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
 - **Settings** — a **General** card with the theme (auto / 日间 / 夜间), the UI language
   (auto / 中文 / English), the log buffer size and the 日志等级 (关闭 / 错误 / 警告 / 信息 /
@@ -253,17 +256,27 @@ half-typed import.
 
 The node list renders `state.manual` against `runtime/applied` — the id the current
 `config.json` was built from. The applied row says **Applied**; a node that changed after a
-re-import (same id) says **Changed** and tapping it re-applies; a failed switch leaves the
-attempted row selected-but-not-applied while the old row stays applied. Tapping the applied
-node with no changes does nothing to the core. The list does not render subscription nodes in
-this version.
+re-import (same id) says **Changed** and its dialog offers **Re-apply**; a failed switch leaves
+the attempted row selected-but-not-applied while the old row stays applied. The list does not
+render subscription nodes in this version.
 
-**Switching a node.** A tap writes `state.selected` first, renders the node to `outbound.json`
-+ `outbound.meta`, then runs `kernelray.sh apply <id>`. The shell checks that `outbound.meta`
-names that id, renders a candidate from the template, runs `xray -test`, swaps it in atomically
-and restarts a running core. A failed test leaves the old config and the running core
-untouched; a candidate that tests but does not start is rolled back to the previous config. See
-[`docs/config-derivation.md`](docs/config-derivation.md).
+**Node detail dialog.** Outside edit mode, tapping a row opens a read-only dialog: node fields
+(including the credentials, by design), the applied/selected/changed badges, and a split
+**Copy link** button whose caret menu also copies the whole link as **Base64** (the one-line
+subscription form; for vmess the link is already Base64 JSON, so that form is double-encoded on
+purpose). The link is derived from the node fields, not stored, so it describes what the module
+would run. Opening the dialog writes nothing and never touches the core. A **Copy link** failure
+falls back from the async Clipboard API to a textarea + `execCommand`
+([ADR 0016](docs/adr/0016-a-node-row-opens-a-detail-dialog.md)).
+
+**Switching a node.** Pressing **Apply** in the dialog writes `state.selected` first, renders
+the node to `outbound.json` + `outbound.meta`, then runs `kernelray.sh apply <id>`. The shell
+checks that `outbound.meta` names that id, renders a candidate from the template, runs
+`xray -test`, swaps it in atomically and restarts a running core. A failed test leaves the old
+config and the running core untouched; a candidate that tests but does not start is rolled back
+to the previous config. See [`docs/config-derivation.md`](docs/config-derivation.md). Applying
+the applied node with no changes only re-syncs `selected` and does not restart the core; a
+failed switch is retried from the attempted node's dialog.
 
 **Adding nodes.** Paste one link per line (or a whole base64 subscription blob) into the import
 card and hit *Parse*: every line is reported back individually, with parsed nodes ready to
@@ -272,10 +285,11 @@ plugin is not supported, and so on). Supported: `vless`, `vmess` (base64 JSON), 
 (SIP002 and the legacy form). *Import* merges into `state.json` — re-importing the same node
 updates it in place and keeps its id, so a rename does not create a duplicate.
 
-Import normally only fills the node list and leaves the selection alone; tap a row afterwards to
-switch and apply. The exception is an import into a store with no applied node: it applies
-`selected` when that still resolves, else the first node the list shows, so the module is usable
-without an extra tap — it never starts a stopped core ([ADR 0012](docs/adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)).
+Import normally only fills the node list and leaves the selection alone; open a row's dialog
+and press **Apply** afterwards. The exception is an import into a store with no applied node: it
+applies `selected` when that still resolves, else the first node the list shows, so the module is
+usable without an extra tap — it never starts a stopped core, and it is the one apply path that
+does not go through the detail dialog ([ADR 0012](docs/adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)).
 Deleting a node needs a second tap; deleting the selected node clears the selection. The applied
 node is refused while the core is running or while another node is still in the list. It can be
 deleted only when it is the last node and the core is stopped, and that delete is an unapply: the
@@ -290,11 +304,11 @@ touches `state.json`. The applied row's checkbox follows the same gate as its �
 when it is the last node and the core is stopped), and the deletion goes through the same path as
 a single delete, so the selected pointer and the rendered outbound are cleaned up the same way.
 
-The parser, the node list model, the outbound renderer and the UI preferences are tested
-without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
-`node tests/outbound.test.js` and `node tests/prefs.test.js` extract the marked blocks from
-the shipped `app.js`; `node tests/theme.test.js` evaluates the shipped `theme.js` with
-`window`/`document` stubbed, the way `<head>` runs it.
+The parser, the node list model, the node-link generator, the outbound renderer and the UI
+preferences are tested without a browser: `node tests/parse.test.js`, `node tests/nodelist.test.js`,
+`node tests/link.test.js`, `node tests/outbound.test.js` and `node tests/prefs.test.js` extract
+the marked blocks from the shipped `app.js`; `node tests/theme.test.js` evaluates the shipped
+`theme.js` with `window`/`document` stubbed, the way `<head>` runs it.
 `node tests/config.test.js` sources the shipped shell against a fake core and checks template
 assembly, escaping, the idle/takeover render forms, apply's failure paths and the
 start-rollback path. `node tests/tproxy.test.js` runs the rule installer, conflict detection,

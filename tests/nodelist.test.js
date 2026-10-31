@@ -1,10 +1,11 @@
-// Node list, delete-gate and import-switch tests for the WebUI.
+// Node list, delete-gate, import-switch and detail-dialog state tests for the WebUI.
 //
 // Both blocks live inside module/webroot/app.js; this harness extracts the marked blocks from
 // the shipped file, exactly like tests/parse.test.js does for the parser. The list is a pure
 // state.json + runtime/applied → rows mapping, the delete gate and the unapply decision are
 // pure functions of those rows plus the core's running fact, and the import switch rule is a
-// pure state.json + runtime/applied → id decision, so all of them run without a browser.
+// pure state.json + runtime/applied → id decision, and the dialog button state is a pure
+// node + pointers mapping, so all of them run without a browser.
 //
 //   node tests/nodelist.test.js
 
@@ -30,7 +31,7 @@ const block = marked("// ---- node list model ----", "// ---- end node list mode
   marked("// ---- import switch rule ----", "// ---- end import switch rule ----");
 const L = new Function(block +
   "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel, deleteGate: deleteGate, " +
-  "willUnapply: willUnapply, applyAfterImport: applyAfterImport };"
+  "willUnapply: willUnapply, applyAfterImport: applyAfterImport, nodeDialogModel: nodeDialogModel };"
 )();
 
 let pass = 0;
@@ -287,6 +288,43 @@ check("a selection pointing at a subscription node falls back to the first node"
 
 check("a malformed store switches nothing", () => {
   eq(L.applyAfterImport({ schema: 1, manual: "nope" }, ""), "");
+});
+
+// ---- the node detail dialog's button state ----
+
+check("dialog: an applied clean node is a no-op tap", () => {
+  const m = L.nodeDialogModel(node("a"), "a", "a");
+  eq([m.applied, m.selected, m.dirty, m.action, m.noop], [true, true, false, "apply", true]);
+});
+
+check("dialog: an applied dirty node is a re-apply", () => {
+  const m = L.nodeDialogModel(node("a", { dirty: true }), "a", "a");
+  eq([m.applied, m.selected, m.dirty, m.action, m.noop], [true, true, true, "reapply", false]);
+});
+
+check("dialog: selected but not applied is a retry", () => {
+  const m = L.nodeDialogModel(node("b"), "a", "b");
+  eq([m.applied, m.selected, m.dirty, m.action, m.noop], [false, true, false, "retry", false]);
+});
+
+check("dialog: a plain node is an apply", () => {
+  const m = L.nodeDialogModel(node("c"), "a", "a");
+  eq([m.applied, m.selected, m.dirty, m.action, m.noop], [false, false, false, "apply", false]);
+});
+
+check("dialog: applied + dirty + a stale selection still re-applies", () => {
+  const m = L.nodeDialogModel(node("a", { dirty: true }), "a", "b");
+  eq([m.applied, m.selected, m.dirty, m.action, m.noop], [true, false, true, "reapply", false]);
+});
+
+check("dialog: applied clean + a stale selection is still a no-op apply", () => {
+  const m = L.nodeDialogModel(node("a"), "a", "b");
+  eq([m.applied, m.selected, m.dirty, m.action, m.noop], [true, false, false, "apply", true]);
+});
+
+check("dialog: the id comparison uses the string form", () => {
+  const m = L.nodeDialogModel(node("a"), "a", "");
+  eq([m.applied, m.noop], [true, true]);
 });
 
 if (failures.length) {

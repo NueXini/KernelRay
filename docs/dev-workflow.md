@@ -23,7 +23,8 @@ node --check module/webroot/app.js     # 页面语法（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 parser tests passing
 node tests/outbound.test.js            # 17 outbound tests passing
-node tests/nodelist.test.js            # 38 node list + delete-gate + import-switch tests passing
+node tests/nodelist.test.js            # 45 node list + delete-gate + import-switch + dialog-state tests passing
+node tests/link.test.js                # 18 node-link + subscription-Base64 tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
 node tests/config.test.js              # 44 config tests passing（需要 bash 和 /proc）
@@ -31,7 +32,7 @@ node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 ipt
 node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
 ```
 
-`parse` / `outbound` / `nodelist` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
+`parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
 `theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份），测的都是要发布的文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、apply/unapply 的失败路径和启动回滚；假核心只在回滚和 unapply 拒绝用例里
@@ -135,9 +136,10 @@ adb -s $D exec-out cat //sdcard/ui.xml > build/ui.xml   # 找 text="..." 的 bou
 adb -s $D shell 'su -c "ksud module action kernelray"'   # = 点 ▶，跑 action.sh（启停切换）
 ```
 
-**切换节点（v0.6）**：在 Nodes 页导入节点，然后直接点列表里的一行 —— 点行就是选中 + 应用。
-导入只写节点库、不改 `selected`；但库里还没有已应用节点时，导入会顺带应用（`selected` 仍能
-解析就用它，否则用列表第一个），等于替你点了一次行（ADR 0012）。切换成功后验证：
+**切换节点（v0.6 的列表手势，现在多一步弹窗）**：在 Nodes 页导入节点，点列表里的一行打开节点详情
+弹窗，再点弹窗里的「应用」—— 这一步才是选中 + 应用。导入只写节点库、不改 `selected`；但库里
+还没有已应用节点时，导入会顺带应用（`selected` 仍能解析就用它，否则用列表第一个），等于替你
+按了一次「应用」（ADR 0012）。切换成功后验证：
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status' | grep node=
@@ -146,14 +148,14 @@ adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第
 ```
 
 切换的失败语义：`xray -test` 失败时旧配置和运行中的核心**都不动**，只在 UI 里弹错误；
-`selected` 会留在刚点的节点上（列表显示“未应用”），再点一次就是重试。
+`selected` 会留在刚应用的节点上（列表显示“未应用”）；再打开它点一次「应用」就是重试。
 候选配置测试通过但启动失败时，脚本会恢复上一份配置和上一个已应用节点并重启旧配置。
 如果恢复的旧配置也起不来，核心保持停止（`failed/crashed`），不会假装成功。详细过程见
 `docs/config-derivation.md`。
 
-**选中 ≠ 已应用（只在切换失败时）**：正常路径下点一行就同时改了 `selected` 和
-`runtime/applied`。切换失败时列表会把刚点的行标成“未应用”、原节点仍显示“已应用”。
-重新导入保留 id 时该行会显示“有改动”，再点一次它就重新应用。
+**选中 ≠ 已应用（只在切换失败时）**：正常路径下在弹窗里点「应用」就同时改了 `selected` 和
+`runtime/applied`。切换失败时列表会把刚应用的行标成“未应用”、原节点仍显示“已应用”。
+重新导入保留 id 时该行会显示“有改动”，打开弹窗点「重新应用」即可。
 
 **tproxy（v0.7，开关默认开）**：开关是纯偏好（`tproxy on|off` 只写 `runtime/tproxy`），随核心启动
 生效——应用节点后 Stop→Start（或重启设备）即接管。状态页 Start / `kr_start` 均会先装规则再起核心：
@@ -242,13 +244,13 @@ adb -s $D shell 'ls -d /data/adb/modules/kernelray; ps -A -o PID,ARGS | grep -c 
 | `push` 报错、路径变成 `C:/...` | MSYS 路径改写，用 `//data/...` 或 `MSYS_NO_PATHCONV=1` |
 | `logcat` 里搜不到 kernelray | `service.sh` 的 stdout 不进 logcat；看 `logs/xray.log` 或 `kernelray.sh log 50` |
 | 端口测试 000/超时 | 忘了 `adb forward`，或没用 `--socks5-hostname`（域名解析也走代理才叫真通） |
-| 点节点报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是 UI 切换节点时写的 |
-| 点节点报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |
-| 点节点报 `does not belong to node` | `outbound.meta` 的 id 不是请求的节点；再点一次该行会重写两个文件 |
-| 列表某行显示“未应用” | 上次切换失败，`selected` 留在那一行；再点它就是重试 |
-| 列表某行显示“有改动” | 重新导入保留了 id，但运行配置还是旧的；点这一行重新渲染并重启 |
-| 点了“已应用”的行但没反应 | 正常：没有任何字段变化，不会为一次点按重启核心 |
-| `node=` 为空但配置里有代理 | `runtime/applied` 丢了或没写；在列表里再点一次节点，别手改 `config.json` |
+| 点「应用」报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是弹窗的应用路径写的 |
+| 点「应用」报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |
+| 点「应用」报 `does not belong to node` | `outbound.meta` 的 id 不是请求的节点；再打开该行点一次「应用」会重写两个文件 |
+| 列表某行显示“未应用” | 上次切换失败，`selected` 留在那一行；打开它点「应用」就是重试 |
+| 列表某行显示“有改动” | 重新导入保留了 id，但运行配置还是旧的；打开弹窗点「重新应用」 |
+| 点了已应用节点的「应用」但没反应 | 正常：没有字段变化，只会同步 `selected`，不会重启核心 |
+| `node=` 为空但配置里有代理 | `runtime/applied` 丢了或没写；打开节点再点一次「应用」，别手改 `config.json` |
 
 ## 11. 一条命令走完（复制粘贴用）
 
@@ -259,6 +261,7 @@ bash -n module/scripts/kernelray.sh || exit 1
 node tests/parse.test.js || exit 1
 node tests/outbound.test.js || exit 1
 node tests/nodelist.test.js || exit 1
+node tests/link.test.js || exit 1
 node tests/prefs.test.js || exit 1
 node tests/config.test.js || exit 1
 bash scripts/pack.sh || exit 1

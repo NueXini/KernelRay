@@ -25,5 +25,6 @@ jobs:
           node tests/parse.test.js
           node tests/outbound.test.js
           node tests/nodelist.test.js
+          node tests/link.test.js
           node tests/config.test.js
           node tests/routing.test.js

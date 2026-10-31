@@ -29,7 +29,7 @@ var DICT_ZH = {
   startingMsg: "正在启动…", stoppingMsg: "正在停止…",
   actionFailed: "操作失败", noLog: "（还没有日志）",
   stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
-  stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表点一个节点应用，核心才会启动。",
+  stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表打开一个节点并应用，核心才会启动。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
   tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
   setTp: "tproxy透明代理",
@@ -47,10 +47,27 @@ var DICT_ZH = {
   nodeNoState: "没有 state.json，节点信息无从得知",
   nodeSchema: "state.json 的 schema 版本未识别：",
   listTitle: "节点列表",
-  listHint: "点一个节点即可切换并应用；「已应用」是核心正在使用的节点。",
+  listHint: "点一个节点打开详情弹窗；在弹窗里点「应用」即可切换。",
   emptyNodes: "节点库还是空的；点右上角的 + 添加节点。",
   nodeApplied: "已应用", nodeDirty: "有改动", nodePending: "未应用",
-  nodeReapply: "这个节点应用后有改动；点一下重新应用。",
+  nodeReapply: "这个节点应用后有改动；打开弹窗点「重新应用」。",
+  copyLink: "复制链接", copyBase64: "复制 Base64（订阅格式）", copyOptions: "复制选项",
+  copiedLink: "链接已复制", copiedBase64: "Base64 已复制", copyFailed: "复制失败",
+  copyIncludesCreds: "复制链接包含完整凭证", linkError: "无法生成链接",
+  credentials: "凭证", apply: "应用", reapply: "重新应用", retryApply: "重试应用",
+  dialogRunningHint: "核心正在运行；应用会重启核心。",
+  dialogStoppedHint: "核心未运行；应用只写入配置，不会启动核心。",
+  dialogAppliedHint: "当前已是应用节点；点击只会同步选择节点，不会重启核心。",
+  dialogRetryHint: "上次应用没有成功；点击会重试。",
+  nodeGone: "节点已不在节点库里。",
+  fieldProtocol: "协议", fieldTransport: "传输", fieldSecurity: "安全",
+  fieldAddress: "地址", fieldSni: "SNI", fieldHost: "Host", fieldPath: "Path",
+  fieldServiceName: "服务名", fieldFingerprint: "指纹", fieldFlow: "Flow",
+  fieldAlpn: "ALPN", fieldAllowInsecure: "允许不安全",
+  fieldPublicKey: "公钥", fieldShortId: "Short ID",
+  fieldUuid: "UUID", fieldPassword: "密码", fieldMethod: "加密方式",
+  fieldCipher: "加密方式", fieldAlterId: "Alter ID", fieldEncryption: "加密",
+  yes: "是", no: "否",
   selectedMissing: "state.json 的 selected 指向了一个不存在的节点。",
   appliedMissing: "runtime/applied 指向的节点不在节点库里。",
   delete: "删除", deleteApplied: "已应用的节点不能删除；先切换到别的节点。",
@@ -98,7 +115,7 @@ var DICT_ZH = {
   importDone: "已导入",
   importUpdated: "，更新",
   importFailedN: "，{n} 行失败",
-  notAppliedYet: "导入只写入节点库；还没有已应用节点时会顺带应用一个，否则点列表里的节点即可切换并应用。"
+  notAppliedYet: "导入只写入节点库；还没有已应用节点时会顺带应用一个，否则打开节点弹窗点「应用」。"
 };
 var DICT_EN = {
   start: "Start", stop: "Stop", follow: "Follow", pause: "Pause", refresh: "Refresh",
@@ -109,7 +126,7 @@ var DICT_EN = {
   startingMsg: "Starting…", stoppingMsg: "Stopping…",
   actionFailed: "Action failed", noLog: "(no log yet)",
   stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
-  stoppedHintNone: "The core is stopped and no node is applied; tap a node in the node list to apply one — the core only starts with an applied node.",
+  stoppedHintNone: "The core is stopped and no node is applied; open a node in the list and press Apply — the core only starts with an applied node.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
   tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
   setTp: "TPROXY transparent proxy",
@@ -127,10 +144,28 @@ var DICT_EN = {
   nodeNoState: "No state.json, so the nodes are unknown",
   nodeSchema: "Unrecognised state.json schema: ",
   listTitle: "Node list",
-  listHint: "Tap a node to switch and apply it; “Applied” is what the core runs.",
+  listHint: "Tap a node to open its detail dialog; press Apply there to switch.",
   emptyNodes: "No nodes yet; tap + in the top right to add one.",
   nodeApplied: "Applied", nodeDirty: "Changed", nodePending: "Not applied",
-  nodeReapply: "This node changed after it was applied; tap to re-apply.",
+  nodeReapply: "This node changed after it was applied; open its dialog and press Re-apply.",
+  copyLink: "Copy link", copyBase64: "Copy Base64 (subscription)", copyOptions: "Copy options",
+  copiedLink: "Link copied", copiedBase64: "Base64 copied", copyFailed: "Copy failed",
+  copyIncludesCreds: "The copied link contains the full credentials",
+  linkError: "Cannot build the link",
+  credentials: "Credentials", apply: "Apply", reapply: "Re-apply", retryApply: "Retry apply",
+  dialogRunningHint: "The core is running; applying restarts it.",
+  dialogStoppedHint: "The core is stopped; applying writes the config but does not start it.",
+  dialogAppliedHint: "This is the applied node; tapping only re-syncs the selection pointer and does not restart the core.",
+  dialogRetryHint: "The last apply did not succeed; tapping retries.",
+  nodeGone: "The node is no longer in the store.",
+  fieldProtocol: "Protocol", fieldTransport: "Transport", fieldSecurity: "Security",
+  fieldAddress: "Address", fieldSni: "SNI", fieldHost: "Host", fieldPath: "Path",
+  fieldServiceName: "Service name", fieldFingerprint: "Fingerprint", fieldFlow: "Flow",
+  fieldAlpn: "ALPN", fieldAllowInsecure: "Allow insecure",
+  fieldPublicKey: "Public key", fieldShortId: "Short ID",
+  fieldUuid: "UUID", fieldPassword: "Password", fieldMethod: "Method",
+  fieldCipher: "Cipher", fieldAlterId: "Alter ID", fieldEncryption: "Encryption",
+  yes: "Yes", no: "No",
   selectedMissing: "state.json points selected at a node that is not in the store.",
   appliedMissing: "runtime/applied points at a node that is not in the store.",
   delete: "Delete", deleteApplied: "The applied node cannot be deleted; switch to another node first.",
@@ -178,7 +213,7 @@ var DICT_EN = {
   importDone: "Imported",
   importUpdated: ", updated",
   importFailedN: ", {n} line(s) failed",
-  notAppliedYet: "Importing only fills the node list; with no node applied yet it also applies one, otherwise tap a node there to switch and apply it."
+  notAppliedYet: "Importing only fills the node list; with no node applied yet it also applies one, otherwise open a node's dialog and press Apply."
 };
 var T = DICT_EN; // applyLang() reassigns this before anything renders
 
@@ -197,6 +232,12 @@ var els = {
   lImport: $("l-import"), iText: $("i-text"),
   iApply: $("i-apply"), iPreview: $("i-preview"), iHint: $("i-hint"),
   overlay: $("add-overlay"), addClose: $("add-close"), tabbar: $("tabbar"),
+  nodeOverlay: $("node-overlay"), ndTitle: $("nd-title"), ndPills: $("nd-pills"),
+  ndInfo: $("nd-info"), ndCredSection: $("nd-cred-section"), ndCredTitle: $("nd-cred-title"),
+  ndCred: $("nd-cred"), ndHint: $("nd-hint"), ndCopyHint: $("nd-copyhint"),
+  ndError: $("nd-error"), ndCopyGroup: $("nd-copygroup"), ndCopy: $("nd-copy"),
+  ndCopyMenu: $("nd-copy-menu"), ndMenu: $("nd-menu"),
+  ndMenuBase64: $("nd-menu-base64"), ndApply: $("nd-apply"), ndClose: $("nd-close"),
   lTabStatus: $("l-tab-status"), lTabNodes: $("l-tab-nodes"), lTabLog: $("l-tab-log"),
   lTabSettings: $("l-tab-settings"),
   selLang: $("sel-lang"), lSetLang: $("l-set-lang"), lLangAuto: $("l-lang-auto"),
@@ -232,6 +273,12 @@ var lastKv = null;
 var lastApplied = "";
 var lastMetaId = "";
 var confirmId = null;
+// Node detail dialog: the row tap opens it read-only; only its Apply button switches.
+var dialogId = "";        // node id the dialog shows; "" when closed
+var dialogBusy = false;   // an apply started from the dialog is in flight
+var dialogError = "";     // the last dialog apply failure, shown inline
+var dialogMenuOpen = false;
+var dialogLink = "";      // the canonical link rendered for the current node
 var listSig = "";
 // The runtime fact the current list was rendered with: renderStatus only re-renders the list
 // when it flips, so a 2s poll does not rebuild the toolbar under a finger.
@@ -262,6 +309,11 @@ function label(key) {
   els.editNode.textContent = editMode ? T.done : T.edit;
   els.addNode.setAttribute("aria-label", T.addTitle);
   els.addClose.setAttribute("aria-label", T.close);
+  els.ndClose.setAttribute("aria-label", T.close);
+  els.ndCopy.textContent = T.copyLink;
+  els.ndCopyMenu.setAttribute("aria-label", T.copyOptions);
+  els.ndMenuBase64.textContent = T.copyBase64;
+  els.ndCredTitle.textContent = T.credentials;
   els.lImport.textContent = T.addTitle;
   els.iApply.textContent = T.importBtn;
   els.iText.placeholder = T.addPlaceholder;
@@ -810,6 +862,143 @@ function outboundOf(n) {
 }
 // ---- end outbound rendering ----
 
+// ---- node links ----
+// A stored node → the share link the detail dialog copies. Derived, not stored: the node
+// fields are the source of truth, and tests/link.test.js round-trips linkOf() through the
+// parser. The outer Base64 is the one-line subscription form; for vmess the link itself is
+// already base64 JSON, so that form is double-encoded on purpose. Base64 is an encoding, not
+// encryption. Keep the markers: the test harness extracts this block.
+
+function plainHost(addr) {
+  return String(addr == null ? "" : addr).replace(/^\[|\]$/g, "");
+}
+
+function uriHost(addr) {
+  var a = plainHost(addr);
+  return a.indexOf(":") >= 0 ? "[" + a + "]" : a;
+}
+
+function utf8Bytes(s) {
+  s = String(s == null ? "" : s);
+  if (typeof TextEncoder !== "undefined") { return new TextEncoder().encode(s); }
+  var raw = unescape(encodeURIComponent(s));
+  var out = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) { out[i] = raw.charCodeAt(i); }
+  return out;
+}
+
+function b64encodeText(s) {
+  var bytes = utf8Bytes(s);
+  var bin = "";
+  for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
+  return btoa(bin);
+}
+
+// SIP002's userinfo is URL-safe Base64 without padding; the outer subscription form above
+// keeps the standard alphabet and padding.
+function b64urlText(s) {
+  return b64encodeText(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function linkName(n) {
+  return String(n.name || ((n.address || "") + ":" + (n.port || "")));
+}
+
+function alpnValue(n) {
+  if (typeof n.alpn === "string") { return n.alpn; }
+  if (n.alpn && n.alpn.length) { return n.alpn.join(","); }
+  return "";
+}
+
+function addQuery(q, key, val) {
+  if (val === null || val === undefined || String(val) === "") { return; }
+  q.push(key + "=" + encodeURIComponent(String(val)));
+}
+
+function linkOf(n) {
+  if (!n || typeof n !== "object") { throw new Error("node is missing"); }
+  var port = Number(n.port);
+  if (!n.address || !(port > 0 && port < 65536) || port !== Math.floor(port)) {
+    throw new Error("node has no address or port");
+  }
+  var host = uriHost(n.address);
+  var name = encodeURIComponent(linkName(n));
+  var q = [];
+
+  if (n.protocol === "vless") {
+    if (!n.uuid) { throw new Error("vless node has no uuid"); }
+    addQuery(q, "type", n.transport || "tcp");
+    addQuery(q, "security", n.security || "none");
+    addQuery(q, "encryption", n.encryption || "none");
+    addQuery(q, "sni", n.sni);
+    addQuery(q, "fp", n.fingerprint);
+    addQuery(q, "pbk", n.publicKey);
+    addQuery(q, "sid", n.shortId);
+    addQuery(q, "flow", n.flow);
+    addQuery(q, "path", n.path);
+    addQuery(q, "host", n.host);
+    addQuery(q, "serviceName", n.serviceName);
+    addQuery(q, "alpn", alpnValue(n));
+    addQuery(q, "allowInsecure", n.allowInsecure ? "1" : "");
+    return "vless://" + encodeURIComponent(String(n.uuid)) + "@" + host + ":" + port +
+      "?" + q.join("&") + "#" + name;
+  }
+
+  if (n.protocol === "trojan") {
+    if (!n.password) { throw new Error("trojan node has no password"); }
+    addQuery(q, "type", n.transport || "tcp");
+    addQuery(q, "security", n.security || "tls");
+    addQuery(q, "sni", n.sni);
+    addQuery(q, "fp", n.fingerprint);
+    addQuery(q, "pbk", n.publicKey);
+    addQuery(q, "sid", n.shortId);
+    addQuery(q, "flow", n.flow);
+    addQuery(q, "path", n.path);
+    addQuery(q, "host", n.host);
+    addQuery(q, "serviceName", n.serviceName);
+    addQuery(q, "alpn", alpnValue(n));
+    addQuery(q, "allowInsecure", n.allowInsecure ? "1" : "");
+    return "trojan://" + encodeURIComponent(String(n.password)) + "@" + host + ":" + port +
+      "?" + q.join("&") + "#" + name;
+  }
+
+  if (n.protocol === "vmess") {
+    if (!n.uuid) { throw new Error("vmess node has no uuid"); }
+    var j = {
+      v: "2",
+      ps: linkName(n),
+      add: plainHost(n.address),
+      port: String(port),
+      id: String(n.uuid),
+      aid: String(Number(n.alterId) || 0),
+      scy: String(n.cipher || "auto"),
+      net: String(n.transport || "tcp"),
+      type: "none",
+      host: n.host ? String(n.host) : "",
+      path: n.path ? String(n.path) : "",
+      tls: n.security && n.security !== "none" ? String(n.security) : "",
+      sni: n.sni ? String(n.sni) : "",
+      fp: n.fingerprint ? String(n.fingerprint) : "",
+      alpn: alpnValue(n)
+    };
+    return "vmess://" + b64encodeText(JSON.stringify(j));
+  }
+
+  if (n.protocol === "ss") {
+    if (!n.method || !n.password) { throw new Error("ss node has no method/password"); }
+    return "ss://" + b64urlText(String(n.method) + ":" + String(n.password)) +
+      "@" + host + ":" + port + "#" + name;
+  }
+
+  throw new Error("unsupported protocol: " + n.protocol);
+}
+
+function base64Link(link) {
+  if (!link) { throw new Error("no link to encode"); }
+  return b64encodeText(link);
+}
+// ---- end node links ----
+
 function uptime(sec) {
   sec = Number(sec) || 0;
   if (sec <= 0) { return "–"; }
@@ -833,6 +1022,7 @@ function setButtons() {
   els.iHttp.disabled = !hasBridge;
   els.portsSave.disabled = busy || !hasBridge;
   if (els.nList) { els.nList.classList.toggle("busy", busy); }
+  if (dialogId) { renderDialog(); }
 }
 
 // The delete gate and the unapply decision need the live fact, and only a status read that
@@ -953,6 +1143,24 @@ function batchModel(model, checks, allowApplied) {
     allChecked: checkable.length > 0 && checked.length === checkable.length
   };
 }
+// The detail dialog's button state: applied + clean is the only no-op tap (it may still
+// re-sync `selected` after a failed switch); a dirty applied node is re-applied, and a
+// selected-but-unapplied node is a retry. Pure so tests/nodelist.test.js can run it.
+function nodeDialogModel(node, appliedId, selectedId) {
+  var id = node && node.id !== null && node.id !== undefined ? String(node.id) : "";
+  var applied = id !== "" && appliedId !== null && appliedId !== undefined &&
+    String(appliedId) !== "" && id === String(appliedId);
+  var selected = id !== "" && selectedId !== null && selectedId !== undefined &&
+    String(selectedId) !== "" && id === String(selectedId);
+  var dirty = !!(node && node.dirty);
+  var action = "apply";
+  if (applied && dirty) { action = "reapply"; }
+  else if (selected && !applied) { action = "retry"; }
+  return {
+    id: id, applied: applied, selected: selected, dirty: dirty,
+    action: action, noop: applied && !dirty
+  };
+}
 // ---- end node list model ----
 
 function nodeMeta(n) {
@@ -1044,7 +1252,7 @@ function renderRow(row, allowDelete) {
     el.tabIndex = 0;
   } else {
     // In edit mode the whole row is the check toggle; the applied row's box follows the same
-    // delete gate as the ✕. The switch gesture waits outside edit mode.
+    // delete gate as the ✕. The detail dialog waits outside edit mode.
     var check = document.createElement("input");
     check.type = "checkbox";
     check.className = "ncheck";
@@ -1160,6 +1368,7 @@ function renderNodeList() {
   els.nHint.textContent = hint.text;
   els.nHint.className = "nodehint" + (hint.cls ? " " + hint.cls : "");
   if (els.nList) { els.nList.classList.toggle("busy", busy); }
+  if (dialogId) { renderDialog(); }
 }
 
 // selected is written before outbound.meta/outbound.json/CLI: a crash or a failed apply then
@@ -1171,15 +1380,25 @@ function writeSelected(id) {
   return writeState(lastStateObj).then(function () { return true; });
 }
 
-function switchTo(n) {
-  if (busy || !hasBridge) { return; }
-  if (!lastStateObj) { toast(T.nodeNoState); return; }
+function switchTo(n, opts) {
+  opts = opts || {};
+  var done = typeof opts.done === "function" ? opts.done : null;
+  function finish(err) {
+    if (!done) { return; }
+    try { done(err || null); } catch (e) { /* a dialog callback must not break the apply chain */ }
+  }
+  function fail(msg) {
+    if (!opts.fromDialog) { toast(msg); }
+    finish(new Error(msg));
+  }
+  if (busy || !hasBridge) { finish(new Error(T.actionFailed)); return; }
+  if (!lastStateObj) { fail(T.nodeNoState); return; }
   if (lastStateObj.schema && lastStateObj.schema !== 1) {
-    toast(T.nodeSchema + lastStateObj.schema);
+    fail(T.nodeSchema + lastStateObj.schema);
     return;
   }
   if (!n || !n.id || !/^[0-9A-Za-z_-]+$/.test(n.id)) {
-    toast(T.actionFailed + ": node has no usable id");
+    fail(T.actionFailed + ": node has no usable id");
     return;
   }
 
@@ -1188,7 +1407,13 @@ function switchTo(n) {
     busy = true;
     setButtons();
     renderNodeList();
-    writeSelected(n.id).catch(function (e) { toast(T.actionFailed + ": " + e.message); }).then(function () {
+    writeSelected(n.id).then(function () {
+      if (opts.fromDialog) { toast(T.appliedMsg); }
+      finish(null);
+    }).catch(function (e) {
+      if (!opts.fromDialog) { toast(T.actionFailed + ": " + e.message); }
+      finish(e);
+    }).then(function () {
       busy = false;
       setButtons();
       refreshPage();
@@ -1200,7 +1425,7 @@ function switchTo(n) {
   try {
     out = outboundOf(n);
   } catch (e) {
-    toast(T.actionFailed + ": " + e.message);
+    fail(T.actionFailed + ": " + e.message);
     return;
   }
 
@@ -1208,7 +1433,7 @@ function switchTo(n) {
   busy = true;
   setButtons();
   renderNodeList();
-  toast(T.applyingMsg);
+  if (!opts.fromDialog) { toast(T.applyingMsg); }
 
   writeSelected(n.id).then(function () {
     var meta = "id=" + n.id + "\nhost=" + String(n.address || "") + "\n";
@@ -1237,14 +1462,281 @@ function switchTo(n) {
     }
   }).then(function () {
     toast(T.appliedMsg);
+    finish(null);
   }).catch(function (e) {
-    toast(T.actionFailed + ": " + e.message);
+    if (!opts.fromDialog) { toast(T.actionFailed + ": " + e.message); }
+    finish(e);
   }).then(function () {
     busy = false;
     setButtons();
     refreshPage();
   });
 }
+
+// ---- node detail dialog ----
+// The row tap opens this read-only: it shows the node's fields and the canonical link, but
+// only the Apply button writes `selected` or touches the core. The dialog holds no route or
+// history entry, like the add dialog.
+
+function currentDialogNode() {
+  return dialogId ? findNodeById(lastStateObj, dialogId) : null;
+}
+
+// Opening a dialog must freeze the page behind it: touch scrolling on the overlay would
+// otherwise drag the node list underneath. body.dialog-open (CSS) hides the overflow; the
+// class also keeps the scroll position, unlike resetting body scrollTop.
+function syncDialogScrollLock() {
+  document.body.classList.toggle("dialog-open",
+    Boolean(dialogId || !els.overlay.hidden));
+}
+
+function openNodeDialog(n) {
+  if (dialogId || dialogBusy || busy || !hasBridge || !lastStateObj || editMode || confirmId ||
+      !els.overlay.hidden) {
+    return;
+  }
+  if (!n || !n.id) { return; }
+  dialogId = String(n.id);
+  dialogBusy = false;
+  dialogError = "";
+  dialogMenuOpen = false;
+  dialogLink = "";
+  els.nodeOverlay.hidden = false;
+  syncDialogScrollLock();
+  renderDialog();
+  if (els.ndClose && els.ndClose.focus) { els.ndClose.focus(); }
+}
+
+function closeNodeDialog() {
+  if (dialogBusy) { return; }
+  var id = dialogId;
+  dialogId = "";
+  dialogBusy = false;
+  dialogError = "";
+  dialogMenuOpen = false;
+  dialogLink = "";
+  els.nodeOverlay.hidden = true;
+  syncDialogScrollLock();
+  if (!id) { return; }
+  var rows = els.nList.querySelectorAll(".nrow");
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].getAttribute("data-id") === id) {
+      if (rows[i].focus) { rows[i].focus(); }
+      return;
+    }
+  }
+}
+
+function addInfoRow(dl, key, val) {
+  if (val === null || val === undefined || String(val) === "") { return; }
+  var dt = document.createElement("dt");
+  dt.textContent = key;
+  var dd = document.createElement("dd");
+  dd.textContent = String(val);
+  dl.appendChild(dt);
+  dl.appendChild(dd);
+}
+
+function renderDialog() {
+  if (!dialogId) { return; }
+  var node = currentDialogNode();
+  if (!node) {
+    if (dialogBusy) {
+      els.ndError.textContent = T.nodeGone;
+      els.ndError.hidden = false;
+      els.ndApply.disabled = true;
+      els.ndCopy.disabled = true;
+      els.ndCopyMenu.disabled = true;
+      dialogLink = "";
+      dialogMenuOpen = false;
+      els.ndMenu.hidden = true;
+      return;
+    }
+    closeNodeDialog();
+    toast(T.nodeGone);
+    return;
+  }
+
+  var selectedId = lastStateObj && typeof lastStateObj.selected === "string"
+    ? lastStateObj.selected : "";
+  var model = nodeDialogModel(node, lastApplied, selectedId);
+
+  els.ndTitle.textContent = node.name || node.protocol || "node";
+
+  els.ndPills.textContent = "";
+  if (model.applied) { els.ndPills.appendChild(pill(T.nodeApplied, "ok")); }
+  else if (model.selected) { els.ndPills.appendChild(pill(T.nodePending, "warn")); }
+  if (model.dirty) { els.ndPills.appendChild(pill(T.nodeDirty, "warn")); }
+
+  els.ndInfo.textContent = "";
+  addInfoRow(els.ndInfo, T.fieldProtocol, node.protocol);
+  // ss has no transport/security in its link model; showing defaults would invent fields.
+  if (node.protocol !== "ss") {
+    addInfoRow(els.ndInfo, T.fieldTransport, node.transport || "tcp");
+    addInfoRow(els.ndInfo, T.fieldSecurity, node.security || "none");
+  }
+  addInfoRow(els.ndInfo, T.fieldAddress, hostPort(node));
+  addInfoRow(els.ndInfo, T.fieldSni, node.sni);
+  addInfoRow(els.ndInfo, T.fieldHost, node.host);
+  addInfoRow(els.ndInfo, T.fieldPath, node.path);
+  addInfoRow(els.ndInfo, T.fieldServiceName, node.serviceName);
+  addInfoRow(els.ndInfo, T.fieldFingerprint, node.fingerprint);
+  addInfoRow(els.ndInfo, T.fieldFlow, node.flow);
+  addInfoRow(els.ndInfo, T.fieldAlpn, alpnValue(node));
+  addInfoRow(els.ndInfo, T.fieldPublicKey, node.publicKey);
+  addInfoRow(els.ndInfo, T.fieldShortId, node.shortId);
+  if (node.allowInsecure !== undefined && node.allowInsecure !== null) {
+    addInfoRow(els.ndInfo, T.fieldAllowInsecure, node.allowInsecure ? T.yes : T.no);
+  }
+
+  els.ndCred.textContent = "";
+  if (node.protocol === "vless" || node.protocol === "vmess") {
+    addInfoRow(els.ndCred, T.fieldUuid, node.uuid);
+  }
+  if (node.protocol === "vless") {
+    addInfoRow(els.ndCred, T.fieldEncryption, node.encryption || "none");
+  }
+  if (node.protocol === "vmess") {
+    addInfoRow(els.ndCred, T.fieldAlterId, node.alterId !== undefined ? node.alterId : 0);
+    addInfoRow(els.ndCred, T.fieldCipher, node.cipher || "auto");
+  }
+  if (node.protocol === "trojan" || node.protocol === "ss") {
+    addInfoRow(els.ndCred, T.fieldPassword, node.password);
+  }
+  if (node.protocol === "ss") {
+    addInfoRow(els.ndCred, T.fieldMethod, node.method);
+  }
+  els.ndCredSection.hidden = els.ndCred.childNodes.length === 0;
+
+  var link = "";
+  var linkErr = "";
+  try { link = linkOf(node); } catch (e) { linkErr = e.message || String(e); }
+  dialogLink = link;
+  if (!link) { dialogMenuOpen = false; }
+  els.ndCopy.disabled = !link;
+  els.ndCopyMenu.disabled = !link;
+  if (linkErr) {
+    els.ndCopyHint.textContent = T.linkError + ": " + linkErr;
+    els.ndCopyHint.className = "nodehint warn";
+  } else {
+    els.ndCopyHint.textContent = T.copyIncludesCreds;
+    els.ndCopyHint.className = "nodehint";
+  }
+
+  var hint;
+  if (model.noop) { hint = T.dialogAppliedHint; }
+  else if (model.action === "retry") { hint = T.dialogRetryHint; }
+  else if (lastKv && lastKv.state === "running") { hint = T.dialogRunningHint; }
+  else { hint = T.dialogStoppedHint; }
+  els.ndHint.textContent = hint;
+
+  if (dialogError) {
+    els.ndError.textContent = dialogError;
+    els.ndError.hidden = false;
+  } else {
+    els.ndError.textContent = "";
+    els.ndError.hidden = true;
+  }
+
+  var label = model.action === "reapply" ? T.reapply
+    : model.action === "retry" ? T.retryApply : T.apply;
+  els.ndApply.textContent = dialogBusy ? T.applyingMsg : label;
+  els.ndApply.disabled = dialogBusy || busy;
+  els.ndClose.disabled = dialogBusy;
+
+  els.ndMenu.hidden = !dialogMenuOpen;
+  els.ndCopyMenu.setAttribute("aria-expanded", dialogMenuOpen ? "true" : "false");
+}
+
+function applyFromDialog() {
+  var node = currentDialogNode();
+  if (!node || dialogBusy || busy) { return; }
+  dialogBusy = true;
+  dialogError = "";
+  dialogMenuOpen = false;
+  renderDialog();
+  try {
+    switchTo(node, {
+      fromDialog: true,
+      done: function (err) {
+        dialogBusy = false;
+        if (err) {
+          dialogError = err.message || String(err);
+          renderDialog();
+        } else {
+          closeNodeDialog();
+        }
+      }
+    });
+  } catch (e) {
+    dialogBusy = false;
+    dialogError = e.message || String(e);
+    renderDialog();
+  }
+}
+
+function toggleDialogMenu() {
+  if (!dialogId || !dialogLink) { return; }
+  dialogMenuOpen = !dialogMenuOpen;
+  renderDialog();
+}
+
+function legacyCopy(text) {
+  return new Promise(function (resolve, reject) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.width = "1px";
+    ta.style.height = "1px";
+    ta.style.opacity = "0";
+    var active = document.activeElement;
+    document.body.appendChild(ta);
+    var ok = false;
+    try {
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      ok = document.execCommand("copy");
+    } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (active && active.focus) { active.focus(); }
+    if (ok) { resolve(); } else { reject(new Error("copy failed")); }
+  });
+}
+
+function copyText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      var p = navigator.clipboard.writeText(text);
+      if (p && typeof p.then === "function") {
+        return p.catch(function () { return legacyCopy(text); });
+      }
+    }
+  } catch (e) { /* fall through to the textarea */ }
+  return legacyCopy(text);
+}
+
+function copyDialogLink(kind) {
+  var link = dialogLink;
+  if (!link) { toast(T.copyFailed); return; }
+  var text = link;
+  if (kind === "base64") {
+    try { text = base64Link(link); } catch (e) {
+      toast(T.copyFailed + ": " + (e.message || e));
+      return;
+    }
+  }
+  copyText(text).then(function () {
+    toast(kind === "base64" ? T.copiedBase64 : T.copiedLink);
+    dialogMenuOpen = false;
+    if (dialogId) { renderDialog(); }
+  }).catch(function (e) {
+    toast(T.copyFailed + ": " + (e.message || e));
+  });
+}
+// ---- end node detail dialog ----
 
 function askDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
@@ -1779,16 +2271,19 @@ function showRoute(route, opts) {
 // The add dialog holds no route and no history entry: the back gesture stays with the
 // tab bar. Opening resets it because closing discards whatever was typed.
 function openAdd() {
+  if (dialogId || dialogBusy) { return; }
   els.iText.value = "";
   els.iPreview.textContent = "";
   els.iHint.textContent = T.notAppliedYet;
   els.iHint.className = "nodehint";
   els.iApply.disabled = true;
   els.overlay.hidden = false;
+  syncDialogScrollLock();
 }
 
 function closeAdd() {
   els.overlay.hidden = true;
+  syncDialogScrollLock();
 }
 
 function go(route) {
@@ -1896,7 +2391,7 @@ els.nList.addEventListener("click", function (e) {
   var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
   if (!node) { return; }
   // In edit mode the whole row is the check toggle; the applied row is excluded unless the
-  // delete gate allows deleting it, and ADR 0007's switch gesture waits outside edit mode.
+  // delete gate allows deleting it, and the node detail dialog waits outside edit mode.
   if (editMode) {
     if (!canCheckNode(node)) { return; }
     if (checkSet[node.id]) { delete checkSet[node.id]; } else { checkSet[node.id] = true; }
@@ -1908,7 +2403,7 @@ els.nList.addEventListener("click", function (e) {
   if (action === "cancel") { confirmId = null; renderNodeList(); return; }
   if (action === "confirm") { confirmDelete(node); return; }
   if (confirmId) { return; }
-  switchTo(node);
+  openNodeDialog(node);
 });
 els.nList.addEventListener("keydown", function (e) {
   if (e.key !== "Enter" && e.key !== " ") { return; }
@@ -1922,7 +2417,8 @@ els.nList.addEventListener("keydown", function (e) {
     renderNodeList();
     return;
   }
-  switchTo(node);
+  if (confirmId) { return; }
+  openNodeDialog(node);
 });
 els.editNode.addEventListener("click", function () {
   editMode = !editMode;
@@ -1959,6 +2455,36 @@ els.addNode.addEventListener("click", openAdd);
 els.addClose.addEventListener("click", closeAdd);
 els.overlay.addEventListener("click", function (e) {
   if (e.target === els.overlay) { closeAdd(); }
+});
+els.ndClose.addEventListener("click", closeNodeDialog);
+els.nodeOverlay.addEventListener("click", function (e) {
+  if (e.target === els.nodeOverlay) { closeNodeDialog(); }
+});
+els.ndApply.addEventListener("click", applyFromDialog);
+els.ndCopy.addEventListener("click", function () { copyDialogLink("link"); });
+els.ndCopyMenu.addEventListener("click", function (e) {
+  e.stopPropagation();
+  toggleDialogMenu();
+});
+els.ndMenu.addEventListener("click", function (e) {
+  var t = e.target && e.target.closest ? e.target.closest("[data-copy]") : null;
+  if (!t) { return; }
+  copyDialogLink(t.getAttribute("data-copy"));
+});
+document.addEventListener("click", function (e) {
+  if (!dialogMenuOpen) { return; }
+  if (els.ndCopyGroup.contains(e.target)) { return; }
+  dialogMenuOpen = false;
+  if (dialogId) { renderDialog(); }
+});
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape") { return; }
+  if (dialogMenuOpen) {
+    dialogMenuOpen = false;
+    if (dialogId) { renderDialog(); }
+    return;
+  }
+  if (dialogId && !dialogBusy) { closeNodeDialog(); }
 });
 els.iText.addEventListener("input", function () {
   els.iApply.disabled = busy || !els.iText.value.trim();

@@ -5,8 +5,9 @@ the module may regenerate it when it is missing. The template is the extension p
 
 This implements [ADR 0005](adr/0005-core-config-is-derived.md) (the UI renders data, the shell
 owns the layout), [ADR 0006](adr/0006-dns-goes-through-the-core.md) (the fixed `direct`
-outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-the-node.md)
-(tapping a node row is the switch gesture).
+outbound carries the v0.7 bypass mark) and
+[ADR 0016](adr/0016-a-node-row-opens-a-detail-dialog.md) (a node row opens the detail dialog;
+its Apply button is the switch gesture).
 
 ## Files and owners
 
@@ -138,8 +139,9 @@ while a running core still carries a different level in `config.json`.
 
 ## Applying a node
 
-Tapping a node row in the UI is one gesture: it writes `state.selected`, renders that node,
-writes `outbound.meta` and then `outbound.json`, and calls:
+Tapping a node row opens the read-only 节点详情弹窗; pressing its 应用 button is the apply
+gesture: it writes `state.selected`, renders that node, writes `outbound.meta` and then
+`outbound.json`, and calls:
 
 ```sh
 scripts/kernelray.sh apply <node-id>
@@ -179,11 +181,12 @@ The CLI returns the error; the WebUI shows it in a toast. Only a failed **start*
 status failed, and the restore path clears it if the old config starts.
 
 Applying always restarts a running core. The node list marks the applied node and, after a
-failed switch, the selected-but-unapplied node. Tapping the applied node with no changes does
-nothing to the core; tapping it after a re-import kept its id and marked it `dirty` re-applies
-it, and the `dirty` flag clears on success. Importing a node changes nothing until a row is
-tapped — except into a store with no applied node, where the import itself applies a node
-([ADR 0012](adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)).
+failed switch, the selected-but-unapplied node. Applying the applied node with no changes does
+nothing to the core; applying it after a re-import kept its id and marked it `dirty` re-applies
+it, and the `dirty` flag clears on success. Importing a node changes nothing until the dialog's
+应用 is pressed — except into a store with no applied node, where the import itself applies a
+node ([ADR 0012](adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)). That
+import is the one apply path that does not go through the 节点详情弹窗.
 
 ## Why the shell reads (almost) nothing from `state.json`
 

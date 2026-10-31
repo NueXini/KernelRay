@@ -6,14 +6,15 @@ Location: `/data/adb/modules/kernelray/state.json`, mode `0600`, owner `root`.
 `config.json` is the **derived artifact** the core actually runs. They are not the same file and
 the UI must never present one as the other.
 
-In the WebUI's node list one gesture does both: tapping a row writes `selected`, renders the
-node to `outbound.json`/`outbound.meta` and calls `kernelray.sh apply <id>` (see
-[`config-derivation.md`](config-derivation.md)). `selected` is written first, so a failed switch
-leaves the wish pointing at the attempted node while `runtime/applied` still names the node the
-core runs.
+Tapping a row in the WebUI's node list opens the read-only 节点详情弹窗; pressing its 应用
+button writes `selected`, renders the node to `outbound.json`/`outbound.meta` and calls
+`kernelray.sh apply <id>` (see [`config-derivation.md`](config-derivation.md)). `selected` is
+written first, so a failed switch leaves the wish pointing at the attempted node while
+`runtime/applied` still names the node the core runs.
 
-Written by: the WebUI importer, the node list (switch and delete), and the apply success path
-when it clears a node's `dirty` flag. Read by: the WebUI node list.
+Written by: the WebUI importer, the 节点详情弹窗's apply path, the node list (delete), and the
+apply success path when it clears a node's `dirty` flag. Read by: the WebUI node list and the
+节点详情弹窗.
 Ownership note: the shell writes runtime facts (`runtime/status.json`, `runtime/applied`, pid),
 the UI writes intent and the rendered outbound (`outbound.json` + `outbound.meta`).
 
@@ -42,13 +43,16 @@ The Nodes page renders `manual` only. It writes `state.json`; it never writes `c
 - **Import** appends new identities and updates existing ones in place (keeping the id). If
   nothing is applied yet (`runtime/applied` absent or empty), the import also switches to the
   node `selected` names when that still resolves, else to the first node the list shows: it
-  writes `selected` and applies it, exactly like a tapped row (see 切换节点 and
+  writes `selected` and applies it through the same write sequence as the 应用 button (see
+  切换节点 and
   [ADR 0012](adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)). With a node
-  already applied it changes no pointer; the user switches by tapping a row afterwards.
-- **Tap a node** writes `selected`, renders the node to `outbound.json` + `outbound.meta`, and
-  calls `apply <id>`. Tapping the **applied** node whose fields have not changed does nothing to
-  the core (it only re-syncs `selected` if a failed switch left it elsewhere). Tapping the
-  applied node after a re-import changed it (`dirty`) re-applies it.
+  already applied it changes no pointer; the user opens a row's dialog and applies it afterwards.
+  This is the one apply path that does not go through the 节点详情弹窗.
+- **Tap a node** opens the read-only 节点详情弹窗; it writes nothing and never touches the core.
+  **Apply** in that dialog writes `selected`, renders the node to `outbound.json` +
+  `outbound.meta`, and calls `apply <id>`. Applying the **applied** node whose fields have not
+  changed does nothing to the core (it only re-syncs `selected` if a failed switch left it
+  elsewhere). Applying the applied node after a re-import changed it (`dirty`) re-applies it.
 - **Delete** is refused for the applied node while the core runs or while another node is still
   in the list. It is allowed when the applied node is the last node and the core is stopped:
   the UI then calls `kernelray.sh unapply` before writing `state.json`, which removes the
@@ -60,7 +64,12 @@ The Nodes page renders `manual` only. It writes `state.json`; it never writes `c
   is in `outbound.meta`) also removes `outbound.json` and `outbound.meta`, so credentials do
   not outlive the node. Deletion needs a second tap to confirm.
 - A **failed switch** leaves `selected` on the attempted node. The list marks it `not applied`
-  and keeps the old node marked `applied`; tapping the attempted node retries.
+  and keeps the old node marked `applied`; opening the attempted node's dialog and pressing
+  Apply retries.
+
+The dialog's 复制链接 and 订阅 Base64 actions are **derived** from the node fields; no original
+share link is stored in `state.json`. The generated link therefore describes the node as the
+module would run it, not necessarily the text that was pasted at import.
 
 Unknown top-level fields are preserved: the writer parses the file, mutates the object and
 serialises it back, so nothing is dropped by an older UI.

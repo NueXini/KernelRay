@@ -215,6 +215,36 @@
   </div>
 </nav>
 
+<div class="overlay" id="node-overlay" hidden>
+  <section class="card nodecard" role="dialog" aria-modal="true" aria-labelledby="nd-title">
+    <div class="nodehead">
+      <span id="nd-title">Node</span>
+      <span class="spacer"></span>
+      <button type="button" class="iconbtn" id="nd-close" aria-label="Close">×</button>
+    </div>
+    <div class="npills" id="nd-pills"></div>
+    <dl class="ndinfo" id="nd-info"></dl>
+    <div id="nd-cred-section">
+      <div class="ndsec" id="nd-cred-title">Credentials</div>
+      <dl class="ndinfo" id="nd-cred"></dl>
+    </div>
+    <div class="nodehint" id="nd-hint"></div>
+    <div class="nodehint" id="nd-copyhint"></div>
+    <div class="nodehint nderror" id="nd-error" hidden></div>
+    <div class="ndfoot">
+      <div class="ndcopy" id="nd-copygroup">
+        <button type="button" id="nd-copy">Copy link</button>
+        <button type="button" id="nd-copy-menu" aria-label="Copy options"
+                aria-haspopup="menu" aria-expanded="false">▾</button>
+        <div class="ndmenu" id="nd-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="nd-menu-base64" data-copy="base64">Copy Base64</button>
+        </div>
+      </div>
+      <button type="button" class="primary" id="nd-apply">Apply</button>
+    </div>
+  </section>
+</div>
+
 <div class="overlay" id="add-overlay" hidden>
   <section class="card addcard" role="dialog" aria-modal="true" aria-labelledby="l-import">
     <div class="nodehead">

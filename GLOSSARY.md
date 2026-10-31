@@ -142,7 +142,7 @@ _Avoid_: 接管开关 (the name before the settings-page move), enabled flag, mo
 **应用节点 (Apply a node)**:
 Deriving the core's configuration from the selected node and, if the core is running, restarting
 it. Until a node is applied, the node store records only what the user wants, not what the core
-runs. From the node list the user triggers it by tapping a row (see 切换节点).
+runs. From the 节点详情弹窗 the user triggers it with the 应用 button (see 切换节点).
 _Avoid_: select (that only moves the pointer)
 
 **已应用节点 (Applied node)**:
@@ -159,11 +159,11 @@ list while the core is stopped; the tproxy switch is a preference and stays as i
 _Avoid_: reset, clear, wipe, uninstall
 
 **切换节点 (Switch node)**:
-Tapping a node in the node list: it becomes the selected node and is applied, so the core runs
-it, restarting a running core. Normally the only gesture that changes which node carries
-traffic; the exception is an import into a store with no applied node, which switches without
-a tap (see 添加弹窗).
-_Avoid_: select, choose (those move the pointer, not the traffic)
+Pressing 应用 in the 节点详情弹窗: it becomes the selected node and is applied, so the core runs
+it, restarting a running core. Opening the dialog is not 切换节点, and normally this is the only
+gesture that changes which node carries traffic; the exception is an import into a store with no
+applied node, which switches without the dialog (see 添加弹窗).
+_Avoid_: select, choose (those move the pointer, not the traffic), tapping a row (that opens the dialog)
 
 **节点出站 (Node outbound)**:
 The applied node rendered as one Xray outbound: data the WebUI writes and the module assembles
@@ -213,15 +213,38 @@ One proxy endpoint with everything needed to reach it: address, port, protocol a
 transport/security parameters.
 _Avoid_: server, proxy (that is the role, not the thing), config
 
+**分享链接 (Share link)**:
+A `vless://`, `vmess://`, `trojan://` or `ss://` URI pasted into the 添加弹窗; the parser turns
+it into a 节点.
+_Avoid_: 节点链接 (that is the derived link a stored node copies)
+
 **节点库 (Node store)**:
 The user's whole set of nodes — the ones added by hand plus the ones a subscription supplied.
 _Avoid_: pool, node list (that is its form on the Nodes page; see 节点列表)
 
 **节点列表 (Node list)**:
 The Nodes page's rendering of the node store: one entry per node, with the applied node marked
-and a selected-but-unapplied node marked too. This version renders the manually added nodes;
+and a selected-but-unapplied node marked too. Outside edit mode a row tap opens the
+节点详情弹窗; edit mode turns the row into a 勾选. This version renders the manually added nodes;
 subscription nodes await a subscription feature.
 _Avoid_: node store (that is the data), pool
+
+**节点详情弹窗 (Node detail dialog)**:
+The read-only dialog a node row opens outside edit mode: it shows the node's fields, copies its
+节点链接, and holds the 应用 button that performs 切换节点. Opening it never writes `selected` or
+touches the core.
+_Avoid_: 应用弹窗, 节点信息页
+
+**节点链接 (Node link)**:
+The share link derived from a stored 节点's fields, used by the 节点详情弹窗's copy actions. It
+reflects the node store, not necessarily the 分享链接 originally pasted into the 添加弹窗.
+_Avoid_: 原始链接, 分享链接 (that is the input to 添加弹窗)
+
+**订阅 Base64 (Subscription Base64)**:
+The Base64 encoding of a 节点链接 as one line of subscription content; for vmess the link is
+already Base64 JSON, so the result is double-encoded on purpose. It is an encoding, not
+encryption.
+_Avoid_: Base64 加密, Base64 链接 (too vague)
 
 **勾选 (Check)**:
 The edit-mode mark a user puts on node rows to say which ones a batch delete would remove.
@@ -236,7 +259,8 @@ parsing is the first half of that one import gesture, not a separate step. Succe
 the dialog with a toast; failed lines stay in the dialog for fixing and retrying. Opening
 it never switches or applies anything. Importing into a store with no applied node also
 switches a node — the selected one when the pointer still resolves, else the first node the
-list shows (see 切换节点); any other import only fills the store.
+list shows (see 切换节点); that is the one apply path that does not go through the
+节点详情弹窗. Any other import only fills the store.
 _Avoid_: add page, import page, subscription page (that is the 订阅 feature), parse step
 
 **订阅 (Subscription)**:
@@ -245,9 +269,10 @@ refresh replaces them wholesale, while manually added nodes are never touched.
 _Avoid_: feed, provider, source
 
 **当前节点 (Selected node)**:
-The node the user last chose to use: the pointer `state.json` records. It normally equals the
-applied node; a failed switch leaves it on the attempted node. It is a pointer, not a copy, so
-a node that disappears from the store without being deleted (a subscription refresh) leaves the
-selection dangling rather than stale; deleting the selected node clears it, and an import into
-a store with no applied node sets it to the node it switches, applying it in the same gesture.
+The node the user last chose to use: the pointer `state.json` records, written when 应用 is
+pressed. It normally equals the applied node; a failed switch leaves it on the attempted node.
+It is a pointer, not a copy, so a node that disappears from the store without being deleted (a
+subscription refresh) leaves the selection dangling rather than stale; deleting the selected
+node clears it, and an import into a store with no applied node sets it to the node it switches,
+applying it in the same gesture.
 _Avoid_: active node, current proxy, main node
