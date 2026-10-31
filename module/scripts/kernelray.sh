@@ -24,6 +24,7 @@ KR_STATE=$KR_MODDIR/state.json
 KR_OUTBOUND=$KR_MODDIR/outbound.json
 KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
+KR_LOGLEVEL=$KR_RUNDIR/loglevel
 
 # Geo data (docs/adr/0014): geosite.dat and geoip.dat ship inside the module ZIP, and the core
 # finds them only because we say so -- Xray's own fallback search starts at the process cwd,
@@ -64,7 +65,7 @@ kr_dirs() {
   # The module dir itself keeps its installed mode; only our own subdirs are tightened.
   chmod 700 "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
   chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" \
-    "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" 2>/dev/null
+    "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" "$KR_LOGLEVEL" 2>/dev/null
   [ -n "${KR_TP_SWITCH:-}" ] && chmod 600 "$KR_TP_SWITCH" 2>/dev/null
   [ -n "${KR_ROUTE:-}" ] && chmod 600 "$KR_ROUTE" 2>/dev/null
 }
@@ -193,6 +194,73 @@ kr_setting_port() { # <key> <default>
   [ "$_v" -ge 1 ] && [ "$_v" -le 65535 ] && echo "$_v" || echo "$2"
 }
 
+# The 日志等级 (docs/adr/0015): the shell's preference, like the tproxy switch and the
+# 分流模式. An absent file is the default 警告, so a module update (which replaces runtime/)
+# resets it, and an unknown value falls back to 警告 rather than baking a bad level into a
+# config the core would reject.
+KR_LOGLEVEL_DEFAULT=warning
+
+kr_loglevel_get() {
+  _lv=""
+  [ -s "$KR_LOGLEVEL" ] && _lv=$(sed -n '1p' "$KR_LOGLEVEL" 2>/dev/null)
+  case "$_lv" in
+    none | error | warning | info | debug) echo "$_lv" ;;
+    *) echo "$KR_LOGLEVEL_DEFAULT" ;;
+  esac
+}
+
+# The level config.json actually carries; returns 1 when the config or the field is absent.
+# The start drift check and the status kv use it to tell "saved" from "already running".
+kr_loglevel_config() {
+  [ -s "$KR_CONF" ] || return 1
+  _lvc=$(awk -F'"' '/^[[:space:]]*"loglevel"/ { print $4; exit }' "$KR_CONF" 2>/dev/null)
+  [ -n "$_lvc" ] || return 1
+  echo "$_lvc"
+}
+
+# loglevel <level>: persist the preference only. The running core and config.json are left
+# alone; the next core start re-renders the config to match (docs/adr/0015). Writing the
+# default removes the file, so absence stays the one representation of 警告.
+kr_loglevel_set() { # <none|error|warning|info|debug>
+  case "$1" in
+    none | error | warning | info | debug) ;;
+    *)
+      echo "usage: kernelray.sh loglevel {none|error|warning|info|debug|status}" >&2
+      return 2
+      ;;
+  esac
+  kr_dirs
+  _old=$(kr_loglevel_get)
+  if [ "$1" = "$KR_LOGLEVEL_DEFAULT" ]; then
+    rm -f "$KR_LOGLEVEL"
+  else
+    printf '%s\n' "$1" >"$KR_LOGLEVEL" 2>/dev/null || {
+      echo "could not write $KR_LOGLEVEL" >&2
+      return 1
+    }
+    chmod 600 "$KR_LOGLEVEL" 2>/dev/null
+  fi
+  if [ "$_old" = "$1" ]; then
+    kr_log "log level: $_old (unchanged)"
+  else
+    kr_log "log level: $_old -> $1 (takes effect at the next core start)"
+  fi
+  return 0
+}
+
+kr_loglevel_status() {
+  _lv=$(kr_loglevel_get)
+  _lvc=$(kr_loglevel_config) || _lvc="-"
+  echo "level=$_lv"
+  echo "active=$_lvc"
+  if kr_running && [ "$_lvc" != "$_lv" ]; then
+    echo "pending=1"
+  else
+    echo "pending=0"
+  fi
+  return 0
+}
+
 kr_status_write() { # <state> <phase>
   _s=$(cat "$KR_STARTED" 2>/dev/null)
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
@@ -224,6 +292,10 @@ kr_render_config() { # <outbound-file> [route-mode override]
   fi
   if ! grep -q '__KERNELRAY_SOCKS_PORT__' "$KR_TMPL" || ! grep -q '__KERNELRAY_HTTP_PORT__' "$KR_TMPL"; then
     kr_log "config template $KR_TMPL has no inbound port placeholders"
+    return 1
+  fi
+  if ! grep -q '__KERNELRAY_LOGLEVEL__' "$KR_TMPL"; then
+    kr_log "config template $KR_TMPL has no loglevel placeholder"
     return 1
   fi
   # No outbound, no config: the core only ever runs a config derived from an applied
@@ -288,6 +360,7 @@ kr_render_config() { # <outbound-file> [route-mode override]
   KR_OUT_LINE=$_line KR_TP_TAKEOVER=$_takeover KR_TP_MARK=$_mark \
     KR_SOCKS_PORT=$(kr_setting_port socksPort 10808) \
     KR_HTTP_PORT=$(kr_setting_port httpPort 10809) \
+    KR_LOGLEVEL_VAL=$(kr_loglevel_get) \
     KR_TP_INBOUND_BLOCK=$_tp_in KR_DNS_OUTBOUND_BLOCK=$_dns_out \
     KR_DNS_BLOCK=$_dns KR_ROUTING_BLOCK=$_routing awk '
     BEGIN {
@@ -310,6 +383,9 @@ kr_render_config() { # <outbound-file> [route-mode override]
       ph = "\"__KERNELRAY_HTTP_PORT__\""
       p = index(line, ph)
       if (p > 0) line = substr(line, 1, p - 1) ENVIRON["KR_HTTP_PORT"] substr(line, p + length(ph))
+      ph = "\"__KERNELRAY_LOGLEVEL__\""
+      p = index(line, ph)
+      if (p > 0) line = substr(line, 1, p - 1) "\"" ENVIRON["KR_LOGLEVEL_VAL"] "\"" substr(line, p + length(ph))
       # The routing block exists in both forms since ADR 0014: spliced when the mode authored
       # one, dropped when it did not.
       ph = "\"__KERNELRAY_ROUTING__\""
@@ -637,16 +713,22 @@ kr_start_locked() {
     grep -q '"tag":"tp-in"' "$KR_CONF" 2>/dev/null && _have_tp=1
     _have_cn=global
     grep -q 'geosite:cn' "$KR_CONF" 2>/dev/null && _have_cn=cn
-    # Only the directions that cannot work are repaired: a config that is *more* takeover-y than
-    # this start (the switch went off), one that is *less* takeover-y than the rules that are up
-    # (capturing into a core with no tproxy inbound blackholes traffic, docs/adr/0011), and a cn
-    # config whose geo data is gone (docs/adr/0014). A global config while the preference says
-    # cn is left alone: that is what a failed switch's rollback deliberately leaves behind.
+    # The 日志等级 promises to take effect at the next start (docs/adr/0015), so a mismatch
+    # is always repaired here, not only the directions that cannot work.
+    _want_lv=$(kr_loglevel_get)
+    _have_lv=$(kr_loglevel_config) || _have_lv=""
+    # Only the takeover/routing directions that cannot work are repaired: a config that is
+    # *more* takeover-y than this start (the switch went off), one that is *less* takeover-y
+    # than the rules that are up (capturing into a core with no tproxy inbound blackholes
+    # traffic, docs/adr/0011), and a cn config whose geo data is gone (docs/adr/0014). A
+    # global config while the preference says cn is left alone: that is what a failed
+    # switch's rollback deliberately leaves behind.
     _drift=0
     [ "$_have_tp" != "$_want_tp" ] && _drift=1
     [ "$_have_cn" = cn ] && [ "$KR_ROUTE_EFFECTIVE" = global ] && _drift=1
+    [ "$_have_lv" != "$_want_lv" ] && _drift=1
     if [ "$_drift" = 1 ]; then
-      kr_tp_log "start: the config on disk does not match this start (takeover $_have_tp->$_want_tp, routing $_have_cn->$KR_ROUTE_EFFECTIVE); re-rendering"
+      kr_tp_log "start: the config on disk does not match this start (takeover $_have_tp->$_want_tp, routing $_have_cn->$KR_ROUTE_EFFECTIVE, log $_have_lv->$_want_lv); re-rendering"
       if ! kr_tp_swap_config "$_want_tp" "$KR_OUTBOUND"; then
         kr_log "start: could not re-render the config for this start"
         kr_status_write failed no-config
@@ -732,6 +814,7 @@ kr_report() {
       echo "route: $_rt"
     fi
   fi
+  echo "level: $(kr_loglevel_get)"
   echo "log:   $KR_LOG"
   if kr_running; then
     echo "pid:   $(kr_pid)"
@@ -797,6 +880,13 @@ kr_status_kv() {
     kr_geodata_ok && _geo=ok
     _geover=$(sed -n '1p' "$KR_GEODATA/VERSION" 2>/dev/null)
   fi
+  # The 日志等级 preference and whether config.json already carries it: the UI shows the
+  # pending hint only while a running core predates the change (docs/adr/0015). A stopped
+  # core needs no hint: its next start re-renders the config.
+  _lv=$(kr_loglevel_get)
+  _lvc=$(kr_loglevel_config) || _lvc=""
+  _lvp=0
+  [ "$_state" = running ] && [ "$_lvc" != "$_lv" ] && _lvp=1
   echo "state=$_state"
   echo "phase=$_phase"
   echo "pid=$_pid"
@@ -814,6 +904,8 @@ kr_status_kv() {
   echo "geodataver=$_geover"
   echo "socks=$(kr_setting_port socksPort 10808)"
   echo "http=$(kr_setting_port httpPort 10809)"
+  echo "loglevel=$_lv"
+  echo "loglevelpending=$_lvp"
 }
 
 kr_tail() {
@@ -846,6 +938,16 @@ kr_cli() {
           ;;
       esac
       ;;
+    loglevel)
+      case "${1:-status}" in
+        none | error | warning | info | debug) kr_loglevel_set "$1" ;;
+        status) kr_loglevel_status ;;
+        *)
+          echo "usage: kernelray.sh loglevel {none|error|warning|info|debug|status}" >&2
+          return 2
+          ;;
+      esac
+      ;;
     status) kr_status_kv ;;
     log) kr_tail "${1:-200}" ;;
     tproxy)
@@ -859,7 +961,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status|log [lines]}" >&2
       return 2
       ;;
   esac

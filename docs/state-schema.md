@@ -81,7 +81,10 @@ geo data before it can promise anything. `state.json` stays the UI's file.
 
 The WebUI's other Settings-page entries — the language and log buffer size in the General
 card — deliberately do **not** live here: those are UI preferences, not core intent, and they
-stay in the WebView's own localStorage.
+stay in the WebView's own localStorage. The 日志等级 is not a UI preference either, but it is
+not `state.json` intent: it changes `config.json`, so it is the shell's own file,
+`runtime/loglevel` ([ADR 0015](adr/0015-log-level-waits-for-the-next-core-start.md)), and it
+takes effect at the next core start.
 
 ## Node
 

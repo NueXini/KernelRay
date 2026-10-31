@@ -2,7 +2,7 @@
   "log": {
     "access": "none",
     "error": "/data/adb/modules/kernelray/logs/xray.log",
-    "loglevel": "warning",
+    "loglevel": "__KERNELRAY_LOGLEVEL__",
     "dnsLog": false
   },
   "inbounds": [

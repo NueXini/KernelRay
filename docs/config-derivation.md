@@ -22,6 +22,7 @@ outbound carries the v0.7 bypass mark) and [ADR 0007](adr/0007-one-tap-switches-
 | `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route` |
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 | `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
+| `runtime/loglevel` | shell | the persisted 日志等级; absent = 警告 (docs/adr/0015) |
 | `geodata/` | repo | `geosite.dat`, `geoip.dat` and the `VERSION` the 分流规则 name categories from (docs/adr/0014) |
 
 One writer per file: the UI never writes `config.json`, `runtime/applied` or `status.json`; the
@@ -57,6 +58,9 @@ and four outbounds —
 - The first outbound is Xray's default when no routing rule matches. It is always the applied
   node's outbound (tag `proxy`): `kr_render_config` refuses to render without one — the core
   never runs a config that is not derived from an applied node ([ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)).
+- `"loglevel": "__KERNELRAY_LOGLEVEL__"` is replaced by the 日志等级 preference
+  (`runtime/loglevel`, default 警告) on every render. The value is validated before it is
+  spliced in, and a template without the placeholder is refused like one without the ports.
 - The takeover placeholders follow the same trick, one per line, each carrying its own
   leading comma: `,"__KERNELRAY_TPROXY_INBOUND__"` in `inbounds` and
   `,"__KERNELRAY_DNS_OUTBOUND__"` in `outbounds`, plus the top-level `"dns"` and `"routing"`
@@ -120,6 +124,18 @@ that are up (a capture into a core with no tproxy inbound blackholes traffic), a
 config whose geo data has gone (ADR 0014). A global config while the preference says `cn` is
 left alone: that is what a failed switch's rollback deliberately leaves behind.
 
+## The 日志等级
+
+The log level is a render input and a deferred preference, like the tproxy switch (ADR 0015). The UI
+saves it through `kernelray.sh loglevel` (警告 is the default and removes the preference file),
+and the next core start notices that `config.json` carries a different level, re-renders it and
+only then runs `-test` and starts. Nothing else re-renders on a level change. Because
+`kr_render_config` always reads the preference, an apply, a ports save or a routing switch also
+bakes the saved level into the config they rewrite.
+
+`status` reports both sides: `loglevel=` is the preference, and `loglevelpending=` is `1` only
+while a running core still carries a different level in `config.json`.
+
 ## Applying a node
 
 Tapping a node row in the UI is one gesture: it writes `state.selected`, renders that node,
@@ -178,7 +194,8 @@ shell one flat outbound. The one exception is the inbound ports
 extracts exactly two flat integer keys from the `settings` object with `sed` and falls back
 per field to 10808/10809 when anything is off. The 分流模式 did not grow that exception: it is
 the shell's own preference file ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)),
-like the tproxy switch, so the `sed` still reads two integers.
+like the tproxy switch, so the `sed` still reads two integers. The 日志等级 is the same kind of
+shell preference ([ADR 0015](adr/0015-log-level-waits-for-the-next-core-start.md)).
 
 ## Applying the inbound ports
 

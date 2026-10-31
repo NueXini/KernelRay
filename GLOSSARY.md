@@ -192,6 +192,17 @@ The files a reader consults to answer "what is the module doing": `runtime/statu
 `logs/kernelray.log`, the module's own log. Status is written, never inferred by callers.
 _Avoid_: health, heartbeat
 
+**日志等级 (Log level)**:
+The verbosity of the 核心's own log (`logs/xray.log`): how much the core writes there. It is a
+preference of its own, not the 日志行数 and not the module's own log (`kernelray.log`), which has
+no levels.
+_Avoid_: 日志级别, 调试模式
+
+**日志行数 (Log buffer)**:
+How many recent lines the Log page shows from the core log. A display choice only: changing it
+never changes what the core writes.
+_Avoid_: 日志大小, 日志上限
+
 **节点 (Node)**:
 One proxy endpoint with everything needed to reach it: address, port, protocol and its
 transport/security parameters.

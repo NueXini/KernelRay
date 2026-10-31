@@ -33,13 +33,13 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
 | routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `geodata/` |
 | action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch and the 分流模式 live in Settings |
+| WebUI | start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch, the 分流模式 and the 日志等级 live in Settings |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
-| log | `logs/xray.log` (core) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
+| log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
 
 > **Everything lives in the module dir.** Nothing is written outside it, so uninstalling leaves no
 > residue. The flip side: a module update replaces that directory wholesale, so `config.json`,
-> `state.json`, `outbound.json`, `outbound.meta` and the logs are reset when you upgrade (see
+> `state.json`, `outbound.json`, `outbound.meta`, `runtime/` and the logs are reset when you upgrade (see
 > [`docs/adr/0002`](docs/adr/0002-everything-lives-in-the-module-dir.md)).
 
 Point any app, Termux command or adb-forwarded client at the socks port to check that the
@@ -142,7 +142,7 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `tests/nodelist.test.js` | node store → list rows (applied/selected/changed markers) tests, run against the shipped block |
 | `tests/prefs.test.js` | Settings-page preference (theme, language, log buffer) normalise/load/save tests, run against the shipped block |
 | `tests/theme.test.js` | theme pref → `data-theme` resolution, the system-following subscription and the head-time stamp, run against the shipped `theme.js` |
-| `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths and start rollback, run against the shipped shell + a fake core |
+| `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths, start rollback and the 日志等级's start-time repair, run against the shipped shell + a fake core |
 | `tests/tproxy.test.js` | rule install/remove, conflict detection, the start-time engagement and the switch preference, run against fake iptables/ip binaries |
 | `tests/routing.test.js` | 分流模式 render matrix (全局/大陆直连 × takeover/idle), the geo-data degradation and the `routing` CLI's failure paths, run against the shipped shell |
 | `docs/webui.png` | screenshot of the WebUI |
@@ -236,11 +236,14 @@ them:
 - **Nodes** — the node list (tap a row to switch and apply), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
 - **Settings** — a **General** card with the theme (auto / 日间 / 夜间), the UI language
-  (auto / 中文 / English) and the log buffer size, the inbound ports, the tproxy switch
-  (tproxy透明代理), and the 分流模式 (全局 / 大陆直连) with the pinned geo-data version under it.
-  Theme, language and log buffer are WebView preferences; the ports live in `state.json`, the
-  tproxy switch in `runtime/tproxy` and the routing mode in `runtime/route`, so none of them
-  survives an update or uninstall.
+  (auto / 中文 / English), the log buffer size and the 日志等级 (关闭 / 错误 / 警告 / 信息 /
+  调试), the inbound ports, the tproxy switch (tproxy透明代理), and the 分流模式 (全局 /
+  大陆直连) with the pinned geo-data version under it. Theme, language and log buffer are
+  WebView preferences; the ports live in `state.json`, the tproxy switch in `runtime/tproxy`,
+  the routing mode in `runtime/route` and the log level in `runtime/loglevel`, so none of
+  them survives an update or uninstall. The log level applies at the next core start (like
+  the tproxy switch), not immediately; 调试 writes a lot, so switch back to 警告 when the
+  diagnosis is done.
 
 Tabs are hash routes (`#/status`, `#/nodes`, `#/log`, `#/settings`): a reload or a deep link
 lands on the same tab, and anything else falls back to `#/status`. Only the visible tab is

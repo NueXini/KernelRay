@@ -142,7 +142,8 @@ function makeModule(core) {
     meta: path.join(dir, "outbound.meta"),
     applied: path.join(dir, "runtime", "applied"),
     status: path.join(dir, "runtime", "status.json"),
-    tproxy: path.join(dir, "runtime", "tproxy")
+    tproxy: path.join(dir, "runtime", "tproxy"),
+    loglevel: path.join(dir, "runtime", "loglevel")
   };
 }
 
@@ -200,6 +201,7 @@ const BODY_UNAPPLY = '. "$KR_TEST_SCRIPT"; kr_unapply';
 const BODY_PORTS = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply_ports';
 const BODY_START = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
+const BODY_CLI = '. "$KR_TEST_SCRIPT"; kr_cli "$@"';
 
 // ---- template rendering -----------------------------------------------------------------
 
@@ -214,6 +216,7 @@ check("template: valid JSON with the quoted outbound placeholder", () => {
   }
   eq(t.dns, "__KERNELRAY_DNS__", "dns placeholder");
   eq(t.routing, "__KERNELRAY_ROUTING__", "routing placeholder");
+  eq(t.log.loglevel, "__KERNELRAY_LOGLEVEL__", "log level placeholder");
 });
 
 check("render: no outbound is refused — the core only runs an applied node's config", () => {
@@ -445,6 +448,85 @@ check("ports: a failed xray -test leaves config.json and the applied id untouche
   }
   eq(readJson(m.config), { sentinel: true }, "old config untouched");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "old applied id untouched");
+});
+
+// ---- 日志等级 (log level) ---------------------------------------------------------------
+
+check("render: the log level comes from runtime/loglevel, defaulting to 警告", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.log.loglevel, "warning", "no preference file: the default");
+  ["none", "error", "info", "debug"].forEach((lv) => {
+    fs.writeFileSync(m.loglevel, lv + "\n");
+    cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+    eq(cfg.log.loglevel, lv, lv);
+  });
+  fs.writeFileSync(m.loglevel, "warning\n");
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.log.loglevel, "warning", "the explicit default");
+  fs.writeFileSync(m.loglevel, "DEBUG\n");
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.log.loglevel, "warning", "an unknown value falls back to the default");
+});
+
+check("render: a template without the log level placeholder is refused", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  const tmpl = path.join(m.dir, "config.example.json");
+  const t = JSON.parse(fs.readFileSync(tmpl, "utf8"));
+  delete t.log.loglevel;
+  fs.writeFileSync(tmpl, JSON.stringify(t));
+  const r = runFail(m.dir, BODY_RENDER, [shPath(m.outbound)]);
+  if (!/loglevel placeholder/.test(r.stdout + r.stderr)) {
+    throw new Error("expected a loglevel placeholder refusal, got: " + (r.stdout + r.stderr));
+  }
+});
+
+check("loglevel: the CLI writes the preference and leaves config.json alone", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  runShell(m.dir, BODY_APPLY, [ID]);
+  const before = fs.readFileSync(m.config, "utf8");
+  runShell(m.dir, BODY_CLI, ["loglevel", "debug"]);
+  eq(fs.readFileSync(m.loglevel, "utf8").trim(), "debug", "preference written");
+  eq(fs.readFileSync(m.config, "utf8"), before, "config.json untouched");
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id untouched");
+  const st = runShell(m.dir, BODY_CLI, ["loglevel", "status"]);
+  if (!/^level=debug$/m.test(st) || !/^active=warning$/m.test(st) || !/^pending=0$/m.test(st)) {
+    throw new Error("unexpected loglevel status:\n" + st);
+  }
+  runShell(m.dir, BODY_CLI, ["loglevel", "warning"]);
+  if (fs.existsSync(m.loglevel)) { throw new Error("setting the default must remove the file"); }
+});
+
+check("loglevel: an unknown level is a usage error and changes nothing", () => {
+  const m = makeModule();
+  const r = runFail(m.dir, BODY_CLI, ["loglevel", "verbose"]);
+  eq(r.status, 2, "exit code");
+  if (fs.existsSync(m.loglevel)) { throw new Error("no preference must be written"); }
+});
+
+check("start: a saved log level is re-rendered before the core runs", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  runShell(m.dir, BODY_APPLY, [ID]);
+  runShell(m.dir, BODY_START);
+  runShell(m.dir, BODY_CLI, ["loglevel", "debug"]);
+  // The running config is still the old one: the state the UI warns about.
+  eq(readJson(m.config).log.loglevel, "warning", "config untouched before the next start");
+  const pending = runShell(m.dir, BODY_CLI, ["status"]);
+  if (!/^loglevel=debug$/m.test(pending) || !/^loglevelpending=1$/m.test(pending)) {
+    throw new Error("expected loglevelpending=1 while the core runs, got:\n" + pending);
+  }
+  runShell(m.dir, BODY_STOP);
+  runShell(m.dir, BODY_START);
+  eq(readJson(m.config).log.loglevel, "debug", "the next start re-renders the new level");
+  const after = runShell(m.dir, BODY_CLI, ["status"]);
+  if (!/^loglevelpending=0$/m.test(after)) {
+    throw new Error("expected loglevelpending=0 after the restart, got:\n" + after);
+  }
+  runShell(m.dir, BODY_STOP);
 });
 
 // ---- kr_ensure_config -------------------------------------------------------------------

@@ -11,6 +11,9 @@ var OUTBOUND_META = MOD + "/outbound.meta";
 // Log buffer size is a Settings-page preference; 200 is the default before prefs load.
 var logLines = 200;
 var POLL_MS = 2000;
+// The 日志等级 is core intent, not a WebView preference: the select follows the shell's
+// status (runtime/loglevel) and the saved value applies at the next core start (docs/adr/0015).
+var LOG_LEVELS = ["none", "error", "warning", "info", "debug"];
 
 // Language and theme are Settings-page preferences, not boot-time facts: applyLang()
 // reassigns T, applyTheme() (theme.js) stamps data-theme, and every T.x read picks the
@@ -66,6 +69,11 @@ var DICT_ZH = {
   setTheme: "主题", themeAuto: "自动", themeLight: "日间", themeDark: "夜间",
   setLang: "语言", langAuto: "自动",
   setLog: "日志行数",
+  setLogLevel: "日志等级",
+  logLevelNone: "关闭", logLevelError: "错误", logLevelWarning: "警告",
+  logLevelInfo: "信息", logLevelDebug: "调试",
+  logLevelToast: "日志等级将在下次启动核心时生效",
+  logLevelPending: "已保存；停止再启动核心后生效。",
   setPorts: "入站端口",
   setPortsHint: "本地 socks/http 入站在 127.0.0.1 上监听的端口。保存后重写核心配置；核心在运行时会重启。",
   portRange: "端口必须是 1–65535 之间的整数",
@@ -141,6 +149,11 @@ var DICT_EN = {
   setTheme: "Theme", themeAuto: "Auto", themeLight: "Light", themeDark: "Dark",
   setLang: "Language", langAuto: "Auto",
   setLog: "Log buffer",
+  setLogLevel: "Log level",
+  logLevelNone: "None", logLevelError: "Error", logLevelWarning: "Warning",
+  logLevelInfo: "Info", logLevelDebug: "Debug",
+  logLevelToast: "The log level applies at the next core start",
+  logLevelPending: "Saved; stop and start the core to apply.",
   setPorts: "Inbound ports",
   setPortsHint: "The ports the local socks/http inbounds listen on, at 127.0.0.1. Saving rewrites the core config; a running core restarts.",
   portRange: "Ports must be integers between 1 and 65535",
@@ -190,6 +203,10 @@ var els = {
   selTheme: $("sel-theme"), lSetTheme: $("l-set-theme"),
   lThemeAuto: $("l-theme-auto"), lThemeLight: $("l-theme-light"), lThemeDark: $("l-theme-dark"),
   selLog: $("sel-log"), lSetLog: $("l-set-log"),
+  selLogLevel: $("sel-loglevel"), lSetLogLevel: $("l-set-loglevel"),
+  lLogLevelNone: $("l-loglevel-none"), lLogLevelError: $("l-loglevel-error"),
+  lLogLevelWarning: $("l-loglevel-warning"), lLogLevelInfo: $("l-loglevel-info"),
+  lLogLevelDebug: $("l-loglevel-debug"), setLogLevelHint: $("set-loglevel-hint"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetRoute: $("l-set-route"), lSetRouteMode: $("l-set-route-mode"),
@@ -259,6 +276,13 @@ function label(key) {
   els.lSetLang.textContent = T.setLang;
   els.lLangAuto.textContent = T.langAuto;
   els.lSetLog.textContent = T.setLog;
+  els.lSetLogLevel.textContent = T.setLogLevel;
+  els.lLogLevelNone.textContent = T.logLevelNone;
+  els.lLogLevelError.textContent = T.logLevelError;
+  els.lLogLevelWarning.textContent = T.logLevelWarning;
+  els.lLogLevelInfo.textContent = T.logLevelInfo;
+  els.lLogLevelDebug.textContent = T.logLevelDebug;
+  els.setLogLevelHint.textContent = T.logLevelPending;
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
@@ -1585,6 +1609,13 @@ function renderStatus(kv) {
   els.setGeodataHint.textContent = T.geodataLabel.replace("{v}",
     kv.geodata === "missing" ? T.geodataMissing : (kv.geodataver || T.unknown));
 
+  // The 日志等级 comes from the shell, not localStorage: the select shows the saved
+  // preference, and the hint appears only while a running core still carries the old level
+  // (it applies at the next start, docs/adr/0015).
+  var logLevel = LOG_LEVELS.indexOf(kv.loglevel) >= 0 ? kv.loglevel : "warning";
+  els.selLogLevel.value = logLevel;
+  els.setLogLevelHint.hidden = kv.loglevelpending !== "1";
+
   setButtons();
   // The delete gate depends on the runtime, so a Stop or Start has to re-evaluate the list.
   if (coreRunning() !== listRunning) { renderNodeList(); }
@@ -1824,6 +1855,16 @@ els.selRoute.addEventListener("change", function () {
     return;
   }
   run("routing " + target, T.routeSwitching);
+});
+els.selLogLevel.addEventListener("change", function () {
+  var target = els.selLogLevel.value;
+  if (LOG_LEVELS.indexOf(target) < 0) { return; }
+  var current = lastKv && LOG_LEVELS.indexOf(lastKv.loglevel) >= 0 ? lastKv.loglevel : "warning";
+  if (target === current) { return; }
+  // Same rule as the 分流模式 select: a change made while another action holds the page is
+  // not sent; put the select back where the shell says it is.
+  if (busy) { els.selLogLevel.value = current; return; }
+  run("loglevel " + target, T.logLevelToast);
 });
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(); });

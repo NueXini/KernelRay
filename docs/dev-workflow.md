@@ -26,7 +26,7 @@ node tests/outbound.test.js            # 17 outbound tests passing
 node tests/nodelist.test.js            # 38 node list + delete-gate + import-switch tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
-node tests/config.test.js              # 35 config tests passing（需要 bash 和 /proc）
+node tests/config.test.js              # 44 config tests passing（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
 node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
 ```
@@ -184,6 +184,24 @@ adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.
 `geodata/` 里两个 `.dat` 由 `scripts/pack.sh` 强制要求（`xray -test` 会加载它们）。设备上删掉一个
 再 `routing cn`：CLI 拒绝切换；若偏好已是 `cn` 而文件没了，启动会降级成 `全局` 并在
 `logs/kernelray.log` 留一行 `geo data missing`——**不会**因为缺文件起不来。
+
+**日志等级**：只写 `runtime/loglevel`，**下次启动核心时生效**（ADR 0015）；运行中的核心要
+Stop→Start，停着的核心下次 Start 就带上。`warning` 是默认值（文件不存在），`loglevel status`
+看 `level` / `active` / `pending`：
+
+```sh
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh loglevel status"'
+# level=warning / active=warning / pending=0
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh loglevel debug"'
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh status"' | grep loglevel
+# loglevel=debug  loglevelpending=1（核心在跑，配置还是旧的）
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh stop"'
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh start"'
+adb -s $D shell 'su -c "grep loglevel /data/adb/modules/kernelray/config.json"'
+#     "loglevel": "debug",    → 再 status 应 pending=0
+```
+
+调试档写得很多，排障完记得 `loglevel warning` 切回默认（它会删掉偏好文件）。
 
 ## 8. 在 WebUI 里输入文字（最容易上当的一步）
 
