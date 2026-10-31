@@ -170,6 +170,11 @@ The applied node rendered as one Xray outbound: data the WebUI writes and the mo
 into the core config.
 _Avoid_: node config, proxy JSON
 
+**节点地址钉死 (Node pin)**:
+The applied node's domain resolved once over the still-direct network and fixed into the core
+config, so bootstrapping the node connection never depends on any resolver.
+_Avoid_: 预解析, pinned IP, nodeip (that is the runtime file holding it, not the concept)
+
 **配置模板 (Config template)**:
 `config.example.json`, the fixed Xray config skeleton — inbounds, the fixed outbounds and, from
 v0.7, routing and DNS — from which the core config is generated.

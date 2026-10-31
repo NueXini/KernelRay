@@ -29,6 +29,8 @@ KR_TPLOG=$KR_LOGDIR/kernelray.log
 KR_ROUTE=$KR_RUNDIR/route
 KR_CN_DNS1=223.5.5.5
 KR_CN_DNS2=119.29.29.29
+# Ali DoH's JSON API. An IP literal, so asking it needs no lookup of its own.
+KR_DOH_RESOLVE=https://223.5.5.5/resolve
 
 kr_tp_log() { kr_log "$*"; }
 
@@ -326,10 +328,13 @@ kr_tp_json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
-# Resolve the applied node's host with the system resolver. Only safe while the rules
-# are OFF (direct network); the result is pinned into the core DNS module's hosts so the
-# node connection never depends on an upstream resolver (the bootstrap deadlock, see
-# docs/adr/0008). Prints the ip, or nothing when the host is a literal or unresolvable.
+# Resolve the applied node's host. Only safe while the rules are OFF (direct network);
+# the result is pinned into the core DNS module's hosts so the node connection never
+# depends on an upstream resolver (the bootstrap deadlock, see docs/adr/0008). The
+# system resolver is exactly what a polluted network poisons, so the first ask is the
+# fixed DoH endpoint via curl (A records only, matching the DNS module's UseIPv4);
+# a missing curl or a failed call falls back to the system resolver. Prints the ip,
+# or nothing when the host is a literal or unresolvable.
 kr_tp_resolve_node() {
   _host=$(kr_meta_get host 2>/dev/null)
   case "$_host" in
@@ -337,6 +342,13 @@ kr_tp_resolve_node() {
     *[!0-9.]*) ;; # a domain: resolve it
     *) return 0 ;; # an ipv4 literal
   esac
+  if command -v curl >/dev/null 2>&1; then
+    _out=$(curl -sS --max-time 4 --get --data-urlencode "name=$_host" \
+      --data-urlencode "type=A" "$KR_DOH_RESOLVE" 2>/dev/null |
+      grep -o '"type":1,"data":"[0-9.]*"' | head -n 1 |
+      sed 's/.*"data":"\([0-9.]*\)".*/\1/')
+    [ -n "$_out" ] && { echo "$_out"; return 0; }
+  fi
   _out=$(ping -c1 -W2 "$_host" 2>/dev/null | sed -n 's/^[^(]*(\([0-9.]*\)).*/\1/p' | head -n 1)
   [ -n "$_out" ] && echo "$_out"
 }

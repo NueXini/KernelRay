@@ -79,12 +79,16 @@ pinned (below), rules first, core second (the fail-closed ordering), phase `idle
 **The pinned node address.** The bootstrap chain "connect to the node → resolve the
 node" must not depend on an upstream resolver: on networks where the fixed DoH
 endpoint or the node's own resolution is unreachable, a domain-based node can never
-bootstrap. So `tproxy on` and the boot path resolve the node host with the **system
-resolver while the network is still direct** (rules not yet installed) and write the
-answer to `runtime/nodeip`; the takeover render puts it into the DNS module's `hosts`,
-so the core answers the node domain locally. Resolution failure is not fatal — the
-direct-DoH routing rule remains as the fallback, and the log says so. A stale pin
-(node IP changed, or the device changed network) is rebuilt by toggling the switch.
+bootstrap. So `tproxy on` and the boot path resolve the node host **while the network
+is still direct** (rules not yet installed) and write the answer to `runtime/nodeip`;
+the takeover render puts it into the DNS module's `hosts`, so the core answers the
+node domain locally. The network-provided resolver is the thing a polluted network
+poisons, so the first ask is Ali DoH (`https://223.5.5.5/resolve`, an IP literal that
+needs no lookup of its own) via `curl`, taking the first A record to match the DNS
+module's `UseIPv4`; devices without `curl` — and calls that fail — fall back to the
+system resolver (`ping`). Resolution failure is not fatal — the direct-DoH routing
+rule remains as the fallback, and the log says so. A stale pin (node IP changed, or
+the device changed network) is rebuilt by toggling the switch.
 
 **A records only.** The DNS module runs with `queryStrategy: UseIPv4`. When the device
 has any IPv6 connectivity, AAAA answers make apps prefer v6 — and that traffic either
