@@ -141,8 +141,10 @@ _Avoid_: 接管开关 (the name before the settings-page move), enabled flag, mo
 
 **应用节点 (Apply a node)**:
 Deriving the core's configuration from the selected node and, if the core is running, restarting
-it. Until a node is applied, the node store records only what the user wants, not what the core
-runs. From the 节点详情弹窗 the user triggers it with the 应用 button (see 切换节点).
+it — which only happens when the rendered config actually changes: re-applying the node that is
+already applied is a no-op for the core. Until a node is applied, the node store records only
+what the user wants, not what the core runs. From the 节点详情弹窗 the user triggers it with the
+应用 button (see 切换节点).
 _Avoid_: select (that only moves the pointer)
 
 **已应用节点 (Applied node)**:
@@ -160,9 +162,9 @@ _Avoid_: reset, clear, wipe, uninstall
 
 **切换节点 (Switch node)**:
 Pressing 应用 in the 节点详情弹窗: it becomes the selected node and is applied, so the core runs
-it, restarting a running core. Opening the dialog is not 切换节点, and normally this is the only
-gesture that changes which node carries traffic; the exception is an import into a store with no
-applied node, which switches without the dialog (see 添加弹窗).
+it, restarting a running core once for the new config. Opening the dialog is not 切换节点, and
+normally this is the only gesture that changes which node carries traffic; the exception is an
+import into a store with no applied node, which switches without the dialog (see 添加弹窗).
 _Avoid_: select, choose (those move the pointer, not the traffic), tapping a row (that opens the dialog)
 
 **节点出站 (Node outbound)**:

@@ -354,6 +354,10 @@ kr_tp_resolve_node() {
 }
 
 kr_tp_pin_node() {
+  # One resolve per invocation: an apply pins before it renders, and the start it triggers
+  # runs in the same shell -- asking the same question twice costs a DoH round trip (~0.2-4 s).
+  [ "${KR_NODEIP_PINNED:-0}" = 1 ] && return 0
+  KR_NODEIP_PINNED=1
   _ip=$(kr_tp_resolve_node)
   if [ -n "$_ip" ]; then
     printf '%s\n' "$_ip" >"$KR_NODEIP"
@@ -512,38 +516,36 @@ kr_route_set() { # <global|cn>
     return 1
   fi
   _n=$(kr_applied_id) || _n=""
-  if [ -z "$_n" ] || [ "$(kr_meta_get id 2>/dev/null)" != "$_n" ] || [ ! -s "$KR_OUTBOUND" ]; then
+  if [ -z "$_n" ]; then
     kr_route_write "$1" || return 1
     kr_log "routing: $_cur -> $1 (no applied node; the next apply renders it)"
     return 0
   fi
-  if ! kr_core_works; then
-    kr_log "routing: core missing or not executable"
-    echo "core missing or not executable" >&2
-    return 1
-  fi
-  _tmp=$KR_RUNDIR/config.new.json
-  if ! kr_render_config "$KR_OUTBOUND" "$1" >"$_tmp"; then
-    rm -f "$_tmp"
-    echo "could not render config" >&2
-    return 1
-  fi
-  chmod 600 "$_tmp" 2>/dev/null
-  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
-    rm -f "$_tmp"
-    kr_log "routing: xray -test rejected the $1 config"
-    echo "config test failed (see $KR_LOG)" >&2
-    return 1
-  fi
+  # Render the candidate with this mode before the preference is written: a config the core
+  # rejects leaves the mode exactly where it was.
+  kr_config_candidate "$_n" "$1" || return 1
   if ! kr_route_write "$1"; then
-    rm -f "$_tmp"
+    [ -n "$KR_CANDIDATE" ] && rm -f "$KR_CANDIDATE"
     return 1
   fi
-  if ! kr_swap_config "$_tmp" ""; then
+  if [ -z "$KR_CANDIDATE" ]; then
+    kr_log "routing: $1 (the config already carries it)"
+    return 0
+  fi
+  # The mode is the intent this config was rendered from, so the rollback must restore it
+  # *before* the restored config is started: that start re-derives the config from the mode
+  # (docs/adr/0017).
+  if ! kr_swap_install "$KR_CANDIDATE" ""; then
     kr_route_write "$_cur"
+    return 1
+  fi
+  if ! kr_swap_start; then
+    kr_route_write "$_cur"
+    kr_swap_rollback
     kr_log "routing: the $1 config did not start; the mode is back to $_cur"
     return 1
   fi
+  rm -f "$KR_RUNDIR/config.json.prev" "$KR_RUNDIR/config.form.prev"
   kr_log "routing: $_cur -> $1"
   return 0
 }
@@ -556,12 +558,23 @@ kr_route_status() {
   return 0
 }
 
-# Engage takeover for a core start with the switch on (called from kr_start_locked
-# after the applied-node gate; ADR 0011 couples takeover to the core's start). The
-# config on disk may be stale relative to the switch, so it is re-rendered to match --
-# a takeover-form config without rules loses routing, and rules without a tproxy
-# listener blackhole traffic. Never fails: a conflict or a rule failure degrades to
-# the idle form and a failed/* phase, and the caller still starts the core.
+# The form config.json must have to agree with the live rules: takeover only while the
+# switch says so *and* the rules are up. A marked outbound with no ip rule loses routing
+# (docs/adr/0008), and a tproxy inbound with no rules captures nothing (docs/adr/0011).
+kr_tp_form() { # 1 = the takeover form, 0 = the idle form
+  if kr_tp_switch_on && kr_tp_rules_present; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+}
+
+# Engage takeover for a core start with the switch on (called from kr_start_locked after the
+# applied-node gate; ADR 0011 couples takeover to the core's start). It owns the *rules*,
+# never the config: the form follows from whether they end up installed (kr_tp_form), and
+# kr_ensure_config -- which runs right after this -- renders that form. Never fails: a
+# conflict or a rule failure leaves the rules down and a failed/* phase, and the caller still
+# starts the core (idle form).
 kr_tp_engage() {
   _applied=$(kr_applied_id) || _applied=""
   if [ -z "$_applied" ] || [ "$(kr_meta_get id 2>/dev/null)" != "$_applied" ] || [ ! -s "$KR_OUTBOUND" ]; then
@@ -576,53 +589,21 @@ kr_tp_engage() {
   _why=$(kr_tp_conflict) || _why=""
   if [ -n "$_why" ]; then
     kr_tp_log "engage: conflict, takeover not enforced: $_why"
-    kr_tp_swap_config 0 "$KR_OUTBOUND" || kr_tp_log "engage: could not rewrite the config for the conflict path"
     KR_TP_PHASE=failed/conflict
     kr_status_write stopped failed/conflict
     return 0
   fi
-  # Resolve while the network is still direct; the rules are not up yet.
+  # Resolve while the network is still direct; the rules are not up yet. Memoized, so an
+  # apply that already pinned for this render does not ask twice.
   kr_tp_pin_node
   if ! kr_tp_install; then
     kr_tp_log "engage: rule install failed, takeover not enforced"
-    kr_tp_swap_config 0 "$KR_OUTBOUND" || kr_tp_log "engage: could not rewrite the config after the rule failure"
     KR_TP_PHASE=failed/rules
     kr_status_write stopped failed/rules
     return 0
   fi
-  if ! kr_tp_swap_config 1 "$KR_OUTBOUND"; then
-    kr_tp_log "engage: takeover config failed to test; removing the rules, keeping the switch"
-    kr_tp_remove
-    # The switch is a preference and is never silently rewritten (ADR 0011); the next
-    # start retries. The on-disk config may still be takeover-form; a marked node
-    # outbound with no rules loses routing, so force the no-takeover form.
-    kr_tp_swap_config 0 "$KR_OUTBOUND" || kr_tp_log "engage: could not rewrite the config to the no-takeover form"
-    return 0
-  fi
   KR_TP_PHASE=idle
   kr_tp_log "engage: takeover rules installed before the core starts"
-  return 0
-}
-
-# Render + test + atomically swap config.json without touching a running core.
-# Used at boot, where the core starts afterwards (fail-closed ordering).
-kr_tp_swap_config() { # <0|1 takeover> <outbound-file>
-  _tmp=$KR_RUNDIR/config.new.json
-  if ! KR_TAKEOVER=$1 kr_render_config "$2" >"$_tmp"; then
-    rm -f "$_tmp"
-    return 1
-  fi
-  chmod 600 "$_tmp" 2>/dev/null
-  if ! "$(kr_core)" run -test -c "$_tmp" >>"$KR_LOG" 2>&1; then
-    rm -f "$_tmp"
-    kr_tp_log "config test failed for the takeover=$1 candidate"
-    return 1
-  fi
-  if ! mv -f "$_tmp" "$KR_CONF"; then
-    rm -f "$_tmp"
-    return 1
-  fi
-  chmod 600 "$KR_CONF" 2>/dev/null
   return 0
 }
 

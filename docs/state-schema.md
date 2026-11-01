@@ -80,7 +80,9 @@ serialises it back, so nothing is dropped by an older UI.
 field to the default when a value is missing, non-numeric or out of range. The UI validates
 the pair before writing (1–65535, distinct, never 10810 — the tproxy inbound's port) and
 applies them by calling `kernelray.sh ports`, which re-renders and restarts like a node
-apply. Every other field in `settings` is preserved verbatim and not interpreted yet.
+apply — and does neither when the config already carries the saved ports
+([ADR 0017](adr/0017-one-render-one-test-per-switch.md)). Every other field in `settings` is
+preserved verbatim and not interpreted yet.
 
 The 分流模式 is deliberately **not** in here: it is the shell's own preference, like the tproxy
 switch — `runtime/route`, written by `kernelray.sh routing global|cn`

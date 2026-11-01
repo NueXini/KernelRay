@@ -2,8 +2,10 @@
 
 Status: accepted (amends ADR 0005's rule that the UI never applies a selection implicitly; its
 rule that the applied node can never be deleted is amended by
-[ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md), and its one-tap rule is
-amended by [ADR 0016](0016-a-node-row-opens-a-detail-dialog.md))
+[ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md), its one-tap rule is
+amended by [ADR 0016](0016-a-node-row-opens-a-detail-dialog.md), and "switching restarts the
+core" is narrowed to "when the config bytes change" by
+[ADR 0017](0017-one-render-one-test-per-switch.md))
 
 ## Context
 

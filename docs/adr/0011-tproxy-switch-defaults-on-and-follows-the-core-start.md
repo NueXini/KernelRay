@@ -2,7 +2,9 @@
 
 Status: accepted (supersedes parts of
 [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md) and
-[ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md) listed below)
+[ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md) listed below; the
+re-render inside `kr_tp_engage` is amended by
+[ADR 0017](0017-one-render-one-test-per-switch.md))
 
 ## Context
 
@@ -16,8 +18,9 @@ installed, and — decisively — a settings change must never interrupt a runni
 - **The switch is a pure preference.** `kernelray.sh tproxy on|off` only writes or removes
   `runtime/tproxy`; it never touches the core or the rules. It takes effect at the next
   core start: on, every start (boot or the status page's Start) installs the rules and
-  swaps in the takeover config before the core runs (the fail-closed ordering of ADR 0004
-  is unchanged); off, any stale rules come down and the start is an idle run.
+  the takeover config is in place before the core runs (the fail-closed ordering of ADR 0004
+  is unchanged; since ADR 0017 engage owns only the rules and the config follows from them);
+  off, any stale rules come down and the start is an idle run.
 - **On from install.** The installer creates the switch file, and every module update
   recreates it (ADR 0002: the module dir is replaced wholesale). This deliberately reverses
   ADR 0004's default-off decision and its "auto-enable after upgrade" rejection: the

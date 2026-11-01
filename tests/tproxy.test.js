@@ -72,9 +72,29 @@ const fakeSettings = [
   ""
 ].join("\n");
 
+// No network in these tests: the node-host resolve (kr_tp_pin_node) must fail fast instead
+// of waiting out curl's --max-time and ping's -W2.
+const fakeCurl = [
+  "#!/bin/sh",
+  "exit 1",
+  ""
+].join("\n");
+
+const fakePing = [
+  "#!/bin/sh",
+  "exit 1",
+  ""
+].join("\n");
+
+// -version prints, -test passes, `run -c` stays up so a start can reach "running".
 const fakeCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
+  'if [ "$1" = "run" ] && [ "$2" = "-test" ]; then exit 0; fi',
+  'if [ "$1" = "run" ] && [ "$2" = "-c" ]; then',
+  '  trap "exit 0" TERM INT',
+  "  while :; do sleep 0.2; done",
+  "fi",
   "exit 0",
   ""
 ].join("\n");
@@ -126,7 +146,7 @@ function makeModule() {
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   for (const [name, body] of [["iptables", fakeIpt], ["ip6tables", fakeIpt],
-    ["ip", fakeIp], ["settings", fakeSettings]]) {
+    ["ip", fakeIp], ["settings", fakeSettings], ["curl", fakeCurl], ["ping", fakePing]]) {
     fs.writeFileSync(path.join(stubs, name), body, "utf8");
     fs.chmodSync(path.join(stubs, name), 0o755);
   }
@@ -150,7 +170,10 @@ function runShell(m, body, extraEnv) {
       KR_TEST_SCRIPT: shPath(script),
       FAKE_LOG: shPath(path.join(m.dir, "iptables.log")),
       FAKE_IP_DEF: "default via 10.0.2.2 dev wlan0",
-      PATH: posixPathEnv(path.join(m.dir, "stubs"))
+      PATH: posixPathEnv(path.join(m.dir, "stubs")),
+      // The fake core never binds the socks port, so a start waits for its deadline.
+      KR_START_POLLS: "8",
+      KR_START_STEP: "0.05"
     }, extraEnv || {}),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -178,7 +201,8 @@ function fakeLog(m) {
 const BODY_INSTALL = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_install';
 const BODY_REMOVE = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_remove';
 const BODY_CONFLICT = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_conflict';
-const BODY_BOOT = '. "$KR_TEST_SCRIPT"; kr_dirs; chmod +x "$KR_MODDIR/bin/xray"; kr_tp_engage; echo "phase=${KR_TP_PHASE:-unset}"';
+// The boot path end to end: the gate, the rules (engage) and the config the start runs.
+const BODY_BOOT = '. "$KR_TEST_SCRIPT"; kr_dirs; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 
 // ---- install ----------------------------------------------------------------------------
 
@@ -319,6 +343,23 @@ check("conflict: a foreign TPROXY rule refuses takeover, our own do not", () => 
 });
 
 // ---- engage (start-coupled takeover, ADR 0011) ------------------------------------------
+//
+// These run the whole start path (gate -> engage -> ensure -> fork), because that is where
+// the rules and the config have to agree: engage owns the rules, kr_ensure_config renders
+// the form they demand (docs/adr/0017). The assertions run before the core is stopped, so
+// status.json still describes the start.
+
+function withBoot(m, env, fn) {
+  try {
+    return fn(runAllow(m, BODY_BOOT, env));
+  } finally {
+    try { runShell(m, '. "$KR_TEST_SCRIPT"; kr_stop'); } catch (e) { /* best effort */ }
+  }
+}
+
+function status(m) {
+  return JSON.parse(fs.readFileSync(m.status, "utf8"));
+}
 
 check("engage: no usable outbound installs no rules and keeps the switch", () => {
   const m = makeModule();
@@ -328,68 +369,72 @@ check("engage: no usable outbound installs no rules and keeps the switch", () =>
   fs.writeFileSync(m.config, JSON.stringify({ sentinel: true }));
   fs.writeFileSync(m.applied, ID + "\n");
   fs.rmSync(m.outbound, { force: true });
-  const out = runShell(m, BODY_BOOT, { FAKE_IPT_NOCHAIN: "1" });
-  if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
-  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is not silently cleared");
-  eq(JSON.parse(fs.readFileSync(m.config, "utf8")), { sentinel: true }, "config untouched");
-  const log = fakeLog(m);
-  if (log.includes("iptables -t mangle -N KR_TP_OUTPUT")) {
-    throw new Error("no usable outbound means no rules, even with the switch on (ADR 0011)");
-  }
-  if (!/phase=unset/.test(out)) { throw new Error("unexpected phase: " + out); }
+  withBoot(m, { FAKE_IPT_NOCHAIN: "1" }, () => {
+    if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
+    eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is not silently cleared");
+    eq(JSON.parse(fs.readFileSync(m.config, "utf8")), { sentinel: true }, "config untouched");
+    const log = fakeLog(m);
+    if (log.includes("iptables -t mangle -N KR_TP_OUTPUT")) {
+      throw new Error("no usable outbound means no rules, even with the switch on (ADR 0011)");
+    }
+    eq(status(m).state, "failed", "state");
+    eq(status(m).phase, "no-config", "phase");
+  });
 });
 
 check("engage: nothing applied at all keeps the network direct", () => {
   const m = makeModule();
   fs.writeFileSync(m.tproxy, "on\n");
-  const out = runShell(m, BODY_BOOT, { FAKE_IP_LINK: TUN_UP });
-  if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
-  const log = fakeLog(m);
-  if (log.includes("-N KR_TP_OUTPUT")) {
-    throw new Error("a start without an applied node never installs the rules (ADR 0011)");
-  }
-  if (!/phase=unset/.test(out)) { throw new Error("unexpected phase: " + out); }
+  withBoot(m, { FAKE_IP_LINK: TUN_UP }, () => {
+    if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
+    const log = fakeLog(m);
+    if (log.includes("-N KR_TP_OUTPUT")) {
+      throw new Error("a start without an applied node never installs the rules (ADR 0011)");
+    }
+    eq(status(m).state, "stopped", "state");
+    eq(status(m).phase, "no-node", "phase");
+  });
 });
 
 check("engage: a conflict renders the no-takeover config and reports failed/conflict", () => {
   const m = makeModule();
   writeApplied(m);
-  const out = runShell(m, BODY_BOOT, {
-    FAKE_IPT_NOCHAIN: "1", FAKE_IP_LINK: TUN_UP
+  withBoot(m, { FAKE_IPT_NOCHAIN: "1", FAKE_IP_LINK: TUN_UP }, () => {
+    const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
+    eq(cfg.inbounds.length, 2, "no tproxy inbound after a conflict");
+    eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped");
+    eq(cfg.routing, undefined, "no routing after a conflict");
+    eq(status(m).phase, "failed/conflict", "phase");
+    eq(status(m).tproxy, "on", "the switch stays on: intent is not silently rewritten");
+    if (fs.existsSync(m.tproxy) === false) { throw new Error("switch file must survive"); }
   });
-  const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
-  eq(cfg.inbounds.length, 2, "no tproxy inbound after a conflict");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped");
-  eq(cfg.routing, undefined, "no routing after a conflict");
-  const st = JSON.parse(fs.readFileSync(m.status, "utf8"));
-  eq(st.phase, "failed/conflict", "phase");
-  eq(st.tproxy, "on", "the switch stays on: intent is not silently rewritten");
-  if (!/phase=failed\/conflict/.test(out)) { throw new Error("KR_TP_PHASE wrong: " + out); }
-  if (fs.existsSync(m.tproxy) === false) { throw new Error("switch file must survive"); }
 });
 
 check("engage: a failed rule install reports failed/rules and stays no-takeover", () => {
   const m = makeModule();
   writeApplied(m);
-  const out = runShell(m, BODY_BOOT, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_FAIL_N: "1" });
-  const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
-  eq(cfg.inbounds.length, 2, "no tproxy inbound after a rule failure");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped");
-  const st = JSON.parse(fs.readFileSync(m.status, "utf8"));
-  eq(st.phase, "failed/rules", "phase");
-  if (!/phase=failed\/rules/.test(out)) { throw new Error("KR_TP_PHASE wrong: " + out); }
+  withBoot(m, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_FAIL_N: "1" }, () => {
+    const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
+    eq(cfg.inbounds.length, 2, "no tproxy inbound after a rule failure");
+    eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped");
+    eq(status(m).phase, "failed/rules", "phase");
+  });
 });
 
 check("engage: with no conflict the takeover config is on disk before the core starts", () => {
   const m = makeModule();
   writeApplied(m);
-  const out = runShell(m, BODY_BOOT, {});
-  const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
-  eq(cfg.inbounds.length, 3, "tproxy inbound present");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
-  eq(cfg.routing.rules.some((r) => r.outboundTag === "dns-out"), true, "dns rule present");
-  if (!/phase=idle/.test(out)) { throw new Error("KR_TP_PHASE wrong: " + out); }
-  if (!fs.existsSync(m.tproxy)) { throw new Error("switch file must survive a successful engage"); }
+  withBoot(m, {}, () => {
+    const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
+    eq(cfg.inbounds.length, 3, "tproxy inbound present");
+    eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
+    eq(cfg.routing.rules.some((r) => r.outboundTag === "dns-out"), true, "dns rule present");
+    eq(fs.readFileSync(path.join(m.dir, "runtime", "config.form"), "utf8").trim(), "1",
+      "the installed config records the form it was rendered in");
+    eq(status(m).state, "running", "state");
+    eq(status(m).phase, "idle", "phase");
+    if (!fs.existsSync(m.tproxy)) { throw new Error("switch file must survive a successful engage"); }
+  });
 });
 
 // ---- the switch is a pure preference (ADR 0011) ------------------------------------------

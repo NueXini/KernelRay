@@ -20,6 +20,8 @@ its Apply button is the switch gesture).
 | `config.json` | shell | the config the core actually runs |
 | `state.json` → render | WebUI writes, shell reads | the inbound ports (`settings.socksPort` / `settings.httpPort`), extracted at render time (ADR 0009) |
 | `runtime/applied` | shell | id of the node `config.json` was built from |
+| `runtime/config.tested` | shell | a copy of the exact bytes that passed `xray -test` (ADR 0017) |
+| `runtime/config.form` | shell | the form those bytes were rendered in: `1` takeover, `0` 空转 (ADR 0017) |
 | `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route` |
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 | `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
@@ -107,23 +109,41 @@ fail-closed order) when the switch is on, and tears stale rules down when it is 
 
 ## Start and the switch
 
-`kr_start_locked` consults the switch before rendering the config ([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
-with the switch on it runs `kr_tp_engage`, which re-renders the config to match (the on-disk
-config may be stale), installs the rules before the core starts (fail-closed), and on a
-conflict or a rule failure writes the no-takeover config plus the `failed/conflict` /
-`failed/rules` phase while leaving the switch file untouched — the switch is a preference and
-is never silently rewritten; the WebUI offers a retry. With no applied node the start gate
-refuses first: the core stays down and the rules go nowhere, so a default-on switch cannot
-take a nodeless device over. With the switch off, any stale rules come down and the start is
-an idle run.
+`kr_start_locked` consults the switch first ([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
+with the switch on it runs `kr_tp_engage`, which pins the node host while the network is still
+direct, installs the rules before the core starts (fail-closed), and on a conflict or a rule
+failure leaves the rules down and records the `failed/conflict` / `failed/rules` phase while
+leaving the switch file untouched — the switch is a preference and is never silently
+rewritten; the WebUI offers a retry. With no applied node the start gate refuses first: the
+core stays down and the rules go nowhere, so a default-on switch cannot take a nodeless device
+over. With the switch off, any stale rules come down and the start is an idle run.
 
-A config that cannot work for this start is repaired before the `-test`: one that is *more*
-takeover-y than the switch allows (the switch went off while a takeover config was on disk — the
-documented "turn it off and start again" recovery, which would otherwise leave the node's
-outbound carrying a bypass mark with no ip rule), one that is *less* takeover-y than the rules
-that are up (a capture into a core with no tproxy inbound blackholes traffic), and a 大陆直连
-config whose geo data has gone (ADR 0014). A global config while the preference says `cn` is
-left alone: that is what a failed switch's rollback deliberately leaves behind.
+Engage owns the rules and nothing else; the config follows from them. `kr_config_form` is the
+one place that answers "which form do these rules need" — takeover while the switch says so
+*and* the rules are up, the idle form otherwise — and `kr_ensure_config`, which runs right after
+engage, renders that form and compares bytes. So the directions that used to need their own
+detector are repaired by the same comparison: a config that is *more* takeover-y than the
+switch allows (the documented "turn it off and start again" recovery, which would otherwise
+leave the node's outbound carrying a bypass mark with no ip rule), one that is *less*
+takeover-y than the rules that are up (a capture into a core with no tproxy inbound blackholes
+traffic), a 大陆直连 config whose geo data has gone (ADR 0014), and a log level that changed
+while the core was down (ADR 0015).
+
+## When a start counts as done
+
+`kr_start_locked` forks the core and then waits for the fact instead of sleeping: the socks
+inbound listening on 127.0.0.1 — the port `config.json` carries, not the one `state.json`
+wishes — is what "running" means. A start therefore returns in the time the core actually
+needs (~50-150 ms), and a core that exits is reported as `failed/crashed` on the first poll
+instead of after a fixed second. A core still alive at the deadline (1.5 s) counts as started:
+a slow core is not a failed one, and a core that dies later is still reported as crashed by the
+next status read, which compares the pidfile against the live process.
+
+Two more costs are paid once per invocation rather than once per question: the core probe
+(`xray -version`, which is how "this binary executes here" is decided) is memoized, and the
+stray scan is a single `grep` over `/proc/*/cmdline` narrowed to the candidates instead of a
+`cat` per pid — that fork cost ~5 ms each, i.e. seconds on a phone with several hundred
+processes.
 
 ## The 日志等级
 
@@ -154,23 +174,30 @@ render, `failed/no-config`) rather than a new outbound paired with an old id.
 
 The shell:
 
-1. checks the id and that `outbound.meta`'s `id` equals the argument;
-2. renders the template + outbound into `runtime/config.new.json`;
-3. runs `xray run -test -c runtime/config.new.json` into `logs/xray.log`;
-4. remembers whether the core is running, saves the old config to `runtime/config.json.prev`,
-   and stops the core if it was running;
-5. atomically `mv`s the candidate to `config.json`, chmods it `0600`, and writes
-   `runtime/applied`;
-6. starts the core if it was running before. If the new config does not start, it restores
-   `config.json.prev` and the old applied id, then starts the old config again;
-7. if the core was stopped, writes `status.json` as `stopped/idle` with the new node id.
+1. pins the node's host address while the old node still works (`runtime/nodeip`, ADR 0008) —
+   the resolve needs a working network and the render needs its answer;
+2. asks `kr_config_candidate <id>` for the config this switch would run. It checks the id and
+   that `outbound.meta`'s `id` equals it, renders the template + outbound into
+   `runtime/config.new.json` in the form the live rules demand, and runs
+   `xray run -test -c` on it into `logs/xray.log` — **only when those bytes differ from
+   `config.json`**. When they do not (re-applying the same node), the whole step costs nothing
+   and the gesture ends here: no test, no stop, no restart;
+3. `kr_swap_install` remembers whether the core is running, saves the old config to
+   `runtime/config.json.prev` (and its form to `runtime/config.form.prev`), stops the core if it
+   was running, atomically `mv`s the candidate to `config.json`, chmods it `0600`, records the
+   tested marker + form and writes `runtime/applied`;
+4. `kr_swap_start` starts the core if it was running before. If the new config does not start,
+   `kr_swap_rollback` restores `config.json.prev`, its form and the old applied id, then starts
+   the old config again;
+5. if the core was stopped, writes `status.json` as `stopped/idle` with the new node id.
 
 Failure semantics:
 
 | Failure | Result |
 | --- | --- |
 | render error, meta mismatch, missing outbound | nothing is stopped or replaced; CLI exits non-zero |
-| `xray -test` rejects the candidate | same: old config and running core untouched |
+| the bytes on disk are already this node's config | nothing is tested, stopped or restarted; only `runtime/applied` is re-synced |
+| `xray -test` rejects the candidate | old config and running core untouched; CLI exits non-zero |
 | candidate starts | applied id and `status.json` name the new node |
 | candidate does not start | old config + old applied id restored, old config started; CLI exits non-zero |
 | the restored old config also fails to start | files and applied id are the old ones, but the core is down (`failed/crashed`) |
@@ -180,10 +207,12 @@ A failed `-test` does **not** write a failed `phase`: the old core is still runn
 The CLI returns the error; the WebUI shows it in a toast. Only a failed **start** makes the
 status failed, and the restore path clears it if the old config starts.
 
-Applying always restarts a running core. The node list marks the applied node and, after a
-failed switch, the selected-but-unapplied node. Applying the applied node with no changes does
-nothing to the core; applying it after a re-import kept its id and marked it `dirty` re-applies
-it, and the `dirty` flag clears on success. Importing a node changes nothing until the dialog's
+Applying restarts a running core **only when the bytes change**: the same node applied twice
+is one no-op, and so is saving the ports or the 分流模式 that the config already carries
+(ADR 0017). The node list marks the applied node and, after a failed switch, the
+selected-but-unapplied node. Applying the applied node with no changes does nothing to the
+core; applying it after a re-import kept its id and marked it `dirty` re-applies it, and the
+`dirty` flag clears on success. Importing a node changes nothing until the dialog's
 应用 is pressed — except into a store with no applied node, where the import itself applies a
 node ([ADR 0012](adr/0012-import-applies-the-first-node-when-nothing-is-applied.md)). That
 import is the one apply path that does not go through the 节点详情弹窗.
@@ -221,21 +250,33 @@ password containing quotes, backslashes, `$`, backticks, `&`, `<>` and a newline
 
 ## Boot and self-healing
 
-`service.sh` calls `kr_start`, which uses `config.json` when it exists. Before anything else,
-the start gate demands an applied node: without one, nothing starts and status.json records
-`stopped/no-node` ([ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)).
-`kr_ensure_config` only runs when the file is missing:
+`service.sh` calls `kr_start`. Before anything else, the start gate demands an applied node:
+without one, nothing starts and status.json records `stopped/no-node`
+([ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)).
 
-- if `runtime/applied` exists, `outbound.meta` names the same id, and `outbound.json` is
-  present, the config is rebuilt from that outbound. The UI writes the meta before the
-  outbound, so a crash between its writes leaves a different id and the rebuild refuses; a
-  same-id settings edit can rebuild the older outbound, which is why the node is marked
-  `dirty`;
-- otherwise the rebuild refuses and the start fails with `failed/no-config`: claiming a node
-  is applied while the core ran something else would be worse than staying down.
+`kr_ensure_config` then makes `config.json` the config this start would run — the single place
+the module turns intent into a config
+([ADR 0017](adr/0017-one-render-one-test-per-switch.md)):
 
-The normal boot path never rewrites the config. An upgrade replaces the whole module directory
-(ADR 0002), so config, outbound and applied id are reset together.
+- it renders from `outbound.json` in the form the live rules demand and compares the bytes with
+  `config.json`. Identical bytes are left alone (no test, no write); different bytes are tested
+  and swapped in. That is the whole drift repair: the switch moving, the log level changing and
+  the geo data disappearing all change the rendered bytes, so none of them needs its own
+  detector;
+- when `outbound.meta` names a different node than `runtime/applied` — a switch that failed,
+  where the UI has already written the *next* node — the config on disk is the only description
+  of the applied node, so it is taken as it is. Its recorded form must still agree with the live
+  rules; otherwise the start refuses with "re-tap the node in the WebUI" instead of running a
+  marked outbound with no ip rule or an idle config under installed rules;
+- a refusal (no applied node, no outbound, no config to fall back to) fails the start with
+  `failed/no-config`, a rejected `-test` with `failed/config-invalid`: claiming a node is
+  applied while the core ran something else would be worse than staying down.
+
+The start itself no longer runs `xray -test`: the config it forks on is the one the marker says
+was tested (ADR 0017).
+
+An upgrade replaces the whole module directory (ADR 0002), so config, outbound and applied id
+are reset together.
 
 ## 分流模式 (routing mode)
 
@@ -246,7 +287,9 @@ restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `06
 
 - **Refusals.** `routing cn` exits non-zero, changing nothing, when the geo data is missing
   or when `-test` rejects the candidate. A swap that fails restores the preference to the old
-  mode, so it never claims a form the core does not run.
+  mode *before* the rollback starts the old config, because that start re-derives the config
+  from the mode — restoring the bytes without the preference would only render the failing mode
+  again (ADR 0017).
 - **No applied node.** There is nothing to re-render: the preference is written and the next
   apply renders it.
 - **Degradation.** `kr_route_effective` is what the render may use: `cn` only while
@@ -278,6 +321,8 @@ restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `06
   `outbound.json`, every start needs `runtime/applied`, and every fallback that used to
   produce a direct (freedom) config is gone (ADR 0010).
 - `xray -test` precedes every swap; a candidate that fails never replaces a working config.
+- One render and one test per switch: a config is rendered once, from the intent the caller
+  states, and a start reuses the bytes the swap already tested (ADR 0017).
 - `config.json` is generated from files inside the module dir only: the template, the outbound,
   `state.json`'s ports, the two preference files and `geodata/`. Nothing is fetched at run
   time, and `XRAY_LOCATION_ASSET` is exported by `kernelray.sh` so the core agrees.

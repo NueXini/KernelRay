@@ -44,7 +44,9 @@ kr_dirs
 # The tproxy switch defaults to on (ADR 0011): the core's next start after a node is
 # applied takes the device over. An update recreates it the same way.
 command -v kr_tp_default_on >/dev/null 2>&1 && kr_tp_default_on
-kr_ensure_config
+# No applied node at install time, so this is a refusal by design (ADR 0010): keep its
+# "apply a node first" message out of the installer output.
+kr_ensure_config >/dev/null 2>&1
 kr_status_write installed idle
 
 ui_print "- Installed. Core starts on boot; until a node is applied it stays stopped."

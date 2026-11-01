@@ -29,7 +29,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node, or `direct` for a destination the 分流规则 match; nothing starts until a node is applied |
-| switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core |
+| switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core — one render and one test, and no restart at all when the bytes do not change ([ADR 0017](docs/adr/0017-one-render-one-test-per-switch.md)) |
 | takes over device traffic | the tproxy switch (WebUI settings, on by default) makes every core start install the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
 | routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `geodata/` |
@@ -271,12 +271,16 @@ falls back from the async Clipboard API to a textarea + `execCommand`
 
 **Switching a node.** Pressing **Apply** in the dialog writes `state.selected` first, renders
 the node to `outbound.json` + `outbound.meta`, then runs `kernelray.sh apply <id>`. The shell
-checks that `outbound.meta` names that id, renders a candidate from the template, runs
-`xray -test`, swaps it in atomically and restarts a running core. A failed test leaves the old
-config and the running core untouched; a candidate that tests but does not start is rolled back
-to the previous config. See [`docs/config-derivation.md`](docs/config-derivation.md). Applying
-the applied node with no changes only re-syncs `selected` and does not restart the core; a
-failed switch is retried from the attempted node's dialog.
+pins the node's address while the old node still works, checks that `outbound.meta` names that
+id, renders a candidate from the template in the form the live rules demand, runs `xray -test`
+and swaps it in atomically, restarting a running core. A failed test leaves the old config and
+the running core untouched; a candidate that tests but does not start is rolled back to the
+previous config. One render and one test per switch, and nothing at all when the bytes on disk
+are already that node's
+([ADR 0017](docs/adr/0017-one-render-one-test-per-switch.md)): re-applying the applied node, or
+saving a port / 分流模式 the config already carries, does not restart the core. A failed switch
+is retried from the attempted node's dialog. See
+[`docs/config-derivation.md`](docs/config-derivation.md).
 
 **Adding nodes.** Paste one link per line (or a whole base64 subscription blob) into the import
 card and hit *Parse*: every line is reported back individually, with parsed nodes ready to

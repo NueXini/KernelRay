@@ -1,7 +1,8 @@
 # 0005 — The core config is derived; the UI renders the node, the shell assembles
 
 Status: accepted (extends ADR 0003; `config.json` is no longer user-owned; the UI's "select
-then Apply" rule is amended by [ADR 0007](0007-one-tap-switches-the-node.md))
+then Apply" rule is amended by [ADR 0007](0007-one-tap-switches-the-node.md); the render/test/swap
+mechanics below are amended by [ADR 0017](0017-one-render-one-test-per-switch.md))
 
 ## Context
 

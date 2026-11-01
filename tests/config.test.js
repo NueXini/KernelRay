@@ -152,7 +152,12 @@ function runShell(dir, body, args, extraEnv) {
     cwd: root,
     env: Object.assign({}, process.env, {
       KR_MODDIR: shPath(dir),
-      KR_TEST_SCRIPT: shPath(script)
+      KR_TEST_SCRIPT: shPath(script),
+      // The fake cores never bind the socks port, so a start has to wait for its deadline:
+      // shorten it instead of paying 1.5 s per start. A core that exits is still caught on
+      // the first poll, which is what the rollback tests rely on.
+      KR_START_POLLS: "8",
+      KR_START_STEP: "0.05"
     }, extraEnv || {}),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -170,6 +175,15 @@ function runFail(dir, body, args, extraEnv) {
     };
   }
   throw new Error("expected the shell command to fail");
+}
+
+// Like runShell but tolerates a non-zero exit (a predicate that answers "no" is not a bug).
+function runAllow(dir, body, args, extraEnv) {
+  try {
+    return { status: 0, stdout: runShell(dir, body, args, extraEnv), stderr: "" };
+  } catch (e) {
+    return { status: e.status, stdout: e.stdout || "", stderr: e.stderr || "" };
+  }
 }
 
 function writeOutbound(m, opts) {
@@ -195,6 +209,7 @@ function readJson(p) {
 const BODY_RENDER = '. "$KR_TEST_SCRIPT"; kr_render_config "$1"';
 const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$1"';
 const BODY_ENSURE = '. "$KR_TEST_SCRIPT"; kr_ensure_config';
+const BODY_FORM = '. "$KR_TEST_SCRIPT"; kr_config_form';
 const BODY_STATUS = '. "$KR_TEST_SCRIPT"; kr_status_write "$1" "$2"';
 const BODY_APPLY = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply "$1"';
 const BODY_UNAPPLY = '. "$KR_TEST_SCRIPT"; kr_unapply';
@@ -337,25 +352,30 @@ check("takeover render: an outbound without the mark placeholder is refused", ()
   }
 });
 
-check("render follows the switch when rules are present, and stays no-takeover when they are not", () => {
+check("the form is decided once, by the live rules, and the renderer only obeys it", () => {
   const m = makeModule();
   writeOutbound(m);
   fs.writeFileSync(m.tproxy, "on\n");
-  // No stubs: iptables is missing or finds no rules here, so the render must stay no-takeover.
-  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
-  eq(cfg.inbounds.length, 2, "switch without rules renders the no-takeover form");
+  // No stubs: iptables is missing or finds no rules here, so the form is the idle one.
+  eq(runShell(m.dir, BODY_FORM).trim(), "0", "switch on without rules");
 
+  // The renderer no longer guesses: it renders exactly the form it is given.
+  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  eq(cfg.inbounds.length, 3, "KR_TAKEOVER=1 renders the takeover form");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
+  cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "0" }));
+  eq(cfg.inbounds.length, 2, "KR_TAKEOVER=0 renders the idle form");
+
+  // Rules up and the switch on: the one place that decides answers the takeover form.
   fs.mkdirSync(path.join(m.dir, "stubs"), { recursive: true });
   fs.writeFileSync(path.join(m.dir, "stubs", "iptables"), "#!/bin/sh\nexit 0\n");
   fs.writeFileSync(path.join(m.dir, "stubs", "ip6tables"), "#!/bin/sh\nexit 0\n");
   fs.chmodSync(path.join(m.dir, "stubs", "iptables"), 0o755);
   fs.chmodSync(path.join(m.dir, "stubs", "ip6tables"), 0o755);
-  const stubPath = path.join(m.dir, "stubs") + ":" + process.env.PATH;
-  cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], {
-    PATH: process.platform === "win32" ? shPath(path.join(m.dir, "stubs")) + ";" + process.env.PATH : stubPath
-  }));
-  eq(cfg.inbounds.length, 3, "switch plus rules renders takeover-form");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
+  const stubPath = process.platform === "win32"
+    ? shPath(path.join(m.dir, "stubs")) + ";" + process.env.PATH
+    : path.join(m.dir, "stubs") + ":" + process.env.PATH;
+  eq(runShell(m.dir, BODY_FORM, [], { PATH: stubPath }).trim(), "1", "switch plus rules");
 });
 
 check("a template without the placeholder is refused", () => {
@@ -429,7 +449,7 @@ check("ports: a broken applied bookkeeping is refused, applied id kept", () => {
   writeStatePorts(m, { socksPort: 13008, httpPort: 13009 });
   writeOutbound(m, { id: OTHER_ID });
   const r = runFail(m.dir, BODY_PORTS);
-  if (!/does not match the applied node/.test(r.stderr)) {
+  if (!/does not belong to node/.test(r.stderr)) {
     throw new Error("expected the bookkeeping refusal, got: " + r.stderr);
   }
   eq(readJson(m.config), { sentinel: true }, "old config untouched");
@@ -555,12 +575,26 @@ check("ensure: a mismatched meta refuses and keeps the applied id", () => {
   const m = makeModule();
   writeOutbound(m, { id: OTHER_ID });
   fs.writeFileSync(m.applied, ID + "\n");
+  fs.writeFileSync(m.config, '{"sentinel":true}\n');
   const r = runFail(m.dir, BODY_ENSURE);
-  if (!/no matching outbound/.test(r.stdout + r.stderr)) {
-    throw new Error("expected the bookkeeping refusal, got: " + r.stdout + r.stderr);
+  if (!/does not match the switch/.test(r.stderr)) {
+    throw new Error("expected the form refusal, got: " + r.stdout + r.stderr);
   }
-  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
+  eq(readJson(m.config), { sentinel: true }, "config untouched");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is kept, never silently cleared");
+});
+
+check("ensure: a failed switch keeps the applied node's config, it does not render the other node", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m, { id: OTHER_ID });   // the node the user tried
+  fs.writeFileSync(m.applied, ID + "\n");
+  // What the rollback left behind: this node's config, with its form recorded.
+  const cfg = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "0" });
+  fs.writeFileSync(m.config, cfg);
+  fs.writeFileSync(path.join(m.dir, "runtime", "config.form"), "0\n");
+  runShell(m.dir, BODY_ENSURE);
+  eq(fs.readFileSync(m.config, "utf8"), cfg, "the old node's config is kept, not re-rendered");
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id untouched");
 });
 
 check("start: without an applied node the core stays stopped (no-node)", () => {
@@ -579,7 +613,7 @@ check("start: an applied id without its outbound fails with no-config", () => {
   const m = makeModule();
   fs.writeFileSync(m.applied, ID + "\n");
   const r = runFail(m.dir, BODY_START);
-  if (!/no matching outbound/.test(r.stdout + r.stderr)) {
+  if (!/no config for the applied node/.test(r.stdout + r.stderr)) {
     throw new Error("expected the bookkeeping refusal, got: " + r.stdout + r.stderr);
   }
   const st = readJson(m.status);
@@ -837,6 +871,275 @@ check("start: a config that already matches this start is left alone", () => {
   eq(fs.readFileSync(m.config, "utf8"), cfg, "the config is not rewritten");
   eq(fs.statSync(m.config).mtimeMs, before, "not even touched");
   runShell(m.dir, BODY_STOP);
+});
+
+// ---- start readiness and process discovery ----------------------------------------------
+
+check("start readiness: the socks port is read from config.json, not from state.json", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  // The applied config carries 18080; state.json then says 10808. A ports edit that was
+  // never applied must not make a start wait for a port nothing listens on.
+  writeStatePorts(m, { socksPort: 18080, httpPort: 10809 });
+  fs.writeFileSync(m.config, runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" }));
+  writeStatePorts(m, { socksPort: 10808, httpPort: 10809 });
+  const port = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_conf_socks_port').trim();
+  eq(port, "18080", "the port config.json carries");
+  fs.unlinkSync(m.config);
+  const r = runAllow(m.dir, '. "$KR_TEST_SCRIPT"; kr_conf_socks_port');
+  eq(r.status, 1, "no config, no port");
+  eq(r.stdout.trim(), "", "and nothing printed");
+});
+
+check("start readiness: /proc/net/tcp parsing finds a listener on 127.0.0.1", () => {
+  const m = makeModule();
+  const net = path.join(m.dir, "net-tcp.fixture");
+  const line = (local, st) => "  3: " + local + " 00000000:0000 " + st +
+    " 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000 100 0 0 10 0";
+  fs.writeFileSync(net, [
+    "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+    line("0100007F:46A0", "0A"), // 18080 listening
+    line("00000000:46A0", "0A"), // 18080 on a wildcard address: not our inbound
+    line("0100007F:2A38", "01"), // 10808 established, not listening
+    line("0100007F:2A38", "0A"), // 10808 listening
+    ""
+  ].join("\n"));
+  const env = { KR_NET_TCP: shPath(net) };
+  const body = '. "$KR_TEST_SCRIPT"; kr_port_listening "$1"';
+  eq(runAllow(m.dir, body, ["18080"], env).status, 0, "a listener on 127.0.0.1");
+  eq(runAllow(m.dir, body, ["10808"], env).status, 0, "a second listener, matched by port");
+  eq(runAllow(m.dir, body, ["10809"], env).status, 1, "nothing listening on that port");
+  eq(runAllow(m.dir, body, [""], env).status, 1, "an empty port is not a listener");
+  eq(runAllow(m.dir, body, ["abc"], env).status, 1, "nor is a non-numeric one");
+});
+
+check("start readiness: a core that exits is reported before the deadline", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" });
+  const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" });
+  fs.writeFileSync(m.config, cfg);
+  // A 200 x 1 s deadline: passing this test means the death was noticed, not waited out.
+  const r = runAllow(m.dir, '. "$KR_TEST_SCRIPT"; kr_core_wait_ready "$1"', ["999999"],
+    { KR_START_POLLS: "200", KR_START_STEP: "1" });
+  eq(r.status, 1, "a dead pid is not ready");
+});
+
+check("start readiness: a live core that never listens still counts as started", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  fs.writeFileSync(m.config, runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" }));
+  // The fake core is alive and silent: the deadline is the answer, slow is not failed.
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; sleep 5 & p=$!; kr_core_wait_ready "$p"; echo "rc=$?"; kill $p 2>/dev/null',
+    null, { KR_START_POLLS: "2", KR_START_STEP: "0.01" });
+  if (!/rc=0/.test(out)) { throw new Error("expected rc=0, got: " + out); }
+});
+
+check("core pids: a process running the core with our config is found, one without is not", () => {
+  const m = makeModule(aliveCore);
+  // The cores are started from inside the harness shell, the way service.sh starts them:
+  // argv[0] is the binary path (which carries `xray`), then `run -c <config>`. A process
+  // spawned by Node is not in Git Bash's /proc table, so the scan would find nothing there.
+  const body = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray";' +
+    ' "$KR_MODDIR/bin/xray" run -c "$1" & p1=$!;' +
+    ' "$KR_MODDIR/bin/xray" run -c "$2" & p2=$!;' +
+    ' "$KR_MODDIR/bin/xray" -test & p3=$!;' +
+    ' sleep 0.4;' +
+    ' echo "p1=$p1"; echo "p2=$p2"; echo "p3=$p3";' +
+    ' kr_core_pids | sed "s/^/pid=/";' +
+    ' kill $p1 $p2 $p3 2>/dev/null; true';
+  const out = runShell(m.dir, body, [shPath(m.config), shPath(m.state)]);
+  const got = out.split(/\r?\n/).filter(Boolean);
+  const pid = (name) => {
+    const hit = got.filter((l) => l.indexOf(name + "=") === 0)[0];
+    return hit ? hit.slice(name.length + 1) : "";
+  };
+  const listed = got.filter((l) => l.indexOf("pid=") === 0).map((l) => l.slice(4));
+  if (listed.indexOf(pid("p1")) < 0) {
+    throw new Error("our core (" + pid("p1") + ") not found in: " + listed.join(" "));
+  }
+  if (listed.indexOf(pid("p2")) >= 0) {
+    throw new Error("a core running another config (" + pid("p2") + ") must not match");
+  }
+  if (listed.indexOf(pid("p3")) >= 0) {
+    throw new Error("a process that only mentions xray (" + pid("p3") + ") must not match");
+  }
+});
+
+check("core probe: one -version execution per shell, however often it is asked", () => {
+  const m = makeModule();
+  const counter = path.join(m.dir, "version-calls");
+  const counting = [
+    "#!/bin/sh",
+    'if [ "$1" = "-version" ]; then',
+    '  echo x >> "' + shPath(counter) + '"',
+    '  echo "Xray 0.0.0 (test)"',
+    "  exit 0",
+    "fi",
+    "exit 0",
+    ""
+  ].join("\n");
+  fs.writeFileSync(path.join(m.dir, "bin", "xray"), counting, "utf8");
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray";' +
+    ' kr_core_works && kr_core_works && kr_core_version && kr_version_refresh');
+  eq(out.trim(), "Xray 0.0.0 (test)", "the probe still answers");
+  eq(fs.readFileSync(counter, "utf8").trim().split("\n").length, 1, "one probe, one process");
+});
+
+check("core probe: a core that does not execute is remembered as unusable", () => {
+  const m = makeModule();
+  const counter = path.join(m.dir, "version-calls");
+  const broken = [
+    "#!/bin/sh",
+    'echo x >> "' + shPath(counter) + '"',
+    "exit 3",
+    ""
+  ].join("\n");
+  fs.writeFileSync(path.join(m.dir, "bin", "xray"), broken, "utf8");
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray";' +
+    ' kr_core_works || echo "works=no"; kr_core_works || echo "works=no";' +
+    ' kr_version_refresh; echo "refresh=$?"');
+  eq(out.trim().split("\n").join("|"), "works=no|works=no|refresh=0", "both refusals, no error");
+  eq(fs.readFileSync(counter, "utf8").trim().split("\n").length, 1, "one probe, one process");
+});
+
+// ---- one render, one test (docs/adr/0017) ------------------------------------------------
+
+// A core that records every `-test`, so a test can count how many a gesture costs.
+const countingCore = [
+  "#!/bin/sh",
+  'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
+  'if [ "$1" = "run" ] && [ "$2" = "-test" ]; then',
+  '  [ -n "$FAKE_TEST_LOG" ] && echo t >> "$FAKE_TEST_LOG"',
+  "  exit 0",
+  "fi",
+  'if [ "$1" = "run" ] && [ "$2" = "-c" ]; then',
+  '  trap "exit 0" TERM INT',
+  "  while :; do sleep 0.2; done",
+  "fi",
+  "exit 0",
+  ""
+].join("\n");
+
+function testCount(log) {
+  if (!fs.existsSync(log)) { return 0; }
+  return fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).length;
+}
+
+function otherOutbound(m) {
+  const other = JSON.parse(JSON.stringify(fixture));
+  other.settings.servers[0].password = "other-node";
+  fs.writeFileSync(m.outbound, JSON.stringify(other));
+  fs.writeFileSync(m.meta, "id=" + OTHER_ID + "\nhost=n.example.com\n");
+}
+
+check("switch: one config test, and the start it triggers adds none", () => {
+  const m = makeModule(countingCore);
+  const log = path.join(m.dir, "tests.log");
+  const env = { FAKE_TEST_LOG: shPath(log) };
+  try {
+    writeOutbound(m);
+    runShell(m.dir, BODY_APPLY, [ID], env);
+    eq(testCount(log), 1, "the first apply tests its candidate once");
+    runShell(m.dir, BODY_START, [], env);
+    eq(testCount(log), 1, "the start does not repeat the test the swap already passed");
+    eq(readJson(m.status).state, "running", "the core is up");
+
+    otherOutbound(m);
+    runShell(m.dir, BODY_APPLY, [OTHER_ID], env);
+    eq(testCount(log), 2, "a switch tests once: no engage re-render, no start re-test");
+    eq(readJson(m.status).state, "running", "the core is back up on the new node");
+    eq(readJson(m.config).outbounds[0].settings.servers[0].password, "other-node",
+      "the config carries the new node");
+    eq(fs.readFileSync(m.applied, "utf8").trim(), OTHER_ID, "applied id");
+  } finally {
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+  }
+});
+
+check("apply: the bytes already on disk are neither tested nor restarted", () => {
+  const m = makeModule(countingCore);
+  const log = path.join(m.dir, "tests.log");
+  const env = { FAKE_TEST_LOG: shPath(log) };
+  const pidFile = path.join(m.dir, "runtime", "xray.pid");
+  try {
+    writeOutbound(m);
+    runShell(m.dir, BODY_APPLY, [ID], env);
+    runShell(m.dir, BODY_START, [], env);
+    const pid = fs.readFileSync(pidFile, "utf8").trim();
+    // Same node, same bytes: no test, no stop, no start -- the traffic gap is zero.
+    runShell(m.dir, BODY_APPLY, [ID], env);
+    eq(testCount(log), 1, "no second test");
+    eq(fs.readFileSync(pidFile, "utf8").trim(), pid, "the same core process, never restarted");
+    eq(readJson(m.status).state, "running", "still running");
+  } finally {
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+  }
+});
+
+check("ports: saving the ports that are already rendered restarts nothing", () => {
+  const m = makeModule(countingCore);
+  const log = path.join(m.dir, "tests.log");
+  const env = { FAKE_TEST_LOG: shPath(log) };
+  const pidFile = path.join(m.dir, "runtime", "xray.pid");
+  try {
+    // The template's own defaults: saving them changes no byte.
+    writeStatePorts(m, { socksPort: 10808, httpPort: 10809 });
+    writeOutbound(m);
+    runShell(m.dir, BODY_APPLY, [ID], env);
+    runShell(m.dir, BODY_START, [], env);
+    const pid = fs.readFileSync(pidFile, "utf8").trim();
+    runShell(m.dir, BODY_PORTS, [], env);
+    eq(testCount(log), 1, "no test");
+    eq(fs.readFileSync(pidFile, "utf8").trim(), pid, "no restart");
+  } finally {
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+  }
+});
+
+check("ensure: a failed switch whose config has the wrong form is refused, not run", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m, { id: OTHER_ID });
+  fs.writeFileSync(m.applied, ID + "\n");
+  // The rollback left a takeover-form config behind, and the switch is now off: running it
+  // would leave a bypass mark with no ip rule (docs/adr/0008), so the start refuses instead.
+  const cfg = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  fs.writeFileSync(m.config, cfg);
+  fs.writeFileSync(path.join(m.dir, "runtime", "config.form"), "1\n");
+  const r = runFail(m.dir, BODY_ENSURE);
+  if (!/does not match the switch/.test(r.stderr)) {
+    throw new Error("expected the form refusal, got: " + r.stdout + r.stderr);
+  }
+  eq(fs.readFileSync(m.config, "utf8"), cfg, "the config is not silently rewritten");
+});
+
+// ---- the installer's environment ----------------------------------------------------------
+
+check("probe: no external commands needed (the installer's busybox-only PATH)", () => {
+  const m = makeModule(aliveCore);
+  // customize.sh runs with PATH set to the busybox dir alone, where `timeout` and `head` do
+  // not exist. A probe that shells out reports a working core as unusable and aborts the
+  // install -- this test pins the "builtins only" property. (PATH is emptied for the probe
+  // only: the harness still needs its own PATH to start bash.)
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; PATH= kr_core_works && kr_core_version');
+  if (!/Xray 0\.0\.0/.test(out)) { throw new Error("expected the version, got: " + out); }
+});
+
+check("probe: its status is not its last command's (busybox printf returns 1 once)", () => {
+  const m = makeModule(aliveCore);
+  // The busybox ash in KernelSU returns 1 from the *first* printf of a session; a probe that
+  // ends on a bare `printf` would report a working core as unusable, inside the installer.
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; printf() { builtin printf "$@"; return 1; };' +
+    ' kr_core_works && echo works; kr_core_probe >/dev/null && echo probed');
+  eq(out.trim().split("\n").join("|"), "works|probed", "both calls succeed despite printf");
 });
 
 // ---- report -----------------------------------------------------------------------------

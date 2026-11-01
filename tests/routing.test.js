@@ -127,7 +127,12 @@ function runShell(dir, body, args, extraEnv) {
     cwd: root,
     env: Object.assign({}, process.env, {
       KR_MODDIR: shPath(dir),
-      KR_TEST_SCRIPT: shPath(script)
+      KR_TEST_SCRIPT: shPath(script),
+      // The fake cores never bind the socks port, so a start waits for its deadline: shorten
+      // it instead of paying 1.5 s per start. A core that exits is still caught on the first
+      // poll, which is what the rollback tests rely on.
+      KR_START_POLLS: "8",
+      KR_START_STEP: "0.05"
     }, extraEnv || {}),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]

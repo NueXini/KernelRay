@@ -246,6 +246,7 @@ adb -s $D shell 'ls -d /data/adb/modules/kernelray; ps -A -o PID,ARGS | grep -c 
 | 端口测试 000/超时 | 忘了 `adb forward`，或没用 `--socks5-hostname`（域名解析也走代理才叫真通） |
 | 点「应用」报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是弹窗的应用路径写的 |
 | 点「应用」报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |
+| 安装器报 `bin/xray is missing or cannot run`，但装好后的 `status` 里版本正常 | `customize.sh` 跑在安装器的 PATH 里（只有 busybox 目录）：`timeout`/`head` 这类外部命令**不存在**，而且这个 busybox 的 `printf` **在会话里第一次调用返回 1**。所以安装路径上的函数只能用 shell 内建命令，并且不能把「最后一条命令的返回码」当函数返回值（`kr_core_probe` 因此显式 `return 0`） |
 | 点「应用」报 `does not belong to node` | `outbound.meta` 的 id 不是请求的节点；再打开该行点一次「应用」会重写两个文件 |
 | 列表某行显示“未应用” | 上次切换失败，`selected` 留在那一行；打开它点「应用」就是重试 |
 | 列表某行显示“有改动” | 重新导入保留了 id，但运行配置还是旧的；打开弹窗点「重新应用」 |
