@@ -59,7 +59,12 @@
   <section class="page" id="page-log" hidden>
     <section class="card logcard">
       <div class="logbar">
-        <span id="l-log">Log</span>
+        <div class="logtabs" role="tablist" aria-label="Log source">
+          <button type="button" class="logtab active" id="logtab-core" role="tab"
+                  aria-selected="true">Core</button>
+          <button type="button" class="logtab" id="logtab-module" role="tab"
+                  aria-selected="false">Module</button>
+        </div>
         <span class="spacer"></span>
         <label><input type="checkbox" id="follow" checked><span id="l-follow">Follow</span></label>
         <label><input type="checkbox" id="pause"><span id="l-pause">Pause</span></label>

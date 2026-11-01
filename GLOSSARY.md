@@ -199,6 +199,18 @@ The files a reader consults to answer "what is the module doing": `runtime/statu
 `logs/kernelray.log`, the module's own log. Status is written, never inferred by callers.
 _Avoid_: health, heartbeat
 
+**核心日志 (Core log)**:
+`logs/xray.log`, the log the 核心 itself writes: request lines and errors, at the chosen
+日志等级. The Log page's default tab. The 日志等级 and 日志行数 preferences both concern it.
+_Avoid_: xray log (that is the file, not the concept), access log, run log
+
+**模块日志 (Module log)**:
+`logs/kernelray.log`, the log the module's own scripts write: starts, renders, takeover
+and failure lines. It has no levels and no preference of its own; the 日志行数 caps how
+much of it the Log page shows. A module update wipes it with the rest of the module dir
+(see `docs/adr/0002`).
+_Avoid_: kernelray log (that is the file, not the concept), system log, service log
+
 **日志等级 (Log level)**:
 The verbosity of the 核心's own log (`logs/xray.log`): how much the core writes there. It is a
 preference of its own, not the 日志行数 and not the module's own log (`kernelray.log`), which has
@@ -206,8 +218,8 @@ no levels.
 _Avoid_: 日志级别, 调试模式
 
 **日志行数 (Log buffer)**:
-How many recent lines the Log page shows from the core log. A display choice only: changing it
-never changes what the core writes.
+How many recent lines the Log page shows from whichever log is displayed, the 核心日志 or
+the 模块日志. A display choice only: changing it never changes what either log writes.
 _Avoid_: 日志大小, 日志上限
 
 **节点 (Node)**:

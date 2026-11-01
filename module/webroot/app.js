@@ -22,12 +22,13 @@ var langPref = "auto"; // "auto" | "zh" | "en"; resolved against navigator.langu
 var themePref = "auto"; // "auto" | "light" | "dark"; resolved against the system when "auto"
 var DICT_ZH = {
   start: "启动", stop: "停止", follow: "跟随", pause: "暂停", refresh: "刷新",
-  log: "日志", pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
+  pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
   running: "运行中", stopped: "已停止", starting: "启动中", stopping: "停止中",
   failed: "启动失败", unknown: "未知",
   noBridge: "没有检测到 KernelSU 桥接，请从 KernelSU 管理器的模块页面打开本页面。",
   startingMsg: "正在启动…", stoppingMsg: "正在停止…",
   actionFailed: "操作失败", noLog: "（还没有日志）",
+  logTabCore: "核心", logTabModule: "模块",
   stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
   stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表打开一个节点并应用，核心才会启动。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
@@ -119,12 +120,13 @@ var DICT_ZH = {
 };
 var DICT_EN = {
   start: "Start", stop: "Stop", follow: "Follow", pause: "Pause", refresh: "Refresh",
-  log: "Log", pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
+  pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
   running: "running", stopped: "stopped", starting: "starting", stopping: "stopping",
   failed: "failed", unknown: "unknown",
   noBridge: "KernelSU bridge not found. Open this page from the module card in the KernelSU manager.",
   startingMsg: "Starting…", stoppingMsg: "Stopping…",
   actionFailed: "Action failed", noLog: "(no log yet)",
+  logTabCore: "Core", logTabModule: "Module",
   stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
   stoppedHintNone: "The core is stopped and no node is applied; open a node in the list and press Apply — the core only starts with an applied node.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
@@ -222,10 +224,11 @@ var els = {
   banner: $("banner"), badge: $("badge"), start: $("start"), stop: $("stop"),
   hint: $("hint"), pid: $("v-pid"), up: $("v-up"), port: $("v-port"),
   core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
+  logTabCore: $("logtab-core"), logTabModule: $("logtab-module"),
   logNav: $("lognav"), logTop: $("log-top"), logBottom: $("log-bottom"),
   refresh: $("refresh"), pause: $("pause"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
-  lConf: $("l-conf"), lLog: $("l-log"), lFollow: $("l-follow"), lPause: $("l-pause"),
+  lConf: $("l-conf"), lFollow: $("l-follow"), lPause: $("l-pause"),
   addNode: $("add-node"),
   nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
   editNode: $("edit-node"), nToolbar: $("n-toolbar"),
@@ -264,7 +267,11 @@ var pages = {
 };
 
 var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
-var lastLog = "";
+// Which log the page shows: "core" (xray.log) or "module" (kernelray.log). A page
+// choice, not a preference: it is never persisted, so a visit starts on the core log.
+var logSource = "core";
+// One cached tail per source: renderLog skips only when the same source repeats.
+var lastLog = { core: null, module: null };
 var lastState = "unknown";
 var busy = false;
 var pending = null; // "start" | "stop" while the action is in flight
@@ -299,7 +306,8 @@ function label(key) {
   els.refresh.textContent = T.refresh;
   els.lFollow.textContent = T.follow;
   els.lPause.textContent = T.pause;
-  els.lLog.textContent = T.log;
+  els.logTabCore.textContent = T.logTabCore;
+  els.logTabModule.textContent = T.logTabModule;
   els.lPid.textContent = T.pid;
   els.lUp.textContent = T.up;
   els.lPort.textContent = T.port;
@@ -378,7 +386,7 @@ function applyLang() {
   renderNodeList();
   els.iHint.textContent = T.notAppliedYet;
   els.iHint.className = "nodehint";
-  lastLog = null;
+  lastLog.core = lastLog.module = null;
   renderLog("");
   if (!hasBridge) {
     els.banner.textContent = T.noBridge;
@@ -2116,8 +2124,8 @@ function renderStatus(kv) {
 }
 
 function renderLog(text) {
-  if (text === lastLog) { return; }
-  lastLog = text;
+  if (text === lastLog[logSource]) { return; }
+  lastLog[logSource] = text;
   var atBottom = els.log.scrollTop + els.log.clientHeight >= els.log.scrollHeight - 24;
   els.log.textContent = text || T.noLog;
   if (els.follow.checked && atBottom) { els.log.scrollTop = els.log.scrollHeight; }
@@ -2143,9 +2151,25 @@ function refreshStatus() {
 }
 
 function refreshLog() {
-  return exec(CLI + " log " + logLines).then(function (r) {
+  var cmd = logSource === "module" ? "mlog" : "log";
+  return exec(CLI + " " + cmd + " " + logLines).then(function (r) {
     renderLog(r.stdout || r.stderr);
   }).catch(function () {});
+}
+
+// Switching tabs only changes which tail the next fetch reads: Follow, Pause and the
+// 日志行数 all carry over. The cache entry is dropped so the redraw is not suppressed,
+// and the empty page holds until the fetch answers.
+function setLogSource(source) {
+  if (source === logSource) { return; }
+  logSource = source;
+  els.logTabCore.classList.toggle("active", source === "core");
+  els.logTabModule.classList.toggle("active", source === "module");
+  els.logTabCore.setAttribute("aria-selected", source === "core" ? "true" : "false");
+  els.logTabModule.setAttribute("aria-selected", source === "module" ? "true" : "false");
+  lastLog[source] = null;
+  renderLog("");
+  refreshLog();
 }
 
 // The Settings page shows the effective ports (state.json's, defaults applied), so the
@@ -2378,6 +2402,8 @@ els.selLogLevel.addEventListener("change", function () {
 });
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(true); });
+els.logTabCore.addEventListener("click", function () { setLogSource("core"); });
+els.logTabModule.addEventListener("click", function () { setLogSource("module"); });
 // Pure navigation: an instant scrollTop and nothing else — no fetch, no checkbox moves.
 els.logTop.addEventListener("click", function () { els.log.scrollTop = 0; });
 els.logBottom.addEventListener("click", function () { els.log.scrollTop = els.log.scrollHeight; });

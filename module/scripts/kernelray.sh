@@ -15,6 +15,7 @@ KR_CONF=$KR_MODDIR/config.json
 KR_LOGDIR=$KR_MODDIR/logs
 KR_RUNDIR=$KR_MODDIR/runtime
 KR_LOG=$KR_LOGDIR/xray.log
+KR_MLOG=$KR_LOGDIR/kernelray.log
 KR_PIDFILE=$KR_RUNDIR/xray.pid
 KR_STARTED=$KR_RUNDIR/started
 KR_STATUS=$KR_RUNDIR/status.json
@@ -1089,15 +1090,18 @@ kr_status_kv() {
   echo "loglevelpending=$_lvp"
 }
 
+# kr_tail <lines> <file>: the last <lines> of one log, with a friendly line for a
+# missing or unreadable file instead of an empty page.
 kr_tail() {
   _n=${1:-200}
+  _f=${2:-$KR_LOG}
   case "$_n" in '' | *[!0-9]*) _n=200 ;; esac
   [ "$_n" -gt 2000 ] && _n=2000
-  if [ ! -f "$KR_LOG" ]; then
-    echo "(no log yet: $KR_LOG)"
+  if [ ! -f "$_f" ]; then
+    echo "(no log yet: $_f)"
     return 0
   fi
-  tail -n "$_n" "$KR_LOG" 2>/dev/null || echo "(cannot read $KR_LOG)"
+  tail -n "$_n" "$_f" 2>/dev/null || echo "(cannot read $_f)"
 }
 
 kr_cli() {
@@ -1130,7 +1134,8 @@ kr_cli() {
       esac
       ;;
     status) kr_status_kv ;;
-    log) kr_tail "${1:-200}" ;;
+    log) kr_tail "${1:-200}" "$KR_LOG" ;;
+    mlog) kr_tail "${1:-200}" "$KR_MLOG" ;;
     tproxy)
       case "${1:-}" in
         on|off) kr_tproxy_set "$1" ;;
@@ -1142,7 +1147,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status|log [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status|log [lines]|mlog [lines]}" >&2
       return 2
       ;;
   esac

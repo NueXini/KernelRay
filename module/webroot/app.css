@@ -108,6 +108,13 @@ dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .logbar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .logbar input { accent-color: var(--accent); }
 .logbar button { flex: 0 0 auto; padding: 5px 10px; font-size: 13px; font-weight: 500; }
+.logtabs { flex: 0 0 auto; display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.logtab {
+  padding: 4px 10px; font-size: 12px; font-weight: 500;
+  background: transparent; border: none; border-radius: 0; color: var(--muted);
+}
+.logtab.active { background: var(--accent); border-color: transparent; color: #fff; }
+.logtab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 pre {
   flex: 1; min-height: 0;
   margin: 0; padding: 12px; background: var(--log-bg); color: var(--log-text);
