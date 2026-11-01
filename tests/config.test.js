@@ -128,6 +128,10 @@ function makeModule(core) {
   fs.copyFileSync(template, path.join(dir, "config.example.json"));
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), core || fakeCore, "utf8");
+  // Git Bash's [ -x ] takes a shebang as executable magic, so a missing exec bit only
+  // bites on Linux CI; the real device installs the binary executable (tproxy.test.js
+  // does the same).
+  fs.chmodSync(path.join(dir, "bin", "xray"), 0o755);
   fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
   // kernelray.sh sources the takeover helpers from $KR_MODDIR/scripts, so the fixture
   // needs the real tproxy.sh for the takeover render paths.
