@@ -3,7 +3,7 @@
 A [KernelSU](https://kernelsu.org) module that runs an [Xray-core](https://github.com/XTLS/Xray-core)
 on an Android device.
 
-**v0.7 — transparent proxy (TPROXY takeover).** The core starts on boot and exposes local
+**v0.7 — transparent proxy (TPROXY takeover).** The core exposes local
 `socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node opens a
 detail dialog and its **Apply** button switches the core to it. The tproxy switch in the WebUI
 settings (tproxy透明代理) decides whether
@@ -25,7 +25,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 
 | | |
 | --- | --- |
-| starts on boot | `service.sh` (late_start service) launches the core with the applied config; with the tproxy switch on (the default) it installs the rules first — with no applied node neither happens |
+| starts | only when the user asks: the WebUI's 启动 button (or `kernelray.sh start`). Nothing starts at boot, and a start without an applied node stays refused |
 | keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node, or `direct` for a destination the 分流规则 match; nothing starts until a node is applied |
@@ -33,8 +33,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | takes over device traffic | the tproxy switch (WebUI settings, on by default) makes every core start install the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
 | routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `bin/`, beside the core |
-| action button | toggles start/stop and prints status (`action.sh`) |
-| WebUI | start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch, the 分流模式 and the 日志等级 live in Settings |
+| WebUI | the only manual surface: start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch, the 分流模式 and the 日志等级 live in Settings. The module ships no `action.sh`, so the manager's module card has no ▶ button ([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)) |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
 | log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
 
@@ -56,7 +55,7 @@ The tproxy switch in Settings is the whole UI for the feature, and it is deliber
   replaced wholesale). It only bites together with an applied node: without one, starts stay
   idle and no rules go up.
 - **It applies at the next start.** Flipping it never touches a running core; stop → start
-  (or reboot) applies it. Start-coupled means the rules are installed before the core runs.
+  applies it. Start-coupled means the rules are installed before the core runs.
 - **Fail-closed.** While the switch is on, the rules exist independently of the core's health:
   they are installed before the core starts, and a core that crashes later leaves them in
   place, so traffic is dropped instead of going out direct. Recovery is starting the core
@@ -77,15 +76,17 @@ The tproxy switch in Settings is the whole UI for the feature, and it is deliber
 Recovery cheat sheet: device offline with the switch on means the core died — start it again
 (tproxy comes back with it), or switch tproxy off in Settings and start to go direct (the config
 is re-rendered to match, so the node's outbound loses its bypass mark);
-`kernelray.sh tproxy off` writes the same preference. A core that died on its own shows up as
-**failed · core exited** on the Status page — the pidfile outlived the process — so a dead core
-is not mistaken for a stopped one. `failed/rules` means an install failed
+`kernelray.sh tproxy off` writes the same preference, and a reboot clears the rules too — they
+live in netfilter, which does not survive one
+([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)). A core that died on its own
+shows up as **failed · core exited** on the Status page — the pidfile outlived the process — so
+a dead core is not mistaken for a stopped one. `failed/rules` means an install failed
 and was rolled back (see `logs/kernelray.log`); `failed/conflict` means another VPN owns the
 traffic. The bypass routing copies the current default route at start time; if the network
 changes while takeover is on, restart the core (stop, then start) to rebuild it.
 
-The mechanism details — namespace values, boot and toggle semantics, the mark placeholder —
-are pinned down in [`docs/adr/0008`](docs/adr/0008-takeover-namespace-boot-and-toggle-semantics.md),
+The mechanism details — namespace values and toggle semantics — are pinned down in
+[`docs/adr/0008`](docs/adr/0008-takeover-namespace-boot-and-toggle-semantics.md),
 built on [`docs/adr/0004`](docs/adr/0004-tproxy-takeover-is-module-owned-and-fail-closed.md)
 and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 

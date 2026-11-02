@@ -30,13 +30,14 @@ var DICT_ZH = {
   actionFailed: "操作失败", noLog: "（还没有日志）",
   logTabCore: "核心", logTabModule: "模块",
   stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
+  stoppedHintTp: "核心未运行；开机不会自动启动，设备当前直连；点「启动」才接管。",
   stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表打开一个节点并应用，核心才会启动。",
   runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
   tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
   setTp: "tproxy透明代理",
-  setTpOn: "已开启：核心下次启动时（开机或状态页「启动」），设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发；ping 等 ICMP 仍直连。",
+  setTpOn: "已开启：核心下次启动时（点「启动」），设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发；ping 等 ICMP 仍直连。",
   setTpOff: "已关闭：核心启动后设备流量直连；本地 socks/http 入站仍按需使用。",
-  setTpPending: "核心运行中，但 tproxy 尚未生效；停止再启动（或重启设备）后生效。",
+  setTpPending: "核心运行中，但 tproxy 尚未生效；停止再启动后生效。",
   setTpNoNode: "还没有已应用的节点；应用节点后，核心启动时 tproxy 会自动开启。",
   tpConflict: "tproxy 被冲突阻止：设备上有别的 VPN 或透明代理在运行。处理后点「重试」；关闭开关并重启核心可恢复直连。",
   tpRules: "tproxy 规则安装失败，已回滚（可能漏流量）。详情见 kernelray.log；点「重试」再试一次。",
@@ -126,13 +127,14 @@ var DICT_EN = {
   actionFailed: "Action failed", noLog: "(no log yet)",
   logTabCore: "Core", logTabModule: "Module",
   stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
+  stoppedHintTp: "The core is stopped; boot does not start it, so the device goes direct — press Start to take over.",
   stoppedHintNone: "The core is stopped and no node is applied; open a node in the list and press Apply — the core only starts with an applied node.",
   runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
   tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
   setTp: "TPROXY transparent proxy",
-  setTpOn: "On: at the next core start (boot or the Status page's Start), device traffic (TCP/UDP, IPv4/IPv6) goes through the applied node; ICMP such as ping stays direct.",
+  setTpOn: "On: at the next core start (pressing Start), device traffic (TCP/UDP, IPv4/IPv6) goes through the applied node; ICMP such as ping stays direct.",
   setTpOff: "Off: with the core started, device traffic goes out directly; the local socks/http inbounds remain available.",
-  setTpPending: "The core is running, but tproxy is not in effect yet; stop and start it (or reboot) to apply.",
+  setTpPending: "The core is running, but tproxy is not in effect yet; stop and start it to apply.",
   setTpNoNode: "No applied node yet; once a node is applied, tproxy engages automatically when the core starts.",
   tpConflict: "tproxy is blocked by a conflict: another VPN or transparent proxy is running. Resolve it and retry; switch tproxy off and restart the core to go direct.",
   tpRules: "Installing the tproxy rules failed and was rolled back (traffic may leak). See kernelray.log; tap Retry to try again.",
@@ -2069,7 +2071,11 @@ function renderStatus(kv) {
     if (kv.rules === "present") { els.hint.textContent = hintText(T.tpRunningHint, kv); }
     else { els.hint.textContent = hintText(T.runningHint, kv); }
   } else {
-    els.hint.textContent = kv.node ? T.stoppedHint : T.stoppedHintNone;
+    // A stopped core with the switch on is the post-reboot state, and the one hint that has
+    // to name the consequence: no boot start means the device is going direct (ADR 0018).
+    els.hint.textContent = kv.node
+      ? (kv.tproxy === "on" ? T.stoppedHintTp : T.stoppedHint)
+      : T.stoppedHintNone;
   }
 
   // The status card is failure-only since ADR 0011: the switch itself lives in

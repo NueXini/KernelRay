@@ -4,7 +4,9 @@ Status: accepted (supersedes parts of
 [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md) and
 [ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md) listed below; the
 re-render inside `kr_tp_engage` is amended by
-[ADR 0017](0017-one-render-one-test-per-switch.md))
+[ADR 0017](0017-one-render-one-test-per-switch.md); "every start" now means a start the user
+asks for — nothing starts at boot, see
+[ADR 0018](0018-no-action-button-and-no-boot-start.md))
 
 ## Context
 

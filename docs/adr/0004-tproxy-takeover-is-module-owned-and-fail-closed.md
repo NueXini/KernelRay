@@ -2,7 +2,9 @@
 
 Status: accepted (the switch's default, its no-node refusal and the after-update behaviour
 are superseded by [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md);
-the switch itself is now the tproxy switch, titled tproxy透明代理)
+the switch itself is now the tproxy switch, titled tproxy透明代理; the `action.sh` named in the
+recovery path below no longer ships and the WebUI is the only manual surface — see
+[ADR 0018](0018-no-action-button-and-no-boot-start.md))
 
 ## Context
 

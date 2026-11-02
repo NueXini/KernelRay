@@ -5,7 +5,10 @@ Status: accepted (implements the rule-level details left open by
 bypass of [ADR 0006](0006-dns-goes-through-the-core.md)). The switch semantics — default
 off, immediate toggle, boot-time rules without a node — are superseded by
 [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the switch is
-default-on, start-coupled, and only ever a preference write.
+default-on, start-coupled, and only ever a preference write. Its boot semantics — the
+boot-time start, the boot-time conflict verdict and the pin that rode on it — are superseded
+by [ADR 0018](0018-no-action-button-and-no-boot-start.md): nothing starts at boot, so the
+start that pins, engages and installs is the user's.
 
 ## Context
 

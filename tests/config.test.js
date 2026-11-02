@@ -841,6 +841,45 @@ check("status: a stopped core is not reported as crashed", () => {
   if (!/^state=stopped$/m.test(kv)) { throw new Error("state: " + kv); }
 });
 
+check("status: status.json records the boot that wrote it", () => {
+  const m = makeModule();
+  runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo boot-x; }; kr_status_write running idle');
+  eq(readJson(m.status).boot, "boot-x", "boot");
+});
+
+// Nothing rewrites status.json at boot any more (docs/adr/0018), so the file a reboot leaves
+// behind is the normal case, not an edge case: its phase is the past, not the present.
+check("status: a status.json from an earlier boot reads as idle, not as its old phase", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.applied, ID + "\n");
+  fs.writeFileSync(m.status, JSON.stringify({
+    state: "running", phase: "failed/rules", started: 1, revision: 0,
+    node: ID, tproxy: "on", route: "global", boot: "the-previous-boot"
+  }) + "\n");
+  fs.writeFileSync(path.join(m.dir, "runtime", "xray.pid"), "999999\n");
+  const kv = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
+  if (!/^phase=idle$/m.test(kv)) {
+    throw new Error("another boot's status is the past, not a failure: " + kv);
+  }
+  if (!/^state=stopped$/m.test(kv)) { throw new Error("state: " + kv); }
+});
+
+check("status: a pidfile written by this boot is still evidence of a crash", () => {
+  const m = makeModule();
+  fs.writeFileSync(m.applied, ID + "\n");
+  fs.writeFileSync(m.status, JSON.stringify({
+    state: "running", phase: "idle", started: 1, revision: 0,
+    node: ID, tproxy: "on", route: "global", boot: "the-current-boot"
+  }) + "\n");
+  fs.writeFileSync(path.join(m.dir, "runtime", "xray.pid"), "999999\n");
+  const kv = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
+  if (!/^phase=crashed$/m.test(kv)) {
+    throw new Error("a pidfile from this boot means the core died: " + kv);
+  }
+});
+
 // ---- start-path form drift ---------------------------------------------------------------
 
 check("start: a takeover config left on disk is re-rendered when the switch is off", () => {
@@ -945,7 +984,7 @@ check("start readiness: a live core that never listens still counts as started",
 
 check("core pids: a process running the core with our config is found, one without is not", () => {
   const m = makeModule(aliveCore);
-  // The cores are started from inside the harness shell, the way service.sh starts them:
+  // The cores are started from inside the harness shell, the way kr_start starts them:
   // argv[0] is the binary path (which carries `xray`), then `run -c <config>`. A process
   // spawned by Node is not in Git Bash's /proc table, so the scan would find nothing there.
   const body = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray";' +

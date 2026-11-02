@@ -132,7 +132,8 @@ _Avoid_: kill switch, safe mode
 
 **tproxy透明代理开关 (tproxy switch)**:
 The persisted user choice that device traffic be taken over when the core starts: on, every
-core start (boot or the status page's start) installs the rules and runs the takeover config;
+core start (the status page's 启动 — boot does not start the core, see `docs/adr/0018`)
+installs the rules and runs the takeover config;
 off, every start is an idle run. It is created at install and defaults to on, and it is a pure
 preference — changing it never touches a running core, only the next start (see
 `docs/adr/0011`). An update resets it to on with the rest of the module dir.
@@ -195,8 +196,11 @@ _Avoid_: user config, settings
 
 **运行状态 (Runtime status)**:
 The files a reader consults to answer "what is the module doing": `runtime/status.json`
-(state/phase/node), `runtime/xray.pid`, `runtime/applied`, `logs/xray.log` and (from v0.7)
-`logs/kernelray.log`, the module's own log. Status is written, never inferred by callers.
+(state/phase/node/boot), `runtime/xray.pid`, `runtime/applied`, `logs/xray.log` and (from v0.7)
+`logs/kernelray.log`, the module's own log. Status is written, never inferred by callers —
+with one exception a reader may take: a `status.json` whose `boot` is not the current boot
+was written before this boot, so it describes a core that cannot be running and reads as
+`idle` (see `docs/adr/0018`).
 _Avoid_: health, heartbeat
 
 **核心日志 (Core log)**:

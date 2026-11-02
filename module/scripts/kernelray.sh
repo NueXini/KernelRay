@@ -1,5 +1,5 @@
 # shellcheck shell=ash
-# KernelRay shared helpers. Sourced by customize.sh / service.sh / action.sh / uninstall.sh.
+# KernelRay shared helpers. Sourced by customize.sh / uninstall.sh.
 #
 # Layout contract:
 #   everything lives in the module dir (/data/adb/modules/kernelray): mechanism, core,
@@ -162,8 +162,9 @@ kr_running() {
 }
 
 # Every pid currently running the core with our config, including instances we do
-# not track. KernelSU may invoke service.sh more than once per boot, and a core
-# started twice binds the same ports twice (Go sets SO_REUSEPORT).
+# not track. A start can race another one -- the WebUI, a terminal and apply's own
+# restart can overlap -- and a core started twice binds the same ports twice (Go sets
+# SO_REUSEPORT).
 #
 # One grep over /proc finds the candidates instead of a `cat` per pid: that fork cost ~5 ms
 # per process, i.e. seconds on a phone with several hundred of them. `xray` is argv[0] (the
@@ -355,6 +356,14 @@ kr_loglevel_status() {
   return 0
 }
 
+# Which boot wrote a file. `/proc/sys/kernel/random/boot_id` is a random id the kernel
+# mints per boot, so comparing it needs no clock -- unlike `started` against /proc/uptime,
+# which goes wrong before NTP has synced the wall clock. Empty when the kernel does not
+# expose it; readers then fall back to trusting the file as it is.
+kr_boot_id() {
+  sed -n '1p' /proc/sys/kernel/random/boot_id 2>/dev/null
+}
+
 kr_status_write() { # <state> <phase>
   _s=$(cat "$KR_STARTED" 2>/dev/null)
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
@@ -364,8 +373,8 @@ kr_status_write() { # <state> <phase>
   _rt=global
   command -v kr_route_mode >/dev/null 2>&1 && _rt=$(kr_route_mode)
   kr_dirs
-  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","tproxy":"%s","route":"%s"}\n' \
-    "$1" "$2" "$_s" "$_n" "$_tp" "$_rt" >"$KR_STATUS" 2>/dev/null
+  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","tproxy":"%s","route":"%s","boot":"%s"}\n' \
+    "$1" "$2" "$_s" "$_n" "$_tp" "$_rt" "$(kr_boot_id)" >"$KR_STATUS" 2>/dev/null
 }
 
 # Render the template with one outbound. The outbound is passed through the
@@ -691,7 +700,7 @@ kr_swap_install() { # <candidate> <applied-id|"">
   if [ "$KR_SWAP_WAS" = 1 ]; then
     kr_stop
   else
-    # A core we do not track may still hold the old config (duplicate service.sh).
+    # A core we do not track may still hold the old config (a stray from a failed stop).
     # Stop it rather than leaving it running while status says stopped.
     kr_kill_strays ""
   fi
@@ -966,45 +975,6 @@ kr_stop() {
   kr_status_write stopped idle
 }
 
-# Human-readable summary, used by action.sh.
-kr_report() {
-  _core=$(kr_core)
-  echo "state: $(kr_running && echo running || echo stopped)"
-  if [ -f "$KR_STATUS" ]; then
-    echo "status: $(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$KR_STATUS")/$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$KR_STATUS")"
-  fi
-  if kr_core_works 2>/dev/null; then
-    echo "core:  $_core"
-    echo "ver:   $(kr_version_cached)"
-  else
-    echo "core:  $_core (missing or not executable here)"
-  fi
-  echo "conf:  $KR_CONF"
-  _node=$(kr_applied_id) || _node="(none)"
-  echo "node:  $_node"
-  if command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on; then
-    echo "tproxy: on (rules $(kr_tp_rules_present && echo present || echo absent), port $KR_TP_PORT)"
-  else
-    echo "tproxy: off"
-  fi
-  if command -v kr_route_mode >/dev/null 2>&1; then
-    _rt=$(kr_route_mode)
-    kr_route_effective
-    if [ "$KR_ROUTE_DEGRADED" = 1 ]; then
-      echo "route: $_rt (geo data missing: rendering $KR_ROUTE_EFFECTIVE)"
-    else
-      echo "route: $_rt"
-    fi
-  fi
-  echo "level: $(kr_loglevel_get)"
-  echo "log:   $KR_LOG"
-  if kr_running; then
-    echo "pid:   $(kr_pid)"
-    echo "ports: $(kr_setting_port socksPort 10808) socks / $(kr_setting_port httpPort 10809) http (127.0.0.1)"
-    kr_tp_rules_present 2>/dev/null && echo "       $KR_TP_PORT tproxy (wildcard; device traffic)"
-  fi
-}
-
 # Machine-readable summary for the WebUI: one key=value per line, values may
 # contain spaces (split on the first '='). State comes from the live process, not
 # from status.json, so a stale status file cannot claim "running" for a dead core.
@@ -1021,23 +991,40 @@ kr_status_kv() {
   fi
   _phase=$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)
   [ -n "$_phase" ] || _phase=unknown
-  # A pidfile that outlived its process means the core died on its own: nothing ran to write
-  # failed/crashed, so the status file still claims running. Report the fact instead of the
-  # stale phase -- unless that status predates this boot, where "not started yet" is the
-  # honest reading.
-  if [ "$_state" = stopped ] && [ -s "$KR_PIDFILE" ] &&
+  # Which boot wrote the status file decides what it can mean (docs/adr/0018). The file
+  # survives a reboot and nothing rewrites it until the next start, so a status written by
+  # an earlier boot describes a core that cannot be running now: read it as idle -- "nothing
+  # has run since boot" -- instead of showing a failure this boot never had. The pidfile of
+  # that earlier boot is no evidence of a crash either.
+  _boot=$(kr_boot_id)
+  _stale=0
+  if [ -n "$_boot" ] &&
+    [ "$(sed -n 's/.*"boot":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)" != "$_boot" ]; then
+    _stale=1
+  fi
+  if [ "$_stale" = 1 ]; then
+    _phase=idle
+  elif [ "$_state" = stopped ] && [ -s "$KR_PIDFILE" ] &&
     [ "$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)" = running ]; then
-    _up=$(cut -d. -f1 /proc/uptime 2>/dev/null)
-    _since=$(cat "$KR_STARTED" 2>/dev/null)
-    case "$_up" in
-      '' | *[!0-9]*) _phase=crashed ;; # no uptime to compare: the pidfile is the evidence
-      *)
-        case "$_since" in
-          '' | *[!0-9]*) _phase=crashed ;;
-          *) [ "$_since" -ge $(( $(date +%s) - _up )) ] && _phase=crashed ;;
-        esac
-        ;;
-    esac
+    # A pidfile that outlived its process means the core died on its own: nothing ran to
+    # write failed/crashed, so the status file still claims running. Report the fact instead
+    # of the stale phase. Without a boot id (no procfs) the uptime arithmetic has to stand in
+    # for it: a start older than this boot is not a crash.
+    if [ -n "$_boot" ]; then
+      _phase=crashed
+    else
+      _up=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+      _since=$(cat "$KR_STARTED" 2>/dev/null)
+      case "$_up" in
+        '' | *[!0-9]*) _phase=crashed ;; # no uptime to compare: the pidfile is the evidence
+        *)
+          case "$_since" in
+            '' | *[!0-9]*) _phase=crashed ;;
+            *) [ "$_since" -ge $(( $(date +%s) - _up )) ] && _phase=crashed ;;
+          esac
+          ;;
+      esac
+    fi
   fi
   _node=$(kr_applied_id) || _node=""
   _ver=-
@@ -1150,8 +1137,8 @@ kr_cli() {
   esac
 }
 
-# Executed directly (WebUI, shell) -> act as a CLI. Sourced (service.sh,
-# action.sh, customize.sh) -> only definitions above, no side effects.
+# Executed directly (WebUI, shell) -> act as a CLI. Sourced (customize.sh,
+# uninstall.sh) -> only definitions above, no side effects.
 case "${0##*/}" in
   kernelray.sh) kr_cli "$@" ;;
 esac

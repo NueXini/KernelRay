@@ -1,6 +1,7 @@
 # 0015 — The 日志等级 is a shell preference applied at the next core start
 
-Status: accepted
+Status: accepted (the "or reboot" in the next-start rule below no longer applies: nothing
+starts at boot — see [ADR 0018](0018-no-action-button-and-no-boot-start.md))
 
 ## Context
 

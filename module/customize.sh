@@ -17,8 +17,6 @@ set_perm_recursive "$MODPATH" 0 0 0755 0644
 # the only file in it that executes (docs/adr/0014).
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0644
 set_perm "$MODPATH/bin/xray" 0 0 0755
-set_perm "$MODPATH/service.sh" 0 0 0755
-set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 set_perm "$MODPATH/scripts/kernelray.sh" 0 0 0755
 set_perm "$MODPATH/scripts/tproxy.sh" 0 0 0755
@@ -50,10 +48,11 @@ command -v kr_tp_default_on >/dev/null 2>&1 && kr_tp_default_on
 kr_ensure_config >/dev/null 2>&1
 kr_status_write installed idle
 
-ui_print "- Installed. Core starts on boot; until a node is applied it stays stopped."
+ui_print "- Installed. Nothing starts on boot: open the WebUI and press Start (until a node"
+ui_print "  is applied it stays stopped)."
 ui_print "- Select a node in the WebUI (Nodes -> tap a row) to derive the core config;"
 ui_print "  starting the core with a node applied also brings tproxy up."
-ui_print "- TPROXY transparent proxy is ON by default: every core start (boot or the Start"
+ui_print "- TPROXY transparent proxy is ON by default: every core start (the WebUI's Start"
 ui_print "  button) routes device traffic through the applied node. Turn it off in the"
 ui_print "  WebUI Settings (tproxy透明代理) if you only want the local socks/http inbounds."
 ui_print "- 分流模式 (Settings) defaults to 全局: everything through the applied node."

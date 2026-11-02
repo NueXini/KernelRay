@@ -27,7 +27,7 @@ node tests/nodelist.test.js            # 45 node list + delete-gate + import-swi
 node tests/link.test.js                # 18 node-link + subscription-Base64 tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
-node tests/config.test.js              # 44 config tests passing（需要 bash 和 /proc）
+node tests/config.test.js              # 61 config tests passing（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
 node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
 ```
@@ -75,7 +75,7 @@ adb -s $D shell 'su -c "ksud module install /data/local/tmp/kernelray.zip"'
 
 注意路径里的 **`modules_update`**：KernelSU 只是暂存，**还没生效**。
 
-## 5. 生效 = 重启 + 等 boot_completed + 再等一会儿
+## 5. 生效 = 重启（KernelSU 换包）+ 手动 start
 
 ```sh
 adb -s $D reboot
@@ -84,29 +84,31 @@ for i in $(seq 1 30); do
   [ "$(adb -s $D shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
   sleep 5
 done
-sleep 10    # service.sh 在 late_start 阶段才跑；模拟器上核心还要经 ARM 翻译起来
 ```
 
 - **为什么要重启**：KernelSU 把新包解到 `/data/adb/modules_update/<id>`，开机时才替换
   `/data/adb/modules/<id>`。所以“装成功了但版本没变”= 没重启。
-- **为什么还要 sleep**：`sys.boot_completed=1` 时 `service.sh` 通常还没执行完，太早 `ps` 会误判“核心没起来”。
+- **核心不会自己起来**：模块没有 `service.sh`，开机不启动核心（ADR 0018）。重启后 `ps` 里
+  **不应该**有 `xray run`，这是正常的；装好后要自己 start 一次（第 6 节第 1 步）。
 
-## 6. 验证（四条，缺一条都不算装好）
+## 6. 验证（五条，缺一条都不算装好）
 
 ```sh
-# 1) 进程只应有一个，且指向模块目录里的二进制
+# 1) 先自己启动核心（开机不会自启，ADR 0018）；没有已应用节点就先做第 7 节的导入 + 应用
+adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh start'
+# 2) 进程只应有一个，且指向模块目录里的二进制
 adb -s $D shell 'ps -A -o PID,ARGS | grep "[x]ray run"'
 #  houdini64 /data/adb/modules/kernelray/bin/xray ... run -c /data/adb/modules/kernelray/config.json
 
-# 2) 模块自报状态；node= 是已应用节点（没应用时为空）
+# 3) 模块自报状态；node= 是已应用节点（没应用时为空）
 adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status'
 #  state=running  phase=idle  pid=...  node=...  conf=...  log=...
 
-# 3) 文件都在模块目录里，权限正确
+# 4) 文件都在模块目录里，权限正确
 adb -s $D shell 'ls -l /data/adb/modules/kernelray/{state.json,config.json,outbound.json,outbound.meta,logs,runtime}'
 adb -s $D shell 'cat /data/adb/modules/kernelray/runtime/applied 2>/dev/null'   # 空 = 直连
 
-# 4) 真的在转发（不是只看进程活着）
+# 5) 真的在转发（不是只看进程活着）
 adb -s $D forward tcp:11080 tcp:10808
 curl -sS -o /dev/null -w '%{http_code}\n' \
   --socks5-hostname 127.0.0.1:11080 https://www.gstatic.com/generate_204   # → 204
@@ -119,7 +121,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 ```sh
 adb -s $D shell 'monkey -p me.weishu.kernelsu -c android.intent.category.LAUNCHER 1'
 adb -s $D shell input tap 675 1856     # 底部导航「模块」
-adb -s $D shell input tap 262 1047     # 卡片上的 <> 图标 = WebUI（▶ 是 action.sh）
+adb -s $D shell input tap 262 1047     # 卡片上的 <> 图标 = WebUI（模块没有 action.sh，卡上没有 ▶）
 adb -s $D exec-out screencap -p > build/ui.png
 ```
 
@@ -133,7 +135,8 @@ adb -s $D exec-out cat //sdcard/ui.xml > build/ui.xml   # 找 text="..." 的 bou
 不用 UI 也能启停：
 
 ```sh
-adb -s $D shell 'su -c "ksud module action kernelray"'   # = 点 ▶，跑 action.sh（启停切换）
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh start"'
+adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh stop"'
 ```
 
 **切换节点（v0.6 的列表手势，现在多一步弹窗）**：在 Nodes 页导入节点，点列表里的一行打开节点详情
@@ -158,7 +161,7 @@ adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第
 重新导入保留 id 时该行会显示“有改动”，打开弹窗点「重新应用」即可。
 
 **tproxy（v0.7，开关默认开）**：开关是纯偏好（`tproxy on|off` 只写 `runtime/tproxy`），随核心启动
-生效——应用节点后 Stop→Start（或重启设备）即接管。状态页 Start / `kr_start` 均会先装规则再起核心：
+生效——应用节点后 Stop→Start 即接管（重启不再算一次启动：开机不启动核心）。状态页 Start / `kr_start` 均会先装规则再起核心：
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh start'
@@ -238,11 +241,11 @@ adb -s $D shell 'ls -d /data/adb/modules/kernelray; ps -A -o PID,ARGS | grep -c 
 | --- | --- |
 | 安装成功但版本没变 | 没重启，包还在 `modules_update` |
 | `phase=no-core` / `failed` | `bin/xray` 缺失或不可执行（x86_64 模拟器靠 houdini64 翻译 ARM 二进制） |
-| 出现两个 `xray run` | KernelSU 会重复执行 `service.sh`；现在靠 `mkdir` 原子锁 + 清理残留进程兜住 |
+| 出现两个 `xray run` | WebUI 和终端可能同时 start；靠 `mkdir` 原子锁 + 清理残留进程兜住 |
 | 状态轮询卡顿 | `xray -version` 在 ARM 翻译下要 0.44s；已缓存到 `runtime/version`，正常一次 0.05s |
 | `uname -m` 显示 aarch64 但设备是 x86_64 | 模拟器的 ARM 翻译；不要据此挑架构，只有一个 arm64 二进制 |
 | `push` 报错、路径变成 `C:/...` | MSYS 路径改写，用 `//data/...` 或 `MSYS_NO_PATHCONV=1` |
-| `logcat` 里搜不到 kernelray | `service.sh` 的 stdout 不进 logcat；看 `logs/xray.log` 或 `kernelray.sh log 50` |
+| `logcat` 里搜不到 kernelray | WebUI/CLI 的输出不进 logcat；看 `logs/xray.log` 或 `kernelray.sh log 50` |
 | 端口测试 000/超时 | 忘了 `adb forward`，或没用 `--socks5-hostname`（域名解析也走代理才叫真通） |
 | 点「应用」报 `no rendered outbound` | 没走 UI；`outbound.json`/`outbound.meta` 是弹窗的应用路径写的 |
 | 点「应用」报 `config test failed` | 渲染出的出站被核心拒绝，看 `logs/xray.log`；旧配置未动 |

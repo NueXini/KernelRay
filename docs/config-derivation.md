@@ -22,7 +22,7 @@ its Apply button is the switch gesture).
 | `runtime/applied` | shell | id of the node `config.json` was built from |
 | `runtime/config.tested` | shell | a copy of the exact bytes that passed `xray -test` (ADR 0017) |
 | `runtime/config.form` | shell | the form those bytes were rendered in: `1` takeover, `0` 空转 (ADR 0017) |
-| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route` |
+| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route`, `boot` (the boot that wrote it; a reader treats another boot's file as `idle`, docs/adr/0018) |
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 | `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
 | `runtime/loglevel` | shell | the persisted 日志等级; absent = 警告 (docs/adr/0015) |
@@ -248,10 +248,11 @@ through an **environment variable** (`ENVIRON["KR_OUT_LINE"]`), and `awk` only l
 placeholder and prints the pieces. Nothing is re-expanded. `tests/config.test.js` exercises a
 password containing quotes, backslashes, `$`, backticks, `&`, `<>` and a newline escape.
 
-## Boot and self-healing
+## The start and self-healing
 
-`service.sh` calls `kr_start`. Before anything else, the start gate demands an applied node:
-without one, nothing starts and status.json records `stopped/no-node`
+Nothing starts at boot ([ADR 0018](adr/0018-no-action-button-and-no-boot-start.md)): `kr_start`
+runs only from the WebUI's 启动 or `kernelray.sh start`. Before anything else, the start gate
+demands an applied node: without one, nothing starts and status.json records `stopped/no-node`
 ([ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)).
 
 `kr_ensure_config` then makes `config.json` the config this start would run — the single place

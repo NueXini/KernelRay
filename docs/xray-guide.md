@@ -78,7 +78,7 @@ Xray 配置由 `log` / `inbounds` / `outbounds` / `dns` / `routing` 五大块组
 
 | 命令 | 本模块哪里在用 |
 | --- | --- |
-| `xray run -c config.json` | `service.sh` 启动核心、切节点后重启 |
+| `xray run -c config.json` | 启动核心（WebUI 启动按钮 / `kr_start`）、切节点后重启 |
 | `xray -test -c config.json` | 应用节点 / 切换分流模式前先验证配置，失败即回滚 |
 
 环境变量（如 `XRAY_LOCATION_ASSET` 改 geo 数据路径）见

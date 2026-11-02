@@ -4,7 +4,7 @@
 schemaVersion: 1
 id: kernelray
 name: KernelRay
-summary: Runs an Xray core on boot as a KernelSU module
+summary: Runs an Xray core from the WebUI as a KernelSU module
 description: README.md
 license: MIT
 # TODO: fill in once the repository has a public URL.
