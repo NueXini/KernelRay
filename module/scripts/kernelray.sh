@@ -11,6 +11,7 @@
 
 KR_ID=kernelray
 KR_MODDIR=${KR_MODDIR:-/data/adb/modules/kernelray}
+KR_BINDIR=$KR_MODDIR/bin
 KR_CONF=$KR_MODDIR/config.json
 KR_LOGDIR=$KR_MODDIR/logs
 KR_RUNDIR=$KR_MODDIR/runtime
@@ -38,12 +39,11 @@ KR_CONF_FORM=$KR_RUNDIR/config.form
 KR_START_POLLS=${KR_START_POLLS:-30}
 KR_START_STEP=${KR_START_STEP:-0.05}
 
-# Geo data (docs/adr/0014): geosite.dat and geoip.dat ship inside the module ZIP, and the core
-# finds them only because we say so -- Xray's own fallback search starts at the process cwd,
-# which is not ours. Exported once, so every `xray -test` and `xray run` inherits it.
-KR_GEODATA=$KR_MODDIR/geodata
-XRAY_LOCATION_ASSET=$KR_GEODATA
-export XRAY_LOCATION_ASSET
+# Geo data (docs/adr/0014): geosite.dat and geoip.dat ship inside the module ZIP, in the same
+# directory as the core, and that is where the core looks for them -- with XRAY_LOCATION_ASSET
+# unset it resolves them from its own executable's directory, not from the cwd (verified on
+# 26.10.29). So the layout carries the path and nothing is exported: the data and the core
+# either travel together or neither works.
 
 # Takeover support (v0.7). Sourced so every entry point -- CLI, service, action,
 # uninstall -- sees the same switch and rule helpers. Missing file (an older layout)
@@ -86,7 +86,7 @@ kr_dirs() {
 # There is exactly one core: bin/xray. A core is usable only if it executes here.
 # Neither $ARCH nor `uname -m` can be trusted (emulators report a foreign kernel
 # arch), so usability is decided by running the binary, never by its name.
-kr_core() { echo "$KR_MODDIR/bin/xray"; }
+kr_core() { echo "$KR_BINDIR/xray"; }
 
 # The probe costs a process (0.3-0.5 s under ARM translation) and one invocation asks the
 # same question up to three times (apply, then its start, then the version cache), so the
@@ -435,7 +435,7 @@ kr_render_config() { # <outbound-file> [route-mode override]
     # The preference asked for cn and the geo data is gone: the safe direction is everything
     # through the node, never a dead core. Log file only -- this function's stdout is the
     # config.
-    kr_log_file "geo data missing under $KR_GEODATA; rendered the global routing form"
+    kr_log_file "geo data missing under $KR_BINDIR; rendered the global routing form"
   fi
   # The outbound and the takeover blocks pass through the environment, not interpolated
   # into awk's program or a shell string: JSON contains backslashes, quotes and `` $ ``, all
@@ -1054,13 +1054,11 @@ kr_status_kv() {
   _rt=global
   _rte=global
   _geo=missing
-  _geover=""
   if command -v kr_route_mode >/dev/null 2>&1; then
     _rt=$(kr_route_mode)
     kr_route_effective
     _rte=$KR_ROUTE_EFFECTIVE
     kr_geodata_ok && _geo=ok
-    _geover=$(sed -n '1p' "$KR_GEODATA/VERSION" 2>/dev/null)
   fi
   # The 日志等级 preference and whether config.json already carries it: the UI shows the
   # pending hint only while a running core predates the change (docs/adr/0015). A stopped
@@ -1083,7 +1081,6 @@ kr_status_kv() {
   echo "route=$_rt"
   echo "routing=$_rte"
   echo "geodata=$_geo"
-  echo "geodataver=$_geover"
   echo "socks=$(kr_setting_port socksPort 10808)"
   echo "http=$(kr_setting_port httpPort 10809)"
   echo "loglevel=$_lv"

@@ -103,10 +103,8 @@ var DICT_ZH = {
   routeGlobal: "全局", routeCn: "大陆直连",
   routeGlobalHint: "所有流量都走已应用的节点（默认）。",
   routeCnHint: "大陆的域名与 IP 直连，其余走节点；DNS 也随之分流。切换后立即重写配置并重启核心。",
-  routeCnNoGeodata: "geo 数据缺失（geodata/geosite.dat、geoip.dat）：大陆直连当前按全局渲染，补齐文件后才真正生效。",
+  routeCnNoGeodata: "geo 数据缺失（bin/geosite.dat、geoip.dat）：大陆直连当前按全局渲染，补齐文件后才真正生效。",
   routeSwitching: "正在切换分流模式…",
-  geodataLabel: "geo 数据：{v}",
-  geodataMissing: "缺失",
   addTitle: "添加节点",
   addPlaceholder: "vless://…",
   close: "关闭",
@@ -202,10 +200,8 @@ var DICT_EN = {
   routeGlobal: "Global", routeCn: "Direct-CN",
   routeGlobalHint: "Every destination goes through the applied node (the default).",
   routeCnHint: "Mainland domains and addresses go direct and everything else goes through the node, with DNS split to match. Switching re-renders the config and restarts the core.",
-  routeCnNoGeodata: "Geo data is missing (geodata/geosite.dat, geoip.dat): Direct-CN renders as Global until the files are back.",
+  routeCnNoGeodata: "Geo data is missing (bin/geosite.dat, geoip.dat): Direct-CN renders as Global until the files are back.",
   routeSwitching: "Switching routing mode…",
-  geodataLabel: "Geo data: {v}",
-  geodataMissing: "missing",
   addTitle: "Add node",
   addPlaceholder: "vless://…",
   close: "Close",
@@ -256,7 +252,7 @@ var els = {
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetProxy: $("l-set-proxy"), lSetRouteMode: $("l-set-route-mode"),
   selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
-  setRouteHint: $("set-route-hint"), setGeodataHint: $("set-geodata-hint"),
+  setRouteHint: $("set-route-hint"),
   tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
   lSetTp: $("l-set-tp"), setTpHint: $("set-tp-hint"), setTpSwitch: $("set-tp-switch")
 };
@@ -2099,8 +2095,8 @@ function renderStatus(kv) {
   }
 
   // The 分流模式 follows the preference (kv.route). kv.routing is what the config may
-  // actually use, and the two differ only while the geo data is missing (ADR 0014), which is
-  // why the geodata line sits under the select instead of being a footnote in the log.
+  // actually use, and the two differ only while the geo data is missing (ADR 0014): that
+  // is the one case the hint under the select has to explain.
   var routeMode = kv.route === "cn" ? "cn" : "global";
   els.selRoute.value = routeMode;
   if (routeMode === "cn") {
@@ -2108,8 +2104,6 @@ function renderStatus(kv) {
   } else {
     els.setRouteHint.textContent = T.routeGlobalHint;
   }
-  els.setGeodataHint.textContent = T.geodataLabel.replace("{v}",
-    kv.geodata === "missing" ? T.geodataMissing : (kv.geodataver || T.unknown));
 
   // The 日志等级 comes from the shell, not localStorage: the select shows the saved
   // preference, and the hint appears only while a running core still carries the old level

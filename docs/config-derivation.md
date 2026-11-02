@@ -26,7 +26,7 @@ its Apply button is the switch gesture).
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 | `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
 | `runtime/loglevel` | shell | the persisted 日志等级; absent = 警告 (docs/adr/0015) |
-| `geodata/` | repo | `geosite.dat`, `geoip.dat` and the `VERSION` the 分流规则 name categories from (docs/adr/0014) |
+| `bin/` | repo | the core and the geo data it loads: `xray`, `geosite.dat`, `geoip.dat` (docs/adr/0014) |
 
 One writer per file: the UI never writes `config.json`, `runtime/applied` or `status.json`; the
 shell never writes `state.json`, `outbound.json` or `outbound.meta`. The one exception is
@@ -293,7 +293,7 @@ restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `06
 - **No applied node.** There is nothing to re-render: the preference is written and the next
   apply renders it.
 - **Degradation.** `kr_route_effective` is what the render may use: `cn` only while
-  `geodata/geosite.dat` and `geodata/geoip.dat` both exist and are non-empty, else `global`
+  `bin/geosite.dat` and `bin/geoip.dat` both exist and are non-empty, else `global`
   plus a line in `kernelray.log`. The preference is never rewritten — a start that finds the
   data gone runs everything through the node rather than a config that cannot load.
 - **The blocks.** 大陆直连 adds to the takeover form: two domestic resolvers
@@ -303,9 +303,11 @@ restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `06
   `geoip:private`, `geosite:private`, `geosite:cn`, `geoip:cn` → `direct`. The 空转 form gets
   the last four only. 全局 keeps the pre-0014 blocks byte for byte (`AsIs`, one DoH, three
   rules).
-- **The asset path.** `kernelray.sh` exports `XRAY_LOCATION_ASSET=$KR_GEODATA` once, so every
-  `xray -test` and `xray run` reads the data from the module dir; Xray's own fallback search
-  starts at the process cwd, which is not ours.
+- **The asset path.** Nothing is exported. `bin/` holds the core and its data, and with
+  `XRAY_LOCATION_ASSET` unset the core resolves `geosite.dat`/`geoip.dat` from its own
+  executable's directory — 26.10.29 searches there, not the cwd (verified on device: a core in
+  a directory without the files fails with `stat <exe-dir>/geosite.dat`). One location, and no
+  second path that could disagree with it.
 
 ## Invariants
 
@@ -324,5 +326,5 @@ restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `06
 - One render and one test per switch: a config is rendered once, from the intent the caller
   states, and a start reuses the bytes the swap already tested (ADR 0017).
 - `config.json` is generated from files inside the module dir only: the template, the outbound,
-  `state.json`'s ports, the two preference files and `geodata/`. Nothing is fetched at run
-  time, and `XRAY_LOCATION_ASSET` is exported by `kernelray.sh` so the core agrees.
+  `state.json`'s ports, the two preference files and `bin/`. Nothing is fetched at run
+  time, and no asset path is exported: the core reads its data from the directory it sits in.

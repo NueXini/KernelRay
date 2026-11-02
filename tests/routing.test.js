@@ -33,13 +33,12 @@ const fixture = {
   }
 };
 
-// -version prints; -test fails only when FAKE_XRAY_FAIL is set and dumps the asset env when
-// FAKE_ENV_LOG names a file; `run -c` stays up unless FAKE_START_FAIL says otherwise.
+// -version prints; -test fails only when FAKE_XRAY_FAIL is set; `run -c` stays up unless
+// FAKE_START_FAIL says otherwise.
 const fakeCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
   'if [ "$1" = "run" ] && [ "$2" = "-test" ]; then',
-  '  [ -n "$FAKE_ENV_LOG" ] && printf "%s\\n" "$XRAY_LOCATION_ASSET" >"$FAKE_ENV_LOG"',
   '  [ -n "$FAKE_XRAY_FAIL" ] && exit 1',
   "  exit 0",
   "fi",
@@ -103,11 +102,10 @@ function makeModule(core) {
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
-  fs.mkdirSync(path.join(dir, "geodata"), { recursive: true });
-  // `-s` is what the shell checks: an empty .dat is as good as a missing one.
-  fs.writeFileSync(path.join(dir, "geodata", "geosite.dat"), "geosite\n");
-  fs.writeFileSync(path.join(dir, "geodata", "geoip.dat"), "geoip\n");
-  fs.writeFileSync(path.join(dir, "geodata", "VERSION"), "loyalsoldier 202610292204\n");
+  // The geo data sits beside the core (docs/adr/0014). `-s` is what the shell checks: an
+  // empty .dat is as good as a missing one.
+  fs.writeFileSync(path.join(dir, "bin", "geosite.dat"), "geosite\n");
+  fs.writeFileSync(path.join(dir, "bin", "geoip.dat"), "geoip\n");
   return {
     dir: dir,
     config: path.join(dir, "config.json"),
@@ -116,8 +114,8 @@ function makeModule(core) {
     applied: path.join(dir, "runtime", "applied"),
     status: path.join(dir, "runtime", "status.json"),
     route: path.join(dir, "runtime", "route"),
-    geosite: path.join(dir, "geodata", "geosite.dat"),
-    geoip: path.join(dir, "geodata", "geoip.dat"),
+    geosite: path.join(dir, "bin", "geosite.dat"),
+    geoip: path.join(dir, "bin", "geoip.dat"),
     moduleLog: path.join(dir, "logs", "kernelray.log")
   };
 }
@@ -289,19 +287,22 @@ check("degrade: an empty .dat counts as missing", () => {
   eq(out.trim(), "MISSING", "geodata check");
 });
 
-// ---- the asset path ---------------------------------------------------------------------
+// ---- where the core finds its data ------------------------------------------------------
 
-check("env: XRAY_LOCATION_ASSET points every core invocation at the module's geodata", () => {
+check("layout: the geo data the shell checks is the data beside the core", () => {
   const m = makeModule();
-  writeOutbound(m);
-  fs.writeFileSync(m.applied, ID + "\n");
-  const envLog = path.join(m.dir, "env.log");
-  const out = runShell(m.dir, '. "$KR_TEST_SCRIPT"; printf "%s\\n" "$XRAY_LOCATION_ASSET"');
-  eq(out.trim(), shPath(m.dir) + "/geodata", "exported at source time");
+  // The core resolves geosite.dat/geoip.dat from its own executable's directory (26.10.29
+  // searches there, not the cwd), so the data has to live where the core does -- there is no
+  // XRAY_LOCATION_ASSET and no second path to keep in sync (docs/adr/0014).
+  const coreDir = path.posix.dirname(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_core').trim());
+  eq(coreDir, shPath(m.dir) + "/bin", "the core lives in bin/");
 
-  runShell(m.dir, BODY_SET, ["cn"], { FAKE_ENV_LOG: shPath(envLog) });
-  eq(fs.readFileSync(envLog, "utf8").trim(), shPath(m.dir) + "/geodata",
-    "inherited by `xray -test`");
+  // Moving a .dat out of that directory is the layout break this guards against.
+  const moved = path.join(m.dir, "elsewhere");
+  fs.mkdirSync(moved);
+  fs.renameSync(path.join(m.dir, "bin", "geosite.dat"), path.join(moved, "geosite.dat"));
+  eq(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_geodata_ok && echo OK || echo MISSING').trim(),
+    "MISSING", "a .dat outside the core's directory does not count");
 });
 
 // ---- the CLI ----------------------------------------------------------------------------
@@ -394,7 +395,6 @@ check("cli: the status kv and status.json carry the mode, the effective mode and
   if (!/^route=cn$/m.test(kv)) { throw new Error("kv route: " + kv); }
   if (!/^routing=cn$/m.test(kv)) { throw new Error("kv routing: " + kv); }
   if (!/^geodata=ok$/m.test(kv)) { throw new Error("kv geodata: " + kv); }
-  if (!/^geodataver=loyalsoldier 202610292204$/m.test(kv)) { throw new Error("kv version: " + kv); }
 
   runShell(m.dir, BODY_STATUS);
   eq(readJson(m.status).route, "cn", "status.json route");

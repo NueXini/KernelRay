@@ -32,7 +32,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core — one render and one test, and no restart at all when the bytes do not change ([ADR 0017](docs/adr/0017-one-render-one-test-per-switch.md)) |
 | takes over device traffic | the tproxy switch (WebUI settings, on by default) makes every core start install the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
-| routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `geodata/` |
+| routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `bin/`, beside the core |
 | action button | toggles start/stop and prints status (`action.sh`) |
 | WebUI | start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch, the 分流模式 and the 日志等级 live in Settings |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
@@ -112,13 +112,14 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 - **It works without takeover too.** The 空转 form keeps the same geo rules (there is no `dns`
   inbound there, so only the geo rules are authored), so a local socks client gets the same
   分流.
-- **The geo data ships with the module.** `geodata/geosite.dat` + `geoip.dat` are part of the
-  ZIP, so nothing is fetched at install or at start, and the data's age is the release's age.
-  Which set is pinned is a per-release call (`geodata/VERSION`, shown in Settings): the release
+- **The geo data ships with the module.** `bin/geosite.dat` + `geoip.dat` sit beside the core
+  in the ZIP, so nothing is fetched at install or at start, and the data's age is the release's
+  age. Which set is pinned is a per-release call recorded in the release notes: the release
   pins Loyalsoldier's (~7.4MB compressed) for its extra categories, while test builds use the
   copy that comes inside the core's own ZIP (~3.3MB). Both carry `cn` and `private`, and the
   XTLS set's `geoip:cn` is the larger of the two, so the pin never changes whether 大陆直连
-  works. A module update resets the data with the rest of the module dir.
+  works. The files carry no version stamp of their own — Settings shows presence, not a set
+  name. A module update resets the data with the rest of the module dir.
 - **Missing data never bricks the core.** `routing cn` refuses to switch while the files are
   absent, and a start that finds them gone renders 全局 and logs it: the safe direction is
   "everything through the node", never a config that cannot load.
@@ -150,8 +151,7 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `tests/routing.test.js` | 分流模式 render matrix (全局/大陆直连 × takeover/idle), the geo-data degradation and the `routing` CLI's failure paths, run against the shipped shell |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
-| `module/bin/xray` | the arm64 core, **not committed** — see `module/bin/README.md` |
-| `module/geodata/` | `geosite.dat` + `geoip.dat` (and the `VERSION` the UI shows), **not committed** — see `module/geodata/README.md` |
+| `module/bin/` | the arm64 core and the geo data it loads (`geosite.dat`, `geoip.dat`), **not committed** — see `module/bin/README.md` |
 | `module.yaml` | KernelSU Modules display metadata (name, summary, icon, tags, …) |
 | `scripts/pack.sh` | builds `build/kernelray-<versionCode>-<version>.zip` from `module/` |
 | `GLOSSARY.md` | what we mean by node / subscription / selected node / module dir / idle run |
@@ -160,10 +160,12 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 ## Install
 
 ```sh
-# 1. put the core and the geo data in place (see module/bin/README.md, module/geodata/README.md)
-#     module/bin/xray                <- Xray-android-arm64-v8a.zip
-#     module/geodata/{geosite,geoip}.dat  <- testing: the same ZIP; release: Loyalsoldier's
-#     module/geodata/VERSION         <- the tag they came from, one line; the UI shows it
+# 1. put the core and the geo data in place (see module/bin/README.md)
+#     module/bin/xray                    <- Xray-android-arm64-v8a.zip
+#     module/bin/{geosite,geoip}.dat     <- testing: the same ZIP; release: Loyalsoldier's
+#     one command for all three, naming the files so the ZIP's own README.md is not extracted
+#     over module/bin/README.md:
+#       unzip -j Xray-android-arm64-v8a.zip xray geosite.dat geoip.dat -d module/bin/
 
 # 2. build and flash
 scripts/pack.sh

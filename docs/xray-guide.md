@@ -82,7 +82,8 @@ Xray 配置由 `log` / `inbounds` / `outbounds` / `dns` / `routing` 五大块组
 | `xray -test -c config.json` | 应用节点 / 切换分流模式前先验证配置，失败即回滚 |
 
 环境变量（如 `XRAY_LOCATION_ASSET` 改 geo 数据路径）见
-[env.md](https://xtls.github.io/config/env.html)——本模块用工作目录默认值，没设这些变量。
+[env.md](https://xtls.github.io/config/env.html)——本模块**不设**这些变量：核心从自己所在目录
+（`bin/`）找 `geosite.dat`/`geoip.dat`，26.10.29 实测不搜工作目录。
 
 ## 读官方文档时的注意点
 

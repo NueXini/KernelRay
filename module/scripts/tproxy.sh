@@ -374,7 +374,7 @@ kr_tp_pin_node() {
 # Both .dat files are required together: a config that names geosite:cn without geosite.dat
 # fails `xray -test`, and a missing geoip.dat is the same dead end one rule later.
 kr_geodata_ok() {
-  [ -s "$KR_GEODATA/geosite.dat" ] && [ -s "$KR_GEODATA/geoip.dat" ]
+  [ -s "$KR_BINDIR/geosite.dat" ] && [ -s "$KR_BINDIR/geoip.dat" ]
 }
 
 # The persisted 分流模式: presence of the file is 大陆直连, absence is 全局 (the default, and
@@ -511,8 +511,8 @@ kr_route_set() { # <global|cn>
     return 0
   fi
   if [ "$1" = cn ] && ! kr_geodata_ok; then
-    kr_log "routing: cn needs $KR_GEODATA/{geosite,geoip}.dat"
-    echo "geo data is missing ($KR_GEODATA); the routing mode stays $_cur" >&2
+    kr_log "routing: cn needs $KR_BINDIR/{geosite,geoip}.dat"
+    echo "geo data is missing ($KR_BINDIR); the routing mode stays $_cur" >&2
     return 1
   fi
   _n=$(kr_applied_id) || _n=""

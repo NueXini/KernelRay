@@ -14,10 +14,10 @@ The Xray executable itself, taken from an upstream `Xray-android-<arch>` release
 _Avoid_: binary, engine, xray-core (that is the upstream project, not our file)
 
 **模块目录 (Module directory)**:
-`/data/adb/modules/kernelray` — the one root: mechanism, core binary, config template, generated
-core config, node store, logs and runtime state. It is also all we ever write to, so removing
-the module leaves nothing behind. Replaced wholesale on update, which resets the user data
-inside it; that cost is deliberate (see `docs/adr/0002`).
+`/data/adb/modules/kernelray` — the one root: mechanism, core binary and its geo data, config
+template, generated core config, node store, logs and runtime state. It is also all we ever
+write to, so removing the module leaves nothing behind. Replaced wholesale on update, which
+resets the user data inside it; that cost is deliberate (see `docs/adr/0002`).
 _Avoid_: install dir, app dir, data dir, storage, work dir
 
 **空转 (Idle run)**:
@@ -183,9 +183,9 @@ v0.7, routing and DNS — from which the core config is generated.
 _Avoid_: default config, preset, profile
 
 **地理数据 (Geo data)**:
-The `geosite.dat` and `geoip.dat` files the 分流规则 name categories from. They ship with the
-核心 inside the module rather than being fetched on the device, so a category a release does not
-carry is a config error, never an empty match.
+The `geosite.dat` and `geoip.dat` files the 分流规则 name categories from. They ship inside the
+module, in the same directory as the 核心 rather than being fetched on the device, so a category
+a release does not carry is a config error, never an empty match.
 _Avoid_: geo 文件, 规则库, 数据库, 订阅规则
 
 **核心配置 (Core config)**:

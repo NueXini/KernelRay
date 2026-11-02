@@ -13,7 +13,7 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 | --- | --- |
 | 主机工具 | `bash`、`zip`（或 `7z`）、`node` ≥ 18（跑单测） |
 | 设备 | 已 root（KernelSU），`ksud` 可用，busybox 在 `/data/adb/ksu/bin/busybox` |
-| 核心 | `module/bin/xray`（arm64）已就位，否则打包会失败 |
+| 核心 | `module/bin/xray`（arm64）与 `module/bin/{geosite,geoip}.dat` 已就位，否则打包会失败 |
 | 管理器 | 只有要看 WebUI 时才需要；装/卸/验证全都能在 adb 里完成 |
 
 ## 1. 先跑单测（改了解析器、渲染器、模板或脚本就一定要跑）
@@ -183,7 +183,7 @@ adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/kernelray/config.js
 adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.com"'
 ```
 
-`geodata/` 里两个 `.dat` 由 `scripts/pack.sh` 强制要求（`xray -test` 会加载它们）。设备上删掉一个
+`bin/` 里两个 `.dat`（就在核心旁边）由 `scripts/pack.sh` 强制要求（`xray -test` 会加载它们）。设备上删掉一个
 再 `routing cn`：CLI 拒绝切换；若偏好已是 `cn` 而文件没了，启动会降级成 `全局` 并在
 `logs/kernelray.log` 留一行 `geo data missing`——**不会**因为缺文件起不来。
 

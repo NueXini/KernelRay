@@ -1,20 +1,22 @@
 # Geo data ships with the module, and routing is a preset mode
 
 Routing needs `geosite.dat` and `geoip.dat`: `geosite:cn` / `geoip:cn` only resolve if the
-files sit next to the core. They ship inside the release ZIP at `geodata/`, because a device-side
-download would make a start depend on the network and because the WebUI has no TLS-validating
-fetcher: ADR 0001's reasoning, one file class further. `XRAY_LOCATION_ASSET` is exported for
-every core invocation pointing at that directory: Xray's own fallback search starts at the
-process cwd, which is not ours.
+files sit next to the core. They ship inside the release ZIP in `bin/`, the directory the core
+itself lives in, because a device-side download would make a start depend on the network and
+because the WebUI has no TLS-validating fetcher: ADR 0001's reasoning, one file class further.
+No asset path is configured: with `XRAY_LOCATION_ASSET` unset the core resolves the files from
+its own executable's directory — 26.10.29 searches there, not the cwd — so the location inside
+the ZIP is the only thing that has to be right.
 
-Which set is in the ZIP is a **per-release pin, not a code constant**: `geodata/VERSION` names it
-and the WebUI shows that line. The reference release pins **Loyalsoldier/v2ray-rules-dat** — 260
-`geoip` categories and the richer ad/reject lists a later rule editor will want — while testing
-uses the `geodata` that comes inside the core's own ZIP (XTLS/Xray-rules-dat) unchanged, because
-it is already in the file the core is extracted from. Both carry every category this version
-names (`cn`, `private`), and `geoip:cn` is no smaller in the XTLS set (25,466 prefixes vs 10,012;
-7,049 vs 6,516 IPv4), so the pin changes what a release costs (3.3MB compressed / 11.5MB
-installed vs 7.4MB / 27.9MB) and which extra categories exist — never whether 大陆直连 works.
+Which set is in the ZIP is a **per-release pin, not a code constant**: the release notes and
+`bin/README.md` name it, and the shipped files carry no version stamp of their own. The reference
+release pins **Loyalsoldier/v2ray-rules-dat** — 260 `geoip` categories and the richer ad/reject
+lists a later rule editor will want — while testing uses the geo data that comes inside the
+core's own ZIP (XTLS/Xray-rules-dat) unchanged, because it is already in the file the core is
+extracted from. Both carry every category this version names (`cn`, `private`), and `geoip:cn`
+is no smaller in the XTLS set (25,466 prefixes vs 10,012; 7,049 vs 6,516 IPv4), so the pin changes
+what a release costs (3.3MB compressed / 11.5MB installed vs 7.4MB / 27.9MB) and which extra
+categories exist — never whether 大陆直连 works.
 
 The user picks a **分流模式** instead of authoring rules: `全局` (the applied node carries
 everything — the default, and what every earlier version did) or `大陆直连` (mainland domains
@@ -44,7 +46,7 @@ while the files are absent — the safe direction is always "everything through 
 
 - **One dataset hard-coded in the module** — the extra 4.1MB a release spends on Loyalsoldier's
   categories would then be spent on every test build too, and swapping sets would be a code
-  change instead of a file plus one line of `VERSION`.
+  change instead of a file swap plus one line in the release notes.
 - **Downloading the data on the device** at install or first start — network at install time
   and an unrecoverable failure, the same trade ADR 0001 rejected for the core.
 - **Xray's own `app/geodata` downloader** (https URL + cron, hot-reloaded) — a start-time
@@ -55,3 +57,13 @@ while the files are absent — the safe direction is always "everything through 
   "mainland goes direct", not "ads are blocked". The template's `block` outbound stays unused,
   waiting for that editor.
 - **Keeping the fixed DNS** — a 分流 whose IP half can never match. See above.
+
+## Amendment
+
+The files were moved from `geodata/` into `bin/`, beside the core, and `geodata/VERSION` was
+dropped. One unpack of the core's own ZIP now fills the whole directory, and the data needs no
+path of its own in the code: with `XRAY_LOCATION_ASSET` unset the core reads them from its own
+directory, so the two cannot drift apart — and the module stopped exporting the variable once
+that was verified on device. The decision above is otherwise unchanged — the data still ships
+inside the ZIP and the set is still pinned per release — but the device no longer names the
+pinned set: the release notes do, and Settings reports presence rather than a version line.

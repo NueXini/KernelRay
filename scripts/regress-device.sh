@@ -174,7 +174,6 @@ expect "P1-8b no test" "$(tests_in "$before")" "0"
 expect "P1-8c no run" "$(runs_in "$before")" "0"
 
 # P1-13: stray core gets killed
-export XRAY_LOCATION_ASSET=$M/geodata
 nohup "$M/bin/xray" run -c "$M/config.json" >/dev/null 2>&1 &
 stray=$!
 sleep 1
@@ -217,13 +216,13 @@ $S loglevel warning >/dev/null 2>&1   # back to default (removes the file)
 
 # P1-11: missing geo data with cn preference -> degraded start, not failure
 $S routing cn >/dev/null 2>&1
-mv "$M/geodata/geoip.dat" /data/local/tmp/geoip.bak
+mv "$M/bin/geoip.dat" /data/local/tmp/geoip.bak
 $S stop >/dev/null 2>&1
 $S start >/dev/null 2>&1
 if [ "$(state)" = "running" ]; then ok "P1-11a degraded start"; else bad "P1-11a degraded start" "state=$(state)"; fi
 grep -q "geo data missing" "$KL" && ok "P1-11b logged" || bad "P1-11b logged" "$(tail -2 "$KL" | tr '\n' ' ')"
 grep -q geosite:cn "$M/config.json" && bad "P1-11c degraded to global" "cn rules present" || ok "P1-11c degraded to global"
-mv /data/local/tmp/geoip.bak "$M/geodata/geoip.dat"
+mv /data/local/tmp/geoip.bak "$M/bin/geoip.dat"
 $S routing global >/dev/null 2>&1
 
 # P1-12: no applied node -> refuse, no rules

@@ -13,7 +13,9 @@ ui_print "  device: API $API, installer ARCH=$ARCH"
 
 # Zip entries may lose the exec bit (built on Windows), so fix modes before probing.
 set_perm_recursive "$MODPATH" 0 0 0755 0644
-set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
+# bin/ holds the core and the geo data it loads: the directory is traversable and the core is
+# the only file in it that executes (docs/adr/0014).
+set_perm_recursive "$MODPATH/bin" 0 0 0755 0644
 set_perm "$MODPATH/bin/xray" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/action.sh" 0 0 0755
@@ -33,10 +35,9 @@ kr_version_refresh
 ui_print "  core: $(kr_version_cached)"
 
 if kr_geodata_ok 2>/dev/null; then
-  _geo=$(sed -n '1p' "$MODPATH/geodata/VERSION" 2>/dev/null)
-  ui_print "  geo data: ${_geo:-present}"
+  ui_print "  geo data: present"
 else
-  ui_print "! geodata/geosite.dat or geodata/geoip.dat is missing: the 分流模式"
+  ui_print "! bin/geosite.dat or bin/geoip.dat is missing: the 分流模式"
   ui_print "! 大陆直连 (Direct-CN) will refuse to switch until both files are back."
 fi
 
