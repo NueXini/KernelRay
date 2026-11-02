@@ -7,15 +7,15 @@ name: KernelRay
 summary: Runs an Xray core from the WebUI as a KernelSU module
 description: README.md
 license: MIT
-# TODO: fill in once the repository has a public URL.
-# homepage: https://github.com/<owner>/KernelRay
-# support: https://github.com/<owner>/KernelRay/issues
+homepage: https://github.com/NueXini/KernelRay
+support: https://github.com/NueXini/KernelRay/issues
 tags: [xray, proxy, network]
 icon: assets/icon.png
 metamodule: false
 
 authors:
-  - name: KernelRay
+  - name: NueXini
+    url: https://github.com/NueXini
 
 compatibility:
   androidMinApi: 29

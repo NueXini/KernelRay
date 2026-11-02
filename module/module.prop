@@ -2,6 +2,6 @@ id=kernelray
 name=KernelRay
 version=v0.10.0
 versionCode=74
-author=KernelRay
+author=NueXini
 description=Runs an Xray core you start from the WebUI, on one imported node, takes over device traffic via TPROXY (on by default, coupled to the core start), and routes by 分流模式: 全局 or 大陆直连 (geosite/geoip, shipped in the module).
 updateJson=https://modules.kernelsu.org/api/v1/modules/kernelray/update.json
