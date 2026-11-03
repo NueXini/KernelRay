@@ -81,6 +81,8 @@ kr_dirs() {
     "$KR_CONF_TESTED" 2>/dev/null
   [ -n "${KR_TP_SWITCH:-}" ] && chmod 600 "$KR_TP_SWITCH" 2>/dev/null
   [ -n "${KR_ROUTE:-}" ] && chmod 600 "$KR_ROUTE" 2>/dev/null
+  [ -n "${KR_TP_RULES:-}" ] && chmod 600 "$KR_TP_RULES" 2>/dev/null
+  return 0
 }
 
 # There is exactly one core: bin/xray. A core is usable only if it executes here.
@@ -135,27 +137,41 @@ kr_version_refresh() {
   printf '%s\n' "$_v" >"$KR_VERFILE" 2>/dev/null
 }
 
+# The cached version without ever probing the core: the status poll must not pay a
+# process for a fact that only changes at install/start (kr_version_refresh).
+kr_version_read() { # sets KR_VERSION_VAL; 1 when the cache is absent or empty
+  KR_VERSION_VAL=""
+  [ -s "$KR_VERFILE" ] || return 1
+  IFS= read -r KR_VERSION_VAL <"$KR_VERFILE" || :
+  [ -n "$KR_VERSION_VAL" ] || return 1
+  return 0
+}
+
 kr_version_cached() {
-  if [ -s "$KR_VERFILE" ]; then
-    cat "$KR_VERFILE"
+  if kr_version_read; then
+    printf '%s\n' "$KR_VERSION_VAL"
     return 0
   fi
   kr_version_refresh
-  [ -s "$KR_VERFILE" ] && cat "$KR_VERFILE"
+  kr_version_read && printf '%s\n' "$KR_VERSION_VAL"
 }
 
-kr_pid() {
+# Read the pidfile once, without a subshell: the status poll asks for it twice.
+kr_pid_read() { # sets KR_PID_VAL; 1 when absent or not a pid
+  KR_PID_VAL=""
   [ -s "$KR_PIDFILE" ] || return 1
-  _p=$(cat "$KR_PIDFILE" 2>/dev/null)
-  case "$_p" in '' | *[!0-9]*) return 1 ;; esac
-  echo "$_p"
+  IFS= read -r KR_PID_VAL <"$KR_PIDFILE" || :
+  case "$KR_PID_VAL" in '' | *[!0-9]*) KR_PID_VAL=""; return 1 ;; esac
+  return 0
 }
+
+kr_pid() { kr_pid_read || return 1; printf '%s\n' "$KR_PID_VAL"; }
 
 # True only if the recorded pid is alive *and* is our core (guards against pid reuse).
 kr_running() {
-  _p=$(kr_pid) || return 1
-  kill -0 "$_p" 2>/dev/null || return 1
-  case "$(cat /proc/"$_p"/cmdline 2>/dev/null | tr '\0' ' ')" in
+  kr_pid_read || return 1
+  kill -0 "$KR_PID_VAL" 2>/dev/null || return 1
+  case "$( { tr '\0' ' ' <"/proc/$KR_PID_VAL/cmdline"; } 2>/dev/null )" in
     *xray*) return 0 ;;
   esac
   return 1
@@ -260,33 +276,58 @@ kr_cleanup_legacy() {
 # been applied, in which case nothing may start (ADR 0010). Only hex/alphanumeric ids
 # (plus _ and -) are accepted, so the value is safe to splice into paths, status JSON
 # and the UI.
-kr_applied_id() {
+kr_applied_read() { # sets KR_APPLIED_VAL; 1 when absent or invalid
+  KR_APPLIED_VAL=""
   [ -s "$KR_APPLIED" ] || return 1
-  _a=$(sed -n '1p' "$KR_APPLIED" 2>/dev/null)
-  case "$_a" in '' | *[!0-9A-Za-z_-]*) return 1 ;; esac
-  printf '%s\n' "$_a"
+  IFS= read -r KR_APPLIED_VAL <"$KR_APPLIED" || :
+  case "$KR_APPLIED_VAL" in '' | *[!0-9A-Za-z_-]*) KR_APPLIED_VAL=""; return 1 ;; esac
+  return 0
 }
+
+kr_applied_id() { kr_applied_read || return 1; printf '%s\n' "$KR_APPLIED_VAL"; }
 
 kr_meta_get() { # <key: id|host>
   [ -f "$KR_OUTBOUND_META" ] || return 1
   sed -n "s/^$1=//p" "$KR_OUTBOUND_META" 2>/dev/null | head -n 1
 }
 
-# One inbound port from state.json's settings. The UI serialises state.json so every key
-# sits on its own line inside the settings object; this reads exactly the two flat integer
-# fields it owns (ADR 0009) and falls back per field, so a missing, hand-pretty-printed or
-# half-broken state.json can never knock an inbound off its default port.
+# The two inbound ports from state.json's settings, in one pass. The UI serialises
+# state.json so every key sits on its own line inside the settings object; this reads
+# exactly the two flat integer fields it owns (ADR 0009) and falls back per field, so a
+# missing, hand-pretty-printed or half-broken state.json can never knock an inbound off
+# its default port. Sets KR_SOCKS_PORT / KR_HTTP_PORT.
+kr_settings_ports() {
+  KR_SOCKS_PORT=10808
+  KR_HTTP_PORT=10809
+  [ -s "$KR_STATE" ] || return 0
+  _ports=$(awk -v s=10808 -v h=10809 '
+    /"settings"[[:space:]]*:/ { in_settings = 1 }
+    /^[[:space:]]*}/ { in_settings = 0 }
+    in_settings && !seen_s && /"socksPort"[[:space:]]*:[[:space:]]*[0-9]/ {
+      match($0, /"socksPort"[[:space:]]*:[[:space:]]*[0-9]+/)
+      v = substr($0, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); s = v + 0; seen_s = 1
+    }
+    in_settings && !seen_h && /"httpPort"[[:space:]]*:[[:space:]]*[0-9]/ {
+      match($0, /"httpPort"[[:space:]]*:[[:space:]]*[0-9]+/)
+      v = substr($0, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); h = v + 0; seen_h = 1
+    }
+    END { print s, h }
+  ' "$KR_STATE" 2>/dev/null)
+  set -- $_ports
+  case "${1:-}" in '' | 0 | *[!0-9]*) ;; *) [ "$1" -ge 1 ] && [ "$1" -le 65535 ] && KR_SOCKS_PORT=$1 ;; esac
+  case "${2:-}" in '' | 0 | *[!0-9]*) ;; *) [ "$2" -ge 1 ] && [ "$2" -le 65535 ] && KR_HTTP_PORT=$2 ;; esac
+  return 0
+}
+
+# One inbound port, the old interface: callers that only need one field still get the
+# same per-field fallback. The parse is shared with kr_settings_ports.
 kr_setting_port() { # <key> <default>
-  _v=""
-  if [ -s "$KR_STATE" ]; then
-    _v=$(sed -n '/"settings"/,/^[[:space:]]*}/ {
-      s/.*"'"$1"'"[[:space:]]*:[[:space:]]*\([0-9]\{1,5\}\).*/\1/p
-    }' "$KR_STATE" 2>/dev/null | head -n 1)
-  fi
-  case "$_v" in
-    '' | 0 | *[!0-9]*) echo "$2"; return ;;
+  kr_settings_ports
+  case "$1" in
+    socksPort) printf '%s\n' "$KR_SOCKS_PORT" ;;
+    httpPort) printf '%s\n' "$KR_HTTP_PORT" ;;
+    *) printf '%s\n' "$2" ;;
   esac
-  [ "$_v" -ge 1 ] && [ "$_v" -le 65535 ] && echo "$_v" || echo "$2"
 }
 
 # The 日志等级 (docs/adr/0015): the shell's preference, like the tproxy switch and the
@@ -295,23 +336,29 @@ kr_setting_port() { # <key> <default>
 # config the core would reject.
 KR_LOGLEVEL_DEFAULT=warning
 
-kr_loglevel_get() {
-  _lv=""
-  [ -s "$KR_LOGLEVEL" ] && _lv=$(sed -n '1p' "$KR_LOGLEVEL" 2>/dev/null)
-  case "$_lv" in
-    none | error | warning | info | debug) echo "$_lv" ;;
-    *) echo "$KR_LOGLEVEL_DEFAULT" ;;
+kr_loglevel_read() { # sets KR_LOGLEVEL_VAL, defaulting to 警告
+  KR_LOGLEVEL_VAL=""
+  [ -s "$KR_LOGLEVEL" ] && { IFS= read -r KR_LOGLEVEL_VAL <"$KR_LOGLEVEL" || :; }
+  case "$KR_LOGLEVEL_VAL" in
+    none | error | warning | info | debug) ;;
+    *) KR_LOGLEVEL_VAL=$KR_LOGLEVEL_DEFAULT ;;
   esac
+  return 0
 }
+
+kr_loglevel_get() { kr_loglevel_read; printf '%s\n' "$KR_LOGLEVEL_VAL"; }
 
 # The level config.json actually carries; returns 1 when the config or the field is absent.
 # The start drift check and the status kv use it to tell "saved" from "already running".
-kr_loglevel_config() {
+kr_loglevel_config_read() { # sets KR_LOGLEVEL_CONFIG; 1 when absent
+  KR_LOGLEVEL_CONFIG=""
   [ -s "$KR_CONF" ] || return 1
-  _lvc=$(awk -F'"' '/^[[:space:]]*"loglevel"/ { print $4; exit }' "$KR_CONF" 2>/dev/null)
-  [ -n "$_lvc" ] || return 1
-  echo "$_lvc"
+  KR_LOGLEVEL_CONFIG=$(awk -F'"' '/^[[:space:]]*"loglevel"/ { print $4; exit }' "$KR_CONF" 2>/dev/null)
+  [ -n "$KR_LOGLEVEL_CONFIG" ] || return 1
+  return 0
 }
+
+kr_loglevel_config() { kr_loglevel_config_read || return 1; printf '%s\n' "$KR_LOGLEVEL_CONFIG"; }
 
 # loglevel <level>: persist the preference only. The running core and config.json are left
 # alone; the next core start re-renders the config to match (docs/adr/0015). Writing the
@@ -361,13 +408,19 @@ kr_loglevel_status() {
 # which goes wrong before NTP has synced the wall clock. Empty when the kernel does not
 # expose it; readers then fall back to trusting the file as it is.
 kr_boot_id() {
-  sed -n '1p' /proc/sys/kernel/random/boot_id 2>/dev/null
+  _b=""
+  # No [ -s ] here: procfs files report stat size 0, so -s is false even when the file has
+  # a value. The group redirect silences a kernel without the file.
+  { IFS= read -r _b < /proc/sys/kernel/random/boot_id; } 2>/dev/null || :
+  printf '%s\n' "$_b"
 }
 
 kr_status_write() { # <state> <phase>
-  _s=$(cat "$KR_STARTED" 2>/dev/null)
+  _s=""
+  [ -s "$KR_STARTED" ] && { IFS= read -r _s <"$KR_STARTED" || :; }
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
-  _n=$(kr_applied_id) || _n=""
+  _n=""
+  kr_applied_read && _n=$KR_APPLIED_VAL
   _tp=off
   command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on && _tp=on
   _rt=global
@@ -455,10 +508,12 @@ kr_render_config() { # <outbound-file> [route-mode override]
   # A takeover config whose node outbound lost its bypass mark would let the OUTPUT
   # rules capture the core's own connection back into the core: a routing loop. An
   # outbound without the placeholder (a stale renderer) is refused, not shipped.
+  kr_settings_ports
+  kr_loglevel_read
   KR_OUT_LINE=$_line KR_TP_TAKEOVER=$_takeover KR_TP_MARK=$_mark \
-    KR_SOCKS_PORT=$(kr_setting_port socksPort 10808) \
-    KR_HTTP_PORT=$(kr_setting_port httpPort 10809) \
-    KR_LOGLEVEL_VAL=$(kr_loglevel_get) \
+    KR_SOCKS_PORT=$KR_SOCKS_PORT \
+    KR_HTTP_PORT=$KR_HTTP_PORT \
+    KR_LOGLEVEL_VAL=$KR_LOGLEVEL_VAL \
     KR_TP_INBOUND_BLOCK=$_tp_in KR_DNS_OUTBOUND_BLOCK=$_dns_out \
     KR_DNS_BLOCK=$_dns KR_ROUTING_BLOCK=$_routing awk '
     BEGIN {
@@ -912,6 +967,10 @@ kr_start_locked() {
     elif kr_tp_rules_present; then
       kr_tp_log "start: the tproxy switch is off; removing stale rules"
       kr_tp_remove
+    else
+      # No rules and the switch off: the cache must say so even when it was left stale
+      # by an external flush. The start already asked the kernel.
+      command -v kr_tp_rules_cache_write >/dev/null 2>&1 && kr_tp_rules_cache_write 0
     fi
   fi
   # The config on disk must be the config this start will run: derived from the applied
@@ -981,15 +1040,41 @@ kr_stop() {
 kr_status_kv() {
   if kr_running; then
     _state=running
-    _pid=$(kr_pid)
-    _started=$(cat "$KR_STARTED" 2>/dev/null)
+    _pid=$KR_PID_VAL
+    _started=""
+    [ -s "$KR_STARTED" ] && { IFS= read -r _started <"$KR_STARTED" || :; }
     case "$_started" in '' | *[!0-9]*) _started=0 ;; esac
   else
     _state=stopped
     _pid=-
     _started=0
   fi
-  _phase=$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)
+  # One pass over status.json instead of one sed per field: phase, the state it recorded
+  # and the boot that wrote it. kr_status_write writes it on one line.
+  _sj_phase=""
+  _sj_state=""
+  _sj_boot=""
+  if [ -s "$KR_STATUS" ]; then
+    while IFS='=' read -r _k _v; do
+      case "$_k" in
+        phase) _sj_phase=$_v ;;
+        state) _sj_state=$_v ;;
+        boot) _sj_boot=$_v ;;
+      esac
+    done <<EOF
+$(awk -F'"' '
+  {
+    for (i = 1; i < NF; i++) {
+      if ($i == "phase") phase = $(i + 2);
+      else if ($i == "state") state = $(i + 2);
+      else if ($i == "boot") boot = $(i + 2);
+    }
+  }
+  END { printf "phase=%s\nstate=%s\nboot=%s\n", phase, state, boot }
+' "$KR_STATUS" 2>/dev/null)
+EOF
+  fi
+  _phase=$_sj_phase
   [ -n "$_phase" ] || _phase=unknown
   # Which boot wrote the status file decides what it can mean (docs/adr/0018). The file
   # survives a reboot and nothing rewrites it until the next start, so a status written by
@@ -998,14 +1083,12 @@ kr_status_kv() {
   # that earlier boot is no evidence of a crash either.
   _boot=$(kr_boot_id)
   _stale=0
-  if [ -n "$_boot" ] &&
-    [ "$(sed -n 's/.*"boot":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)" != "$_boot" ]; then
+  if [ -n "$_boot" ] && [ "$_sj_boot" != "$_boot" ]; then
     _stale=1
   fi
   if [ "$_stale" = 1 ]; then
     _phase=idle
-  elif [ "$_state" = stopped ] && [ -s "$KR_PIDFILE" ] &&
-    [ "$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$KR_STATUS" 2>/dev/null)" = running ]; then
+  elif [ "$_state" = stopped ] && [ -s "$KR_PIDFILE" ] && [ "$_sj_state" = running ]; then
     # A pidfile that outlived its process means the core died on its own: nothing ran to
     # write failed/crashed, so the status file still claims running. Report the fact instead
     # of the stale phase. Without a boot id (no procfs) the uptime arithmetic has to stand in
@@ -1013,8 +1096,11 @@ kr_status_kv() {
     if [ -n "$_boot" ]; then
       _phase=crashed
     else
-      _up=$(cut -d. -f1 /proc/uptime 2>/dev/null)
-      _since=$(cat "$KR_STARTED" 2>/dev/null)
+      _up=""
+      { IFS=' ' read -r _up _ < /proc/uptime; } 2>/dev/null || _up=""
+      _up=${_up%%.*}
+      _since=""
+      [ -s "$KR_STARTED" ] && { IFS= read -r _since <"$KR_STARTED" || :; }
       case "$_up" in
         '' | *[!0-9]*) _phase=crashed ;; # no uptime to compare: the pidfile is the evidence
         *)
@@ -1026,15 +1112,22 @@ kr_status_kv() {
       esac
     fi
   fi
-  _node=$(kr_applied_id) || _node=""
+  _node=""
+  kr_applied_read && _node=$KR_APPLIED_VAL
+  # The version cache is read, never refreshed here: a 2s poll must not run the core.
   _ver=-
-  [ -x "$(kr_core)" ] && _ver=$(kr_version_cached)
+  [ -x "$KR_BINDIR/xray" ] && kr_version_read && _ver=$KR_VERSION_VAL
   [ -n "$_ver" ] || _ver=-
   _tp=off
   _rules=absent
   if command -v kr_tp_switch_on >/dev/null 2>&1; then
     kr_tp_switch_on && _tp=on
-    kr_tp_rules_present && _rules=present
+    if command -v kr_tp_rules_status >/dev/null 2>&1; then
+      kr_tp_rules_status "$_boot"
+      _rules=$KR_TP_RULES_STATE
+    elif command -v kr_tp_rules_present >/dev/null 2>&1; then
+      kr_tp_rules_present && _rules=present
+    fi
   fi
   # route is the preference, routing what the config may actually use (they differ only while
   # the geo data is missing, docs/adr/0014), geodata says which of the two it is.
@@ -1050,16 +1143,19 @@ kr_status_kv() {
   # The 日志等级 preference and whether config.json already carries it: the UI shows the
   # pending hint only while a running core predates the change (docs/adr/0015). A stopped
   # core needs no hint: its next start re-renders the config.
-  _lv=$(kr_loglevel_get)
-  _lvc=$(kr_loglevel_config) || _lvc=""
+  kr_loglevel_read
+  _lv=$KR_LOGLEVEL_VAL
+  _lvc=""
+  kr_loglevel_config_read && _lvc=$KR_LOGLEVEL_CONFIG
   _lvp=0
   [ "$_state" = running ] && [ "$_lvc" != "$_lv" ] && _lvp=1
+  kr_settings_ports
   echo "state=$_state"
   echo "phase=$_phase"
   echo "pid=$_pid"
   echo "started=$_started"
   echo "version=$_ver"
-  echo "core=$(kr_core)"
+  echo "core=$KR_BINDIR/xray"
   echo "conf=$KR_CONF"
   echo "log=$KR_LOG"
   echo "node=$_node"
@@ -1068,8 +1164,8 @@ kr_status_kv() {
   echo "route=$_rt"
   echo "routing=$_rte"
   echo "geodata=$_geo"
-  echo "socks=$(kr_setting_port socksPort 10808)"
-  echo "http=$(kr_setting_port httpPort 10809)"
+  echo "socks=$KR_SOCKS_PORT"
+  echo "http=$KR_HTTP_PORT"
   echo "loglevel=$_lv"
   echo "loglevelpending=$_lvp"
 }

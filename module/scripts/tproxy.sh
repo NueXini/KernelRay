@@ -21,6 +21,10 @@ KR_BYPASS_TABLE=19282
 KR_BYPASS_PREF=9400
 KR_TP_SWITCH=$KR_RUNDIR/tproxy
 KR_NODEIP=$KR_RUNDIR/nodeip
+# The last real kernel answer to "are the takeover rules installed", stamped with the boot
+# that produced it. The 2s status poll reads it instead of calling iptables twice; the
+# safety-critical form readers still ask the kernel (docs/adr/0019).
+KR_TP_RULES=$KR_RUNDIR/rules
 KR_TPLOG=$KR_LOGDIR/kernelray.log
 # 分流模式 (docs/adr/0014): the shell's preference, like the tproxy switch but applied at
 # once. Presence of the file means 大陆直连; absence means 全局, which is what every earlier
@@ -79,6 +83,74 @@ kr_tproxy_set() { # <on|off>
 kr_tp_rules_present() {
   iptables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
   ip6tables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# Rule-presence cache (docs/adr/0019): the last real kernel answer, stamped with the boot
+# that produced it, so the status poll does not ask iptables twice every 2s. Advisory only:
+# kr_tp_form, kr_conf_accept_ondisk and the start path still call kr_tp_rules_present. A
+# missing or stale cache is repaired by one real check and written back; after a reboot the
+# boot id differs and the first poll checks again.
+kr_tp_rules_cache_write() { # <0|1> [boot-id]
+  _cb=${2:-$(kr_boot_id)}
+  [ -d "$KR_RUNDIR" ] || mkdir -p "$KR_RUNDIR" 2>/dev/null
+  _ct=$KR_TP_RULES.$$.tmp
+  printf 'boot=%s\npresent=%s\n' "$_cb" "${1:-0}" >"$_ct" 2>/dev/null || {
+    rm -f "$_ct"
+    return 1
+  }
+  chmod 600 "$_ct" 2>/dev/null
+  mv -f "$_ct" "$KR_TP_RULES" 2>/dev/null || {
+    rm -f "$_ct"
+    return 1
+  }
+  return 0
+}
+
+kr_tp_rules_cache() { # [boot-id]; sets KR_TP_RULES_CACHED=1|0 when the cache is usable
+  KR_TP_RULES_CACHED=""
+  [ -s "$KR_TP_RULES" ] || return 1
+  _cc_boot=""
+  _cc_present=""
+  while IFS='=' read -r _cc_k _cc_v; do
+    case "$_cc_k" in
+      boot) _cc_boot=$_cc_v ;;
+      present) _cc_present=$_cc_v ;;
+    esac
+  done <"$KR_TP_RULES"
+  _cc_now=${1:-}
+  [ -n "$_cc_now" ] || _cc_now=$(kr_boot_id)
+  [ -n "$_cc_now" ] && [ "$_cc_boot" = "$_cc_now" ] || return 1
+  case "$_cc_present" in
+    0 | 1) KR_TP_RULES_CACHED=$_cc_present; return 0 ;;
+  esac
+  return 1
+}
+
+# The status poll's view: the cache when it is usable, otherwise one real check written
+# back. Never used by the safety-critical form readers.
+kr_tp_rules_status() { # [boot-id]; sets KR_TP_RULES_STATE=present|absent
+  _ts_boot=${1:-}
+  if kr_tp_rules_cache "$_ts_boot"; then
+    if [ "$KR_TP_RULES_CACHED" = 1 ]; then
+      KR_TP_RULES_STATE=present
+    else
+      KR_TP_RULES_STATE=absent
+    fi
+    return 0
+  fi
+  # If an install/remove writes while the kernel is being asked, that answer is newer than
+  # this one: the before/after comparison drops the stale write-back.
+  _ts_before=$(cat "$KR_TP_RULES" 2>/dev/null)
+  if kr_tp_rules_present; then
+    KR_TP_RULES_STATE=present
+    _ts_after=$(cat "$KR_TP_RULES" 2>/dev/null)
+    [ "$_ts_before" = "$_ts_after" ] && kr_tp_rules_cache_write 1 "$_ts_boot"
+  else
+    KR_TP_RULES_STATE=absent
+    _ts_after=$(cat "$KR_TP_RULES" 2>/dev/null)
+    [ "$_ts_before" = "$_ts_after" ] && kr_tp_rules_cache_write 0 "$_ts_boot"
+  fi
   return 0
 }
 
@@ -276,6 +348,7 @@ kr_tp_copy_route() { # <4|6> <route line>
 kr_tp_install() {
   if kr_tp_rules_present; then
     kr_tp_log "takeover rules already present"
+    kr_tp_rules_cache_write 1
     return 0
   fi
   kr_tp_log "installing takeover rules (mark $KR_MARK, table $KR_TABLE, pref $KR_RULE_PREF, port $KR_TP_PORT)"
@@ -295,6 +368,7 @@ kr_tp_install() {
     return 1
   fi
   kr_tp_log "takeover rules installed"
+  kr_tp_rules_cache_write 1
   return 0
 }
 
@@ -320,6 +394,7 @@ kr_tp_remove() {
   ip -6 route del local ::/0 table $KR_TABLE 2>/dev/null
   ip route flush table $KR_BYPASS_TABLE 2>/dev/null
   ip -6 route flush table $KR_BYPASS_TABLE 2>/dev/null
+  kr_tp_rules_cache_write 0
   return 0
 }
 

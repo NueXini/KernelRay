@@ -25,6 +25,7 @@ its Apply button is the switch gesture).
 | `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route`, `boot` (the boot that wrote it; a reader treats another boot's file as `idle`, docs/adr/0018) |
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
 | `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
+| `runtime/rules` | shell | the boot-scoped cache of the last real rule-presence check: the status poll reads it; install/remove and a cache miss write it; the start path still asks iptables (docs/adr/0019) |
 | `runtime/loglevel` | shell | the persisted 日志等级; absent = 警告 (docs/adr/0015) |
 | `bin/` | repo | the core and the geo data it loads: `xray`, `geosite.dat`, `geoip.dat` (docs/adr/0014) |
 

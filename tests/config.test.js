@@ -147,7 +147,8 @@ function makeModule(core) {
     applied: path.join(dir, "runtime", "applied"),
     status: path.join(dir, "runtime", "status.json"),
     tproxy: path.join(dir, "runtime", "tproxy"),
-    loglevel: path.join(dir, "runtime", "loglevel")
+    loglevel: path.join(dir, "runtime", "loglevel"),
+    rules: path.join(dir, "runtime", "rules")
   };
 }
 
@@ -166,6 +167,37 @@ function runShell(dir, body, args, extraEnv) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
+}
+
+// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+function posixPathEnv(extraDir) {
+  return process.platform === "win32"
+    ? extraDir + ";" + process.env.PATH
+    : extraDir + ":" + process.env.PATH;
+}
+
+// A fake iptables/ip6tables pair that logs each call and answers the chain probe with
+// <present>. The rule-cache tests use it to prove the status poll does (or does not) ask
+// the kernel.
+function makeIptablesStub(m, present) {
+  const dir = path.join(m.dir, "stub-bin");
+  fs.mkdirSync(dir, { recursive: true });
+  const log = path.join(m.dir, "iptables.calls");
+  const body = [
+    "#!/bin/sh",
+    'printf "%s\\n" "$(basename "$0") $*" >>"' + shPath(log) + '"',
+    "exit " + (present ? 0 : 1),
+    ""
+  ].join("\n");
+  ["iptables", "ip6tables"].forEach((name) => {
+    fs.writeFileSync(path.join(dir, name), body, "utf8");
+    fs.chmodSync(path.join(dir, name), 0o755);
+  });
+  return { path: posixPathEnv(dir), log: log };
+}
+
+function writeRulesCache(m, boot, present) {
+  fs.writeFileSync(m.rules, "boot=" + boot + "\npresent=" + present + "\n");
 }
 
 function runFail(dir, body, args, extraEnv) {
@@ -836,6 +868,9 @@ check("status: a stopped core is not reported as crashed", () => {
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_START);
   runShell(m.dir, BODY_STOP);
+  if (!/^present=0$/m.test(fs.readFileSync(m.rules, "utf8"))) {
+    throw new Error("a switch-off start with no rules must record absence");
+  }
   const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
   if (/^phase=crashed$/m.test(kv)) { throw new Error("a stop is not a crash: " + kv); }
   if (!/^state=stopped$/m.test(kv)) { throw new Error("state: " + kv); }
@@ -845,6 +880,15 @@ check("status: status.json records the boot that wrote it", () => {
   const m = makeModule();
   runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo boot-x; }; kr_status_write running idle');
   eq(readJson(m.status).boot, "boot-x", "boot");
+});
+
+// procfs files report stat size 0, so a [ -s ] guard makes kr_boot_id empty on a real
+// device even though the file has a value. Only Linux CI can exercise the real file.
+check("status: kr_boot_id reads a procfs file whose stat size is zero", () => {
+  if (!fs.existsSync("/proc/sys/kernel/random/boot_id")) { return; } // Git Bash has no procfs
+  const m = makeModule();
+  const out = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_boot_id').trim();
+  if (!out) { throw new Error("kr_boot_id returned empty for a procfs boot id"); }
 });
 
 // Nothing rewrites status.json at boot any more (docs/adr/0018), so the file a reboot leaves
@@ -877,6 +921,96 @@ check("status: a pidfile written by this boot is still evidence of a crash", () 
     '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
   if (!/^phase=crashed$/m.test(kv)) {
     throw new Error("a pidfile from this boot means the core died: " + kv);
+  }
+});
+
+// ---- rule-presence cache (docs/adr/0019) -------------------------------------------------
+
+check("status: a valid rule cache answers present without asking iptables", () => {
+  const m = makeModule();
+  writeRulesCache(m, "the-current-boot", 1);
+  const stub = makeIptablesStub(m, true);
+  const kv = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv',
+    [], { PATH: stub.path });
+  if (!/^rules=present$/m.test(kv)) { throw new Error(kv); }
+  if (fs.existsSync(stub.log)) {
+    throw new Error("the poll asked iptables: " + fs.readFileSync(stub.log, "utf8"));
+  }
+});
+
+check("status: a stale rule cache forces one real check and is repaired", () => {
+  const m = makeModule();
+  writeRulesCache(m, "the-previous-boot", 1);
+  const stub = makeIptablesStub(m, false); // the kernel says the rules are gone
+  const body = '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv';
+  const first = runShell(m.dir, body, [], { PATH: stub.path });
+  if (!/^rules=absent$/m.test(first)) { throw new Error(first); }
+  const calls = fs.readFileSync(stub.log, "utf8").trim().split("\n");
+  eq(calls.length, 1, "one probe: a missing family answers before the second");
+  const cache = fs.readFileSync(m.rules, "utf8");
+  if (!/^boot=the-current-boot$/m.test(cache) || !/^present=0$/m.test(cache)) {
+    throw new Error("cache not repaired:\n" + cache);
+  }
+  const second = runShell(m.dir, body, [], { PATH: stub.path });
+  if (!/^rules=absent$/m.test(second)) { throw new Error(second); }
+  eq(fs.readFileSync(stub.log, "utf8").trim().split("\n").length, 1,
+    "the repaired cache is used without another probe");
+});
+
+check("status: a missing rule cache is answered by one check and written back", () => {
+  const m = makeModule();
+  const stub = makeIptablesStub(m, true);
+  const kv = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv',
+    [], { PATH: stub.path });
+  if (!/^rules=present$/m.test(kv)) { throw new Error(kv); }
+  const calls = fs.readFileSync(stub.log, "utf8").trim().split("\n");
+  eq(calls.length, 2, "one probe per family when both are present");
+  const cache = fs.readFileSync(m.rules, "utf8");
+  if (!/^boot=the-current-boot$/m.test(cache) || !/^present=1$/m.test(cache)) {
+    throw new Error("cache not written:\n" + cache);
+  }
+});
+
+check("rules cache: install records present=1 and remove records present=0", () => {
+  const m = makeModule();
+  const stub = makeIptablesStub(m, true); // already present: install returns early
+  const env = { PATH: stub.path };
+  runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_tp_install',
+    [], env);
+  if (!/^present=1$/m.test(fs.readFileSync(m.rules, "utf8"))) {
+    throw new Error("install did not record presence");
+  }
+  runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_tp_remove',
+    [], env);
+  if (!/^present=0$/m.test(fs.readFileSync(m.rules, "utf8"))) {
+    throw new Error("remove did not record absence");
+  }
+});
+
+check("status: the poll never runs the core to learn its version", () => {
+  const m = makeModule();
+  const calls = path.join(m.dir, "version.calls");
+  const core = [
+    "#!/bin/sh",
+    'if [ "$1" = "-version" ]; then',
+    '  echo called >>"' + shPath(calls) + '"',
+    '  echo "Xray 0.0.0 (test)"',
+    "  exit 0",
+    "fi",
+    "exit 0",
+    ""
+  ].join("\n");
+  fs.writeFileSync(path.join(m.dir, "bin", "xray"), core, "utf8");
+  fs.chmodSync(path.join(m.dir, "bin", "xray"), 0o755);
+  const kv = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
+  if (!/^version=-$/m.test(kv)) { throw new Error(kv); }
+  if (fs.existsSync(calls)) {
+    throw new Error("the poll ran the core: " + fs.readFileSync(calls, "utf8"));
   }
 });
 

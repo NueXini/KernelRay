@@ -27,7 +27,7 @@ node tests/nodelist.test.js            # 45 node list + delete-gate + import-swi
 node tests/link.test.js                # 18 node-link + subscription-Base64 tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
-node tests/config.test.js              # 61 config tests passing（需要 bash 和 /proc）
+node tests/config.test.js              # 67 config tests passing（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
 node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
 ```

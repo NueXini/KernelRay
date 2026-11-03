@@ -35,7 +35,15 @@ ob() { # <address> <id>
 state() { $S status | sed -n 's/^state=//p'; }
 node()  { $S status | sed -n 's/^node=//p'; }
 phase() { $S status | sed -n 's/^phase=//p'; }
-rules() { $S status | sed -n 's/^rules=//p'; }
+rules() { # the kernel fact the start path uses, not the status cache
+  if iptables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 &&
+     ip6tables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1; then
+    echo present
+  else
+    echo absent
+  fi
+}
+rules_cache() { $S status | sed -n 's/^rules=//p'; }
 pid()   { cat "$RUN/xray.pid" 2>/dev/null; }
 form()  { cat "$RUN/config.form" 2>/dev/null; }
 expect() { # <name> <got> <want>
@@ -152,6 +160,7 @@ t0=$(date +%s%N 2>/dev/null || echo 0)
 $S start >/dev/null 2>&1
 expect "P1-7a running" "$(state)" "running"
 expect "P1-7b rules present" "$(rules)" "present"
+expect "P1-7h cache present" "$(rules_cache)" "present"
 # apply tested the idle form; the start must test exactly once more (the form change to
 # takeover after the rules went up) and then fork -- one test, one run. The apply ALSO pins
 # and engages nothing, but the log may carry a `-test` from the pin-triggered engage... no:
@@ -191,6 +200,7 @@ before=$(mark)
 $S start >/dev/null 2>&1
 expect "P1-9a running" "$(state)" "running"
 expect "P1-9b rules absent" "$(rules)" "absent"
+expect "P1-9f cache absent" "$(rules_cache)" "absent"
 expect "P1-9c form" "$(form)" "0"
 grep -q '"tag":"tp-in"' "$M/config.json" && bad "P1-9d no tp-in" "found" || ok "P1-9d no tp-in"
 # The node outbound only drops its mark when it was rendered with the __KERNELRAY_MARK__
@@ -233,6 +243,7 @@ rc=$?
 expect "P1-12a refuses" "$rc" "1"
 echo "$r" | grep -q "no applied node" && ok "P1-12b message" || bad "P1-12b message" "$r"
 expect "P1-12c no rules" "$(rules)" "absent"
+expect "P1-12e cache absent" "$(rules_cache)" "absent"
 expect "P1-12d phase" "$(phase)" "no-node"
 
 # P1-14: core that cannot start -> failed/crashed quickly
