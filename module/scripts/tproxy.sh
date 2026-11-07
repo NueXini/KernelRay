@@ -211,7 +211,12 @@ kr_tp_ipt_rules() { # <binary>
     # reply (SYN-ACK, DNS answer, whose source is the ORIGINAL destination): it carries the
     # tproxy-mark inherited from the captured SYN and must flow to normal local delivery —
     # capturing it would steal every answer back into the core and hang every handshake.
+    # A packet DESTINED to loopback is the same case from the other end: the core's own
+    # socks/http listeners answer a local client from 127/8 to 127/8, and the source-based
+    # TPROXY below would otherwise steal that SYN-ACK and hang every local proxy connection.
     $_i -t mangle -A KR_TP_PREROUTING ! -i lo -j RETURN || return 1
+    $_i -t mangle -A KR_TP_PREROUTING -d ::1/128 -j RETURN || return 1
+    $_i -t mangle -A KR_TP_PREROUTING -d ::ffff:127.0.0.0/104 -j RETURN || return 1
     $_i -t mangle -A KR_TP_PREROUTING -s ::1/128 -p tcp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_PREROUTING -s ::1/128 -p udp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
     _addrs=$(kr_tp_own_addrs $_i)
@@ -246,6 +251,9 @@ kr_tp_ipt_rules() { # <binary>
     $_i -t mangle -N KR_TP_PREROUTING 2>/dev/null || return 1
     $_i -t mangle -F KR_TP_PREROUTING || return 1
     $_i -t mangle -A KR_TP_PREROUTING ! -i lo -j RETURN || return 1
+    # A loopback destination is a local inbound (socks/http), not captured traffic; the
+    # source-based TPROXY below would steal its SYN-ACK and hang the local connection.
+    $_i -t mangle -A KR_TP_PREROUTING -d 127.0.0.0/8 -j RETURN || return 1
     $_i -t mangle -A KR_TP_PREROUTING -s 127.0.0.0/8 -p tcp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_PREROUTING -s 127.0.0.0/8 -p udp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
     _addrs=$(kr_tp_own_addrs $_i)

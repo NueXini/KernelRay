@@ -58,7 +58,13 @@ physical interfaces RETURN) TPROXYs it into port 10810. `KR_TP_PREROUTING` match
 and DNS answers, which inherit the captured SYN's tproxy mark via `inet_request_sock` and
 whose destination is the local client — must flow to normal local delivery. Mark-based or
 destination-based matching loops every answer back into the core (measured: all handshakes
-stuck in SYN-SENT/SYN-RECV). `KR_TP_INPUT` drops direct LAN access to the wildcard listener.
+stuck in SYN-SENT/SYN-RECV). A loopback **destination** is the one exception and RETURNs
+before the source rules: the core's own socks/http listeners answer a local client from
+127/8 to 127/8, and that SYN-ACK matches the source rule; without the return every local
+proxy connection hangs in SYN-SENT/SYN-RECV (found on device: the listener's reply was
+stolen into 10810). The return is destination-based, but it is a local-delivery bypass,
+not a TPROXY match: captured traffic keeps its external destination and never hits it.
+`KR_TP_INPUT` drops direct LAN access to the wildcard listener.
 The listener is one dokodemo-door inbound on `::` carrying `sockopt.tproxy`.
 
 **The mark placeholder.** The UI's node renderer writes `"sockopt":{"mark":"__KERNELRAY_MARK__"}` —

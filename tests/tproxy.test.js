@@ -221,6 +221,21 @@ check("install: both families get the full rule set and the policy routing", () 
       (ipt === "ip6tables" ? "::1/128" : "127.0.0.0/8") + " -p tcp -j TPROXY")) {
       throw new Error(ipt + ": tcp TPROXY rule missing");
     }
+    // A local inbound (socks/http on loopback) answers from 127/8 to 127/8; the source
+    // TPROXY rule would steal that SYN-ACK unless the destination return comes first.
+    const loopback = ipt === "ip6tables" ? "::1/128" : "127.0.0.0/8";
+    const localReturn = ipt + " -t mangle -A KR_TP_PREROUTING -d " + loopback + " -j RETURN";
+    if (!log.includes(localReturn)) {
+      throw new Error(ipt + ": loopback-destination RETURN missing (local inbounds would hang)");
+    }
+    if (log.indexOf(localReturn) > log.indexOf(ipt +
+      " -t mangle -A KR_TP_PREROUTING -s " + loopback + " -p tcp -j TPROXY")) {
+      throw new Error(ipt + ": loopback RETURN must precede the source TPROXY rule");
+    }
+    if (ipt === "ip6tables" && !log.includes(
+      "ip6tables -t mangle -A KR_TP_PREROUTING -d ::ffff:127.0.0.0/104 -j RETURN")) {
+      throw new Error("ip6tables: IPv4-mapped loopback RETURN missing");
+    }
     if (!log.includes(ipt + " -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK --set-mark 19283")) {
       throw new Error(ipt + ": dns udp mark rule missing");
     }
