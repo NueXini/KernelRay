@@ -270,6 +270,8 @@ var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === 
 var logSource = "core";
 // One cached tail per source: renderLog skips only when the same source repeats.
 var lastLog = { core: null, module: null };
+// The byte size the last tail was fetched at; the poll skips the tail when it is unchanged.
+var lastLogSize = { core: -1, module: -1 };
 var lastState = "unknown";
 var busy = false;
 var pending = null; // "start" | "stop" while the action is in flight
@@ -285,6 +287,8 @@ var dialogError = "";     // the last dialog apply failure, shown inline
 var dialogMenuOpen = false;
 var dialogLink = "";      // the canonical link rendered for the current node
 var listSig = "";
+// What the dialog last rendered: the 2s poll must not rebuild it when nothing changed.
+var dialogSig = "";
 // The runtime fact the current list was rendered with: renderStatus only re-renders the list
 // when it flips, so a 2s poll does not rebuild the toolbar under a finger.
 var listRunning = null;
@@ -381,6 +385,7 @@ function applyLang() {
   label();
   renderPrefs();
   listSig = "";
+  dialogSig = "";
   renderNodeList();
   els.iHint.textContent = T.notAppliedYet;
   els.iHint.className = "nodehint";
@@ -893,11 +898,19 @@ function utf8Bytes(s) {
   return out;
 }
 
-function b64encodeText(s) {
-  var bytes = utf8Bytes(s);
+// Chunked: a per-byte string concat allocates once per byte and gets slow on a large
+// state.json. 8 KiB keeps String.fromCharCode.apply well inside the argument limit.
+function bytesToBase64(bytes) {
+  var chunk = 0x2000;
   var bin = "";
-  for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
+  for (var i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
   return btoa(bin);
+}
+
+function b64encodeText(s) {
+  return bytesToBase64(utf8Bytes(s));
 }
 
 // SIP002's userinfo is URL-safe Base64 without padding; the outer subscription form above
@@ -1507,6 +1520,7 @@ function openNodeDialog(n) {
   dialogError = "";
   dialogMenuOpen = false;
   dialogLink = "";
+  dialogSig = "";
   els.nodeOverlay.hidden = false;
   syncDialogScrollLock();
   renderDialog();
@@ -1566,6 +1580,17 @@ function renderDialog() {
   var selectedId = lastStateObj && typeof lastStateObj.selected === "string"
     ? lastStateObj.selected : "";
   var model = nodeDialogModel(node, lastApplied, selectedId);
+  // renderNodeList and setButtons both reach this on every 2s poll. Redraw only when a fact
+  // the dialog shows changed; a language switch resets dialogSig.
+  var sig = [
+    String(node.id), JSON.stringify(node), lastApplied || "", selectedId,
+    model.applied ? 1 : 0, model.selected ? 1 : 0, model.dirty ? 1 : 0,
+    model.action, model.noop ? 1 : 0,
+    lastKv && lastKv.state ? lastKv.state : "",
+    dialogBusy ? 1 : 0, busy ? 1 : 0, dialogError || "", dialogMenuOpen ? 1 : 0
+  ].join("\n");
+  if (sig === dialogSig) { return; }
+  dialogSig = sig;
 
   els.ndTitle.textContent = node.name || node.protocol || "node";
 
@@ -1848,7 +1873,16 @@ function confirmBatchDelete() {
 // state.json is the intent; runtime/applied is the node the current config was built from.
 // Read state, the applied id and the rendered outbound's meta in one exec; the list must show
 // "selected but not applied" after a failed switch instead of pretending it already switched.
-function refreshNodes() {
+// The status poll carries the state revision, the applied id and the meta id: when none moved,
+// the whole file is already in lastStateObj and there is nothing to read or render.
+function refreshNodes(kv) {
+  var known = lastStateObj;
+  if (kv && known && kv.revision !== undefined && known.revision !== undefined &&
+      String(kv.revision) === String(known.revision) &&
+      String(kv.node || "") === String(lastApplied || "") &&
+      String(kv.meta || "") === String(lastMetaId || "")) {
+    return Promise.resolve();
+  }
   return exec("cat " + STATE + " 2>/dev/null; echo '@@APPLIED@@'; cat " + APPLIED +
     " 2>/dev/null; echo '@@META@@'; cat " + OUTBOUND_META + " 2>/dev/null")
     .then(function (r) {
@@ -1893,27 +1927,24 @@ function applyAfterImport(state, appliedId) {
 
 // ---- node import UI ----
 
-// Import dedupes inside the manual store: subscriptions are out of scope in this version and
-// an update must never land on a node the list cannot show.
-function findNodeByIdentity(state, ident) {
-  var manual = state && Array.isArray(state.manual) ? state.manual : [];
-  for (var i = 0; i < manual.length; i++) {
-    var n = manual[i];
-    if (n && n.protocol && n.address && identityOf(n) === ident) { return n; }
-  }
-  return null;
-}
-
 // Re-importing a node updates it in place and keeps its id, so the selection and any
-// reference to it survive; only a genuinely new identity is appended.
+// reference to it survive; only a genuinely new identity is appended. One index over the
+// store keeps an import of N nodes O(N) instead of scanning the list per node.
 function mergeNodes(state, nodes) {
   if (!state.schema) { state.schema = 1; }
   if (!Array.isArray(state.manual)) { state.manual = []; }
   if (!Array.isArray(state.subscriptions)) { state.subscriptions = []; }
+  var byIdentity = Object.create(null);
+  state.manual.forEach(function (n) {
+    if (!n || !n.protocol || !n.address) { return; }
+    var ident = identityOf(n);
+    if (!byIdentity[ident]) { byIdentity[ident] = n; }
+  });
   var added = 0, updated = 0;
   nodes.forEach(function (n) {
     delete n.dupOf;
-    var existing = findNodeByIdentity(state, identityOf(n));
+    var ident = identityOf(n);
+    var existing = byIdentity[ident] || null;
     if (existing) {
       var keepId = existing.id || idOf(n);
       Object.keys(n).forEach(function (k) { if (k !== "id") { existing[k] = n[k]; } });
@@ -1925,6 +1956,7 @@ function mergeNodes(state, nodes) {
     } else {
       n.id = n.id || idOf(n);
       state.manual.push(n);
+      byIdentity[ident] = n;
       added++;
     }
   });
@@ -1932,10 +1964,7 @@ function mergeNodes(state, nodes) {
 }
 
 function writeFile(path, text, mode) {
-  var bytes = new TextEncoder().encode(text);
-  var bin = "";
-  for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
-  var b64 = btoa(bin);
+  var b64 = bytesToBase64(new TextEncoder().encode(text));
   // tmp + mv so a half-written file is impossible; these files hold credentials, hence 0600.
   var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + path + ".tmp && chmod " + mode +
     " " + path + ".tmp && mv " + path + ".tmp " + path;
@@ -2140,20 +2169,31 @@ function updateLogNav() {
 }
 
 function refreshStatus() {
-  return exec(CLI + " status").then(function (r) {
+  // The page-specific extra: log sizes on the log page, the rendered meta id on the node
+  // page, so neither has to read state.json again.
+  var page = currentRoute === "log" ? " log" : (currentRoute === "nodes" ? " nodes" : "");
+  var cmd = CLI + " status" + page;
+  return exec(cmd).then(function (r) {
     if (r.errno !== 0 && !r.stdout) {
       els.banner.textContent = r.stderr || (T.actionFailed + " (status)");
       els.banner.className = "banner show";
-      return;
+      return null;
     }
-    renderStatus(parseKv(r.stdout));
-  }).catch(function () { /* bridge error already reported at boot */ });
+    var kv = parseKv(r.stdout);
+    renderStatus(kv);
+    return kv;
+  }).catch(function () { return null; /* bridge error already reported at boot */ });
 }
 
-function refreshLog() {
-  var cmd = logSource === "module" ? "mlog" : "log";
+function refreshLog(size) {
+  // Capture the source: a tab switch while the tail is in flight must not render the old
+  // log under the new tab (its own fetch is already on the way).
+  var source = logSource;
+  var cmd = source === "module" ? "mlog" : "log";
   return exec(CLI + " " + cmd + " " + logLines).then(function (r) {
+    if (source !== logSource) { return; }
     renderLog(r.stdout || r.stderr);
+    if (size !== undefined) { lastLogSize[source] = String(size); }
   }).catch(function () {});
 }
 
@@ -2169,24 +2209,27 @@ function setLogSource(source) {
   els.logTabModule.setAttribute("aria-selected", source === "module" ? "true" : "false");
   lastLog[source] = null;
   renderLog("");
-  refreshLog();
+  // The status poll already told us the new source's size; passing it keeps the next poll
+  // from fetching the same tail twice.
+  var size;
+  if (lastKv) { size = source === "module" ? lastKv.mlogsize : lastKv.logsize; }
+  refreshLog(size);
 }
 
 // The Settings page shows the effective ports (state.json's, defaults applied), so the
 // user sees what the shell would render even if the file was last written by hand.
-// A field the user is editing is left alone: a 2s poll must not clobber typing.
+// The status poll already carries them through the shell's own per-field fallback, so this
+// page no longer reads and parses state.json every 2s. A field the user is editing is left
+// alone: a 2s poll must not clobber typing.
 function refreshSettings() {
-  return exec("cat " + STATE + " 2>/dev/null").then(function (r) {
-    var state = null;
-    try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
-    var p = portsNormalize(state && state.settings);
-    if (!portsDirty.socks && document.activeElement !== els.iSocks) {
-      els.iSocks.value = String(p.socks);
-    }
-    if (!portsDirty.http && document.activeElement !== els.iHttp) {
-      els.iHttp.value = String(p.http);
-    }
-  }).catch(function () {});
+  var kv = lastKv;
+  var p = portsNormalize(kv ? { socksPort: kv.socks, httpPort: kv.http } : null);
+  if (!portsDirty.socks && document.activeElement !== els.iSocks) {
+    els.iSocks.value = String(p.socks);
+  }
+  if (!portsDirty.http && document.activeElement !== els.iHttp) {
+    els.iHttp.value = String(p.http);
+  }
 }
 
 // One gesture: validate, write state.json's settings (intent first), then let the shell
@@ -2346,14 +2389,43 @@ function initNav() {
 
 // The pause checkbox only freezes the 2s poll, not the log itself: a manual fetch
 // (Refresh button) still goes through while paused.
+// One poll at a time: a slow bridge must not stack shells. A request that arrives while one
+// is in flight is coalesced into a single follow-up (manual wins).
+var pollInFlight = false;
+var pollQueued = false;
+
 function refreshPage(manual) {
   if (!hasBridge) { return; }
-  refreshStatus();
-  if (currentRoute === "nodes") { refreshNodes(); }
-  else if (currentRoute === "log") {
-    if (!els.pause.checked || manual) { refreshLog(); }
+  if (pollInFlight) { pollQueued = pollQueued || !!manual; return; }
+  pollInFlight = true;
+  var status = refreshStatus();
+  var page = Promise.resolve();
+  if (currentRoute === "nodes") {
+    page = status.then(function (kv) { return refreshNodes(kv); });
+  } else if (currentRoute === "log") {
+    if (els.pause.checked && !manual) {
+      // Paused: the status still updates the badge; the log waits for Refresh.
+    } else if (manual) {
+      page = refreshLog();
+    } else {
+      page = status.then(function (kv) {
+        if (!kv || kv.logsize === undefined) { return refreshLog(); }
+        var size = logSource === "module" ? kv.mlogsize : kv.logsize;
+        if (String(size) !== String(lastLogSize[logSource])) { return refreshLog(size); }
+      });
+    }
+  } else if (currentRoute === "settings") {
+    page = status.then(function () { refreshSettings(); });
   }
-  else if (currentRoute === "settings") { refreshSettings(); }
+  var done = function () {
+    pollInFlight = false;
+    if (pollQueued) {
+      var next = pollQueued;
+      pollQueued = false;
+      refreshPage(next);
+    }
+  };
+  return Promise.all([status, page]).then(done, done);
 }
 
 function run(command, pendingLabel) {

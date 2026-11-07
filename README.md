@@ -35,7 +35,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `bin/`, beside the core |
 | WebUI | the only manual surface: start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch, the 分流模式 and the 日志等级 live in Settings. The module ships no `action.sh`, so the manager's module card has no ▶ button ([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)) |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
-| log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
+| log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings; rotated to `xray.log.1` at 1MB on a start) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
 
 > **Everything lives in the module dir.** Nothing is written outside it, so uninstalling leaves no
 > residue. The flip side: a module update replaces that directory wholesale, so `config.json`,

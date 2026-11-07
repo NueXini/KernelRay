@@ -16,6 +16,9 @@ KR_CONF=$KR_MODDIR/config.json
 KR_LOGDIR=$KR_MODDIR/logs
 KR_RUNDIR=$KR_MODDIR/runtime
 KR_LOG=$KR_LOGDIR/xray.log
+# Bound the core log: a start rotates it before the core appends. One generation, replaced
+# each time; overridable so a test can rotate a tiny file.
+KR_LOG_MAX=${KR_LOG_MAX:-1048576}
 KR_MLOG=$KR_LOGDIR/kernelray.log
 KR_PIDFILE=$KR_RUNDIR/xray.pid
 KR_STARTED=$KR_RUNDIR/started
@@ -55,21 +58,52 @@ kr_now() { date +%s; }
 
 # The console line goes to the caller (KernelSU log, CLI); the same line lands in the
 # module's own log, which is the one the WebUI's takeover card reads from. A missing
-# log dir (before kr_dirs) is tolerated silently.
+# log dir (before kr_dirs) is tolerated silently. One timestamp serves both copies: a
+# log line used to fork `date` twice, and a start writes a handful of lines.
 kr_log() {
-  printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*"
-  kr_log_file "$@"
+  _ts=$(date '+%Y-%m-%d %H:%M:%S')
+  printf '%s kernelray[%s] %s\n' "$_ts" "$$" "$*"
+  kr_log_write "$_ts" "$@"
 }
 
 # The module log without the console copy: for lines written from inside a render, whose
 # stdout is the config itself.
 kr_log_file() {
+  kr_log_write "$(date '+%Y-%m-%d %H:%M:%S')" "$@"
+}
+
+kr_log_write() { # <timestamp> <message...>
+  _ts=$1
+  shift
   # A log line creates its own directory: the first line can be written by a render, before
   # any entry point called kr_dirs.
   [ -d "$KR_LOGDIR" ] || mkdir -p "$KR_LOGDIR" 2>/dev/null
   # 2>/dev/null first: a missing log dir (before kr_dirs) must not print redirection errors.
-  printf '%s kernelray[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$$" "$*" 2>/dev/null \
+  printf '%s kernelray[%s] %s\n' "$_ts" "$$" "$*" 2>/dev/null \
     >>"$KR_LOGDIR/kernelray.log"
+}
+
+# Byte size on stdout, 0 when the file is missing or unreadable. `stat` is O(1); `wc -c`
+# is the fallback for a busybox without it.
+kr_file_size() { # <file>
+  [ -f "$1" ] || { printf '0\n'; return 0; }
+  _sz=$(stat -c %s "$1" 2>/dev/null) || _sz=""
+  # `wc -c` pads its single count on some implementations; strip it before the numeric check.
+  case "$_sz" in '' | *[!0-9]*) _sz=$(wc -c <"$1" 2>/dev/null | tr -d '[:space:]') ;; esac
+  case "$_sz" in '' | *[!0-9]*) _sz=0 ;; esac
+  printf '%s\n' "$_sz"
+}
+
+# Keep the core log bounded: at a start, before the core (or its -test) appends, move a
+# log over the cap aside. Only called while no tracked core is running.
+kr_log_rotate() { # <file> [max]
+  _f=${1:-}
+  _max=${2:-$KR_LOG_MAX}
+  [ -n "$_f" ] && [ -f "$_f" ] || return 0
+  _sz=$(kr_file_size "$_f")
+  [ "$_sz" -gt "$_max" ] || return 0
+  mv -f "$_f" "$_f.1" 2>/dev/null || : >"$_f" 2>/dev/null
+  return 0
 }
 
 kr_dirs() {
@@ -88,6 +122,8 @@ kr_dirs() {
 # There is exactly one core: bin/xray. A core is usable only if it executes here.
 # Neither $ARCH nor `uname -m` can be trusted (emulators report a foreign kernel
 # arch), so usability is decided by running the binary, never by its name.
+# The function stays as the one place the path is named (tests use it to find bin/);
+# hot call sites use $KR_BINDIR/xray directly to avoid a subshell fork.
 kr_core() { echo "$KR_BINDIR/xray"; }
 
 # The probe costs a process (0.3-0.5 s under ARM translation) and one invocation asks the
@@ -108,7 +144,7 @@ kr_core_probe() { # the version line on stdout; 1 when the binary does not execu
   fi
   KR_CORE_PROBED=1
   KR_CORE_VER=""
-  _bin=$(kr_core)
+  _bin=$KR_BINDIR/xray
   [ -x "$_bin" ] || return 1
   if command -v timeout >/dev/null 2>&1; then
     _out=$(timeout 15 "$_bin" -version 2>/dev/null)
@@ -288,7 +324,21 @@ kr_applied_id() { kr_applied_read || return 1; printf '%s\n' "$KR_APPLIED_VAL"; 
 
 kr_meta_get() { # <key: id|host>
   [ -f "$KR_OUTBOUND_META" ] || return 1
-  sed -n "s/^$1=//p" "$KR_OUTBOUND_META" 2>/dev/null | head -n 1
+  # One process instead of `sed | head`; the keys are a fixed prefix, so no regex.
+  awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' \
+    "$KR_OUTBOUND_META" 2>/dev/null
+}
+
+# The rendered outbound's id, for the node page's "did anything change" check. A shell
+# read loop: the file is two lines, and this runs on the 2s poll.
+kr_meta_read() { # sets KR_META_ID; 1 when the file or the id line is absent
+  KR_META_ID=""
+  [ -s "$KR_OUTBOUND_META" ] || return 1
+  # `|| [ -n "$_mk" ]`: a hand-written file may not end its last line with a newline.
+  while IFS= read -r _mk || [ -n "$_mk" ]; do
+    case "$_mk" in id=*) KR_META_ID=${_mk#id=}; return 0 ;; esac
+  done <"$KR_OUTBOUND_META"
+  return 1
 }
 
 # The two inbound ports from state.json's settings, in one pass. The UI serialises
@@ -299,6 +349,7 @@ kr_meta_get() { # <key: id|host>
 kr_settings_ports() {
   KR_SOCKS_PORT=10808
   KR_HTTP_PORT=10809
+  KR_STATE_REVISION=0
   [ -s "$KR_STATE" ] || return 0
   _ports=$(awk -v s=10808 -v h=10809 '
     /"settings"[[:space:]]*:/ { in_settings = 1 }
@@ -311,11 +362,25 @@ kr_settings_ports() {
       match($0, /"httpPort"[[:space:]]*:[[:space:]]*[0-9]+/)
       v = substr($0, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); h = v + 0; seen_h = 1
     }
-    END { print s, h }
+    # The top-level revision: the UI bumps it on every write, so the node page can skip
+    # the whole state.json read when it did not move.
+    !seen_r && /^[[:space:]]*"revision"[[:space:]]*:/ {
+      match($0, /"revision"[[:space:]]*:[[:space:]]*[0-9]+/)
+      v = substr($0, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); r = v + 0; seen_r = 1
+    }
+    END { print s, h, r + 0 }
   ' "$KR_STATE" 2>/dev/null)
-  set -- $_ports
-  case "${1:-}" in '' | 0 | *[!0-9]*) ;; *) [ "$1" -ge 1 ] && [ "$1" -le 65535 ] && KR_SOCKS_PORT=$1 ;; esac
-  case "${2:-}" in '' | 0 | *[!0-9]*) ;; *) [ "$2" -ge 1 ] && [ "$2" -le 65535 ] && KR_HTTP_PORT=$2 ;; esac
+  # No `set --`: that would clobber the caller's positional parameters, and a caller like
+  # kr_render_config still owns its own $1/$2 after this returns.
+  _ps=""
+  _ph=""
+  _rev=""
+  IFS=' ' read -r _ps _ph _rev <<EOF
+$_ports
+EOF
+  case "${_ps:-}" in '' | 0 | *[!0-9]*) ;; *) [ "$_ps" -ge 1 ] && [ "$_ps" -le 65535 ] && KR_SOCKS_PORT=$_ps ;; esac
+  case "${_ph:-}" in '' | 0 | *[!0-9]*) ;; *) [ "$_ph" -ge 1 ] && [ "$_ph" -le 65535 ] && KR_HTTP_PORT=$_ph ;; esac
+  case "${_rev:-}" in '' | *[!0-9]*) ;; *) KR_STATE_REVISION=$_rev ;; esac
   return 0
 }
 
@@ -442,18 +507,22 @@ kr_render_config() { # <outbound-file> [route-mode override]
     kr_log "missing config template $KR_TMPL"
     return 1
   fi
-  if ! grep -q '__KERNELRAY_OUTBOUND__' "$KR_TMPL"; then
-    kr_log "config template $KR_TMPL has no outbound placeholder"
-    return 1
-  fi
-  if ! grep -q '__KERNELRAY_SOCKS_PORT__' "$KR_TMPL" || ! grep -q '__KERNELRAY_HTTP_PORT__' "$KR_TMPL"; then
-    kr_log "config template $KR_TMPL has no inbound port placeholders"
-    return 1
-  fi
-  if ! grep -q '__KERNELRAY_LOGLEVEL__' "$KR_TMPL"; then
-    kr_log "config template $KR_TMPL has no loglevel placeholder"
-    return 1
-  fi
+  # One pass over the template instead of four `grep -q` forks. The bit order is the
+  # order the messages have always had: outbound, both ports, loglevel.
+  _tmpl_ph=$(awk '
+    /__KERNELRAY_OUTBOUND__/ { o = 1 }
+    /__KERNELRAY_SOCKS_PORT__/ { s = 1 }
+    /__KERNELRAY_HTTP_PORT__/ { h = 1 }
+    /__KERNELRAY_LOGLEVEL__/ { l = 1 }
+    END { printf "%d%d%d%d", o, s, h, l }
+  ' "$KR_TMPL" 2>/dev/null)
+  case "$_tmpl_ph" in
+    1111) ;;
+    0*) kr_log "config template $KR_TMPL has no outbound placeholder"; return 1 ;;
+    ?0*) kr_log "config template $KR_TMPL has no inbound port placeholders"; return 1 ;;
+    ???0) kr_log "config template $KR_TMPL has no loglevel placeholder"; return 1 ;;
+    *) kr_log "config template $KR_TMPL has no placeholders"; return 1 ;;
+  esac
   # No outbound, no config: the core only ever runs a config derived from an applied
   # node (ADR 0010). There is no freedom fallback to fall back to.
   if [ -z "$_ob" ] || [ ! -s "$_ob" ]; then
@@ -615,7 +684,7 @@ kr_conf_accept_ondisk() {
     return 1
   fi
   if cmp -s "$KR_CONF" "$KR_CONF_TESTED"; then return 0; fi
-  if ! "$(kr_core)" run -test -c "$KR_CONF" >>"$KR_LOG" 2>&1; then
+  if ! "$KR_BINDIR/xray" run -test -c "$KR_CONF" >>"$KR_LOG" 2>&1; then
     kr_log "xray -test rejected the config on disk"
     echo "config test failed (see $KR_LOG)" >&2
     return 2
@@ -684,7 +753,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
       rm -f "$_cand"
       return 0
     fi
-    if ! "$(kr_core)" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
+    if ! "$KR_BINDIR/xray" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
       rm -f "$_cand"
       kr_log "xray -test rejected the config on disk"
       echo "config test failed (see $KR_LOG)" >&2
@@ -694,7 +763,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
     rm -f "$_cand"
     return 0
   fi
-  if ! "$(kr_core)" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
+  if ! "$KR_BINDIR/xray" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
     rm -f "$_cand"
     kr_log "xray -test rejected the generated config"
     echo "config test failed (see $KR_LOG)" >&2
@@ -939,8 +1008,10 @@ kr_start_locked() {
   fi
   rm -f "$KR_PIDFILE"
   kr_kill_strays ""
+  # The core log is rotated before this start's test/run appends to it.
+  kr_log_rotate "$KR_LOG"
 
-  _core=$(kr_core)
+  _core=$KR_BINDIR/xray
   if ! kr_core_works; then
     kr_log "core missing or not executable: $_core"
     kr_status_write failed no-core
@@ -1037,7 +1108,9 @@ kr_stop() {
 # Machine-readable summary for the WebUI: one key=value per line, values may
 # contain spaces (split on the first '='). State comes from the live process, not
 # from status.json, so a stale status file cannot claim "running" for a dead core.
-kr_status_kv() {
+kr_status_kv() { # [log|nodes] -- page-specific extras for the 2s poll
+  # Capture the page before kr_settings_ports (or any helper) can touch the positionals.
+  _want=${1:-}
   if kr_running; then
     _state=running
     _pid=$KR_PID_VAL
@@ -1159,6 +1232,7 @@ EOF
   echo "conf=$KR_CONF"
   echo "log=$KR_LOG"
   echo "node=$_node"
+  echo "revision=$KR_STATE_REVISION"
   echo "tproxy=$_tp"
   echo "rules=$_rules"
   echo "route=$_rt"
@@ -1168,6 +1242,14 @@ EOF
   echo "http=$KR_HTTP_PORT"
   echo "loglevel=$_lv"
   echo "loglevelpending=$_lvp"
+  # The log page asks for sizes so an unchanged log costs no tail and no transfer; the
+  # node page asks for the rendered outbound's id to decide whether state.json must be read.
+  if [ "${_want:-}" = log ]; then
+    echo "logsize=$(kr_file_size "$KR_LOG")"
+    echo "mlogsize=$(kr_file_size "$KR_MLOG")"
+  elif [ "${_want:-}" = nodes ]; then
+    kr_meta_read && echo "meta=$KR_META_ID"
+  fi
 }
 
 # kr_tail <lines> <file>: the last <lines> of one log, with a friendly line for a
@@ -1213,7 +1295,7 @@ kr_cli() {
           ;;
       esac
       ;;
-    status) kr_status_kv ;;
+    status) kr_status_kv "${1:-}" ;;
     log) kr_tail "${1:-200}" "$KR_LOG" ;;
     mlog) kr_tail "${1:-200}" "$KR_MLOG" ;;
     tproxy)
@@ -1227,7 +1309,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status|log [lines]|mlog [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]}" >&2
       return 2
       ;;
   esac

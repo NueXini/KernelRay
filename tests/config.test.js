@@ -253,6 +253,7 @@ const BODY_PORTS = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_appl
 const BODY_START = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 const BODY_CLI = '. "$KR_TEST_SCRIPT"; kr_cli "$@"';
+const BODY_SETTING_PORT = '. "$KR_TEST_SCRIPT"; kr_setting_port "$1" "$2"';
 
 // ---- template rendering -----------------------------------------------------------------
 
@@ -1294,6 +1295,69 @@ check("ensure: a failed switch whose config has the wrong form is refused, not r
     throw new Error("expected the form refusal, got: " + r.stdout + r.stderr);
   }
   eq(fs.readFileSync(m.config, "utf8"), cfg, "the config is not silently rewritten");
+});
+
+// ---- poll and log hygiene ---------------------------------------------------------------
+
+check("ports: kr_setting_port keeps the caller's positional parameters", () => {
+  const m = makeModule();
+  writeStatePorts(m, { socksPort: 12008, httpPort: 12009 });
+  eq(runShell(m.dir, BODY_SETTING_PORT, ["socksPort", "10808"]).trim(), "12008", "socks");
+  eq(runShell(m.dir, BODY_SETTING_PORT, ["httpPort", "10809"]).trim(), "12009", "http");
+  eq(runShell(m.dir, BODY_SETTING_PORT, ["nope", "7777"]).trim(), "7777", "unknown key");
+});
+
+check("status: log sizes are reported only when the log page asks", () => {
+  const m = makeModule();
+  const log = path.join(m.dir, "logs", "xray.log");
+  const mlog = path.join(m.dir, "logs", "kernelray.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, "12345");
+  fs.writeFileSync(mlog, "1234567");
+  const plain = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
+  if (/^logsize=/m.test(plain)) { throw new Error("the plain status must stay small"); }
+  const withLog = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv log');
+  if (!/^logsize=5$/m.test(withLog)) { throw new Error("logsize: " + withLog); }
+  if (!/^mlogsize=7$/m.test(withLog)) { throw new Error("mlogsize: " + withLog); }
+});
+
+check("status: the state revision and the rendered meta id ride along", () => {
+  const m = makeModule();
+  writeStatePorts(m, { socksPort: 12008, httpPort: 12009 }, { extra: { revision: 7 } });
+  fs.writeFileSync(m.meta, "id=" + ID + "\nhost=n.example.com\n");
+  const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv nodes');
+  if (!/^revision=7$/m.test(kv)) { throw new Error("revision: " + kv); }
+  if (!new RegExp("^meta=" + ID + "$", "m").test(kv)) { throw new Error("meta: " + kv); }
+  const plain = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
+  if (/^meta=/m.test(plain)) { throw new Error("the plain status must not read the meta"); }
+});
+
+check("log: a start rotates the core log over the cap", () => {
+  const m = makeModule(aliveCore);
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  const log = path.join(m.dir, "logs", "xray.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, "x".repeat(64));
+  try {
+    runShell(m.dir, BODY_START, [], { KR_LOG_MAX: "8" });
+  } finally {
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+  }
+  eq(fs.readFileSync(log + ".1", "utf8").length, 64, "the old log moved aside");
+});
+
+check("render: a template without the inbound port placeholders is refused", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  const tmpl = path.join(m.dir, "config.example.json");
+  const t = JSON.parse(fs.readFileSync(tmpl, "utf8"));
+  delete t.inbounds[0].port;
+  fs.writeFileSync(tmpl, JSON.stringify(t));
+  const r = runFail(m.dir, BODY_RENDER, [shPath(m.outbound)]);
+  if (!/inbound port placeholders/.test(r.stdout + r.stderr)) {
+    throw new Error("expected an inbound port placeholder refusal, got: " + r.stdout + r.stderr);
+  }
 });
 
 // ---- the installer's environment ----------------------------------------------------------
