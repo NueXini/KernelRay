@@ -6,7 +6,7 @@ the scripts and the issues mean by these words.
 ## Language
 
 **模块 (Module)**:
-The KernelSU module as the manager installs and enables it, identified by `kernelray`.
+The KernelSU module as the manager installs and enables it, identified by `KernelRay`.
 _Avoid_: mod, addon, plugin
 
 **核心 (Core)**:
@@ -14,7 +14,7 @@ The Xray executable itself, taken from an upstream `Xray-android-<arch>` release
 _Avoid_: binary, engine, xray-core (that is the upstream project, not our file)
 
 **模块目录 (Module directory)**:
-`/data/adb/modules/kernelray` — the one root: mechanism, core binary and its geo data, config
+`/data/adb/modules/KernelRay` — the one root: mechanism, core binary and its geo data, config
 template, generated core config, node store, logs and runtime state. It is also all we ever
 write to, so removing the module leaves nothing behind. Replaced wholesale on update, which
 resets the user data inside it; that cost is deliberate (see `docs/adr/0002`).

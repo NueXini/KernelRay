@@ -26,7 +26,7 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | | |
 | --- | --- |
 | starts | only when the user asks: the WebUI's 启动 button (or `kernelray.sh start`). Nothing starts at boot, and a start without an applied node stays refused |
-| keeps state in | `/data/adb/modules/kernelray/` — the module dir, and the *only* place we write |
+| keeps state in | `/data/adb/modules/KernelRay/` — the module dir, and the *only* place we write |
 | listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
 | outbound | the applied node, or `direct` for a destination the 分流规则 match; nothing starts until a node is applied |
 | switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core — one render and one test, and no restart at all when the bytes do not change ([ADR 0017](docs/adr/0017-one-render-one-test-per-switch.md)) |
@@ -154,7 +154,7 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
 | `module/bin/` | the arm64 core and the geo data it loads (`geosite.dat`, `geoip.dat`), **not committed** — see `module/bin/README.md` |
 | `module.yaml` | KernelSU Modules display metadata (name, summary, icon, tags, …) |
-| `scripts/pack.sh` | builds `build/kernelray-<versionCode>-<version>.zip` from `module/` |
+| `scripts/pack.sh` | builds `build/KernelRay-<versionCode>-<version>.zip` from `module/` |
 | `GLOSSARY.md` | what we mean by node / subscription / selected node / module dir / idle run |
 | `docs/adr/` | decisions worth remembering |
 
@@ -170,7 +170,7 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 
 # 2. build and flash
 scripts/pack.sh
-adb push build/kernelray-*.zip //data/local/tmp/ && adb shell su -c 'ksud module install /data/local/tmp/kernelray-*.zip'
+adb push build/KernelRay-*.zip //data/local/tmp/ && adb shell su -c 'ksud module install /data/local/tmp/KernelRay-*.zip'
 ```
 
 `scripts/pack.sh` refuses to build without both, because `xray -test` loads the geo data: a ZIP
@@ -190,8 +190,8 @@ translation.
 ```sh
 # core alive, one instance only
 ps -A -o PID,ARGS | grep 'xray run'
-cat /data/adb/modules/kernelray/runtime/status.json     # {"state":"running","node":"…"}
-cat /data/adb/modules/kernelray/runtime/applied         # empty until a node is applied, then the node id
+cat /data/adb/modules/KernelRay/runtime/status.json     # {"state":"running","node":"…"}
+cat /data/adb/modules/KernelRay/runtime/applied         # empty until a node is applied, then the node id
 
 # the core really forwards traffic
 adb forward tcp:11080 tcp:10808
@@ -206,8 +206,8 @@ With takeover on, verify that device traffic — not just the socks client — g
 
 ```sh
 adb shell su -c 'iptables -t mangle -S KR_TP_OUTPUT | head'   # the module's own rules
-adb shell su -c 'cat /data/adb/modules/kernelray/runtime/status.json'   # "tproxy":"on"
-adb shell su -c 'cat /data/adb/modules/kernelray/logs/kernelray.log'
+adb shell su -c 'cat /data/adb/modules/KernelRay/runtime/status.json'   # "tproxy":"on"
+adb shell su -c 'cat /data/adb/modules/KernelRay/logs/kernelray.log'
 # a plain (non-socks) request from the device must exit through the node:
 adb shell su -c 'curl -sS -o /dev/null -w "%{http_code} %{remote_ip}\n" https://www.gstatic.com/generate_204'
 ```
@@ -220,11 +220,11 @@ region would return.
 With 大陆直连 selected, the same request to a mainland site must *not* exit through the node:
 
 ```sh
-adb shell su -c 'cat /data/adb/modules/kernelray/runtime/route'        # "cn" when selected
-adb shell su -c 'grep -o "geosite:cn" /data/adb/modules/kernelray/config.json'
+adb shell su -c 'cat /data/adb/modules/KernelRay/runtime/route'        # "cn" when selected
+adb shell su -c 'grep -o "geosite:cn" /data/adb/modules/KernelRay/config.json'
 adb shell su -c 'curl -sS -o /dev/null -w "%{remote_ip}\n" https://www.baidu.com'
 # compare with a non-mainland site: that one still shows the node's exit
-grep -i "geo data missing" /data/adb/modules/kernelray/logs/kernelray.log   # must be empty
+grep -i "geo data missing" /data/adb/modules/KernelRay/logs/kernelray.log   # must be empty
 ```
 
 ## WebUI
@@ -326,15 +326,15 @@ The page is a dumb client: every core action runs the same CLI the shell uses, s
 cannot diverge between the two entry points.
 
 ```sh
-/data/adb/modules/kernelray/scripts/kernelray.sh status   # key=value, consumed by the WebUI
-/data/adb/modules/kernelray/scripts/kernelray.sh log 50
-/data/adb/modules/kernelray/scripts/kernelray.sh start
-/data/adb/modules/kernelray/scripts/kernelray.sh stop
-/data/adb/modules/kernelray/scripts/kernelray.sh apply <node-id>
-/data/adb/modules/kernelray/scripts/kernelray.sh unapply    # forget the applied node: rules, config, applied id, outbound
-/data/adb/modules/kernelray/scripts/kernelray.sh tproxy on     # the switch: engages at the next core start
-/data/adb/modules/kernelray/scripts/kernelray.sh tproxy off    # the switch: idle starts until turned on again
-/data/adb/modules/kernelray/scripts/kernelray.sh tproxy status
+/data/adb/modules/KernelRay/scripts/kernelray.sh status   # key=value, consumed by the WebUI
+/data/adb/modules/KernelRay/scripts/kernelray.sh log 50
+/data/adb/modules/KernelRay/scripts/kernelray.sh start
+/data/adb/modules/KernelRay/scripts/kernelray.sh stop
+/data/adb/modules/KernelRay/scripts/kernelray.sh apply <node-id>
+/data/adb/modules/KernelRay/scripts/kernelray.sh unapply    # forget the applied node: rules, config, applied id, outbound
+/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy on     # the switch: engages at the next core start
+/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy off    # the switch: idle starts until turned on again
+/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status
 ```
 
 `apply` is the last step of the WebUI flow: it expects `outbound.json` and `outbound.meta` to
@@ -364,7 +364,7 @@ multi-core support (sing-box/mihomo/…) — parked, not rejected; see `docs/adr
    ```
 
 4. The workflow zips `module/`, prechecks it with the KernelSU Modules validator and publishes
-   `kernelray-<versionCode>-<version>.zip`.
+   `KernelRay-<versionCode>-<version>.zip`.
 
 > Note: cores are gitignored, so CI currently publishes a ZIP **without** cores. Until the
 > workflow is extended to fetch pinned cores, release builds have to be produced locally.

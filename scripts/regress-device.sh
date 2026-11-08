@@ -5,8 +5,8 @@
 # KernelRay regression harness (P0 + P1 + P2) for v0.10.0.
 # Usage: sh /data/local/tmp/regress.sh   (as root, via su)
 # Emits one line per case: PASS <name> / FAIL <name> / INFO <name> <detail>
-S=/data/adb/modules/kernelray/scripts/kernelray.sh
-M=/data/adb/modules/kernelray
+S=/data/adb/modules/KernelRay/scripts/kernelray.sh
+M=/data/adb/modules/KernelRay
 RUN=$M/runtime
 L=$M/logs/xray.log
 KL=$M/logs/kernelray.log

@@ -42,7 +42,7 @@ node tests/routing.test.js             # 21 routing tests passing（分流模式
 ## 2. 打包
 
 ```sh
-bash scripts/pack.sh          # → build/kernelray-<versionCode>-<version>.zip
+bash scripts/pack.sh          # → build/KernelRay-<versionCode>-<version>.zip
 ls -l build/                  # 确认时间戳是刚才的，别推了旧包
 ```
 
@@ -52,7 +52,7 @@ ls -l build/                  # 确认时间戳是刚才的，别推了旧包
 ## 3. 推包到设备
 
 ```sh
-adb -s $D push build/kernelray-60-v0.6.0.zip //data/local/tmp/kernelray.zip
+adb -s $D push build/KernelRay-60-v0.6.0.zip //data/local/tmp/KernelRay.zip
 ```
 
 > **Windows/MSYS 坑**：`/data/...` 会被改写成 `C:/Users/.../data/...`。两种写法都行：
@@ -62,14 +62,14 @@ adb -s $D push build/kernelray-60-v0.6.0.zip //data/local/tmp/kernelray.zip
 ## 4. 安装（必须 root，必须给设备端路径）
 
 ```sh
-adb -s $D shell 'su -c "ksud module install /data/local/tmp/kernelray.zip"'
+adb -s $D shell 'su -c "ksud module install /data/local/tmp/KernelRay.zip"'
 ```
 
 输出里三行是有意义的：
 
 ```
   core: Xray 26.3.27 (... android/arm64)     ← customize.sh 探测核心成功
-- Installing to /data/adb/modules_update/kernelray
+- Installing to /data/adb/modules_update/KernelRay
 - Module installed successfully!
 ```
 
@@ -95,18 +95,18 @@ done
 
 ```sh
 # 1) 先自己启动核心（开机不会自启，ADR 0018）；没有已应用节点就先做第 7 节的导入 + 应用
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh start'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh start'
 # 2) 进程只应有一个，且指向模块目录里的二进制
 adb -s $D shell 'ps -A -o PID,ARGS | grep "[x]ray run"'
-#  houdini64 /data/adb/modules/kernelray/bin/xray ... run -c /data/adb/modules/kernelray/config.json
+#  houdini64 /data/adb/modules/KernelRay/bin/xray ... run -c /data/adb/modules/KernelRay/config.json
 
 # 3) 模块自报状态；node= 是已应用节点（没应用时为空）
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh status'
 #  state=running  phase=idle  pid=...  node=...  conf=...  log=...
 
 # 4) 文件都在模块目录里，权限正确
-adb -s $D shell 'ls -l /data/adb/modules/kernelray/{state.json,config.json,outbound.json,outbound.meta,logs,runtime}'
-adb -s $D shell 'cat /data/adb/modules/kernelray/runtime/applied 2>/dev/null'   # 空 = 直连
+adb -s $D shell 'ls -l /data/adb/modules/KernelRay/{state.json,config.json,outbound.json,outbound.meta,logs,runtime}'
+adb -s $D shell 'cat /data/adb/modules/KernelRay/runtime/applied 2>/dev/null'   # 空 = 直连
 
 # 5) 真的在转发（不是只看进程活着）
 adb -s $D forward tcp:11080 tcp:10808
@@ -135,8 +135,8 @@ adb -s $D exec-out cat //sdcard/ui.xml > build/ui.xml   # 找 text="..." 的 bou
 不用 UI 也能启停：
 
 ```sh
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh start"'
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh stop"'
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh start"'
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh stop"'
 ```
 
 **切换节点（v0.6 的列表手势，现在多一步弹窗）**：在 Nodes 页导入节点，点列表里的一行打开节点详情
@@ -145,9 +145,9 @@ adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh stop"'
 按了一次「应用」（ADR 0012）。切换成功后验证：
 
 ```sh
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status' | grep node=
-adb -s $D shell 'cat /data/adb/modules/kernelray/runtime/applied'
-adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第一个 outbound 是节点
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh status' | grep node=
+adb -s $D shell 'cat /data/adb/modules/KernelRay/runtime/applied'
+adb -s $D shell 'sed -n "1,20p" /data/adb/modules/KernelRay/config.json'   # 第一个 outbound 是节点
 ```
 
 切换的失败语义：`xray -test` 失败时旧配置和运行中的核心**都不动**，只在 UI 里弹错误；
@@ -164,10 +164,10 @@ adb -s $D shell 'sed -n "1,20p" /data/adb/modules/kernelray/config.json'   # 第
 生效——应用节点后 Stop→Start 即接管（重启不再算一次启动：开机不启动核心）。状态页 Start / `kr_start` 均会先装规则再起核心：
 
 ```sh
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh start'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh start'
 adb -s $D shell 'su -c "iptables -t mangle -S"' | grep KR_TP_        # 规则应存在
-adb -s $D shell 'su -c "cat /data/adb/modules/kernelray/logs/kernelray.log"'   # 装/拆/冲突判定
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh tproxy status'
+adb -s $D shell 'su -c "cat /data/adb/modules/KernelRay/logs/kernelray.log"'   # 装/拆/冲突判定
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status'
 ```
 
 模拟器（x86_64 + ARM 翻译）能装规则但别当真机结论：内核要有 `xt_TPROXY`/`nf_tproxy_core`。
@@ -179,10 +179,10 @@ tproxy透明代理开关，或 `tproxy off`，**下次启动核心时生效**。
 重启核心，启动失败会把偏好一起退回。偏好是 `runtime/route`（`cn` 或不存在 = `global`）：
 
 ```sh
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh routing status'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing status'
 # mode=cn / effective=cn / geodata=ok
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh routing cn'
-adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/kernelray/config.json"'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing cn'
+adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/KernelRay/config.json"'
 adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.com"'
 ```
 
@@ -195,14 +195,14 @@ Stop→Start，停着的核心下次 Start 就带上。`warning` 是默认值（
 看 `level` / `active` / `pending`：
 
 ```sh
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh loglevel status"'
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh loglevel status"'
 # level=warning / active=warning / pending=0
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh loglevel debug"'
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh status"' | grep loglevel
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh loglevel debug"'
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh status"' | grep loglevel
 # loglevel=debug  loglevelpending=1（核心在跑，配置还是旧的）
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh stop"'
-adb -s $D shell 'su -c "/data/adb/modules/kernelray/scripts/kernelray.sh start"'
-adb -s $D shell 'su -c "grep loglevel /data/adb/modules/kernelray/config.json"'
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh stop"'
+adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh start"'
+adb -s $D shell 'su -c "grep loglevel /data/adb/modules/KernelRay/config.json"'
 #     "loglevel": "debug",    → 再 status 应 pending=0
 ```
 
@@ -229,9 +229,9 @@ adb -s $D shell 'su -c "grep loglevel /data/adb/modules/kernelray/config.json"'
 #   outbound.meta / logs / runtime 会被清空（docs/adr/0002）
 
 # 卸载（只是打标记，重启才真正删）
-adb -s $D shell 'su -c "ksud module uninstall kernelray"'
+adb -s $D shell 'su -c "ksud module uninstall KernelRay"'
 adb -s $D reboot && sleep 30
-adb -s $D shell 'ls -d /data/adb/modules/kernelray; ps -A -o PID,ARGS | grep -c "[x]ray run"'
+adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c "[x]ray run"'
 #   期望：目录不存在、进程数 0、/data/adb 下没有残留（ksu/ksud/modules/modules_update 除外）
 ```
 
@@ -269,16 +269,16 @@ node tests/link.test.js || exit 1
 node tests/prefs.test.js || exit 1
 node tests/config.test.js || exit 1
 bash scripts/pack.sh || exit 1
-zip=$(ls -t build/kernelray-*.zip | head -1)
-adb -s $D push "$zip" //data/local/tmp/kernelray.zip || exit 1
-adb -s $D shell 'su -c "ksud module install /data/local/tmp/kernelray.zip"' | grep -E 'core:|successfully' || exit 1
+zip=$(ls -t build/KernelRay-*.zip | head -1)
+adb -s $D push "$zip" //data/local/tmp/KernelRay.zip || exit 1
+adb -s $D shell 'su -c "ksud module install /data/local/tmp/KernelRay.zip"' | grep -E 'core:|successfully' || exit 1
 adb -s $D reboot; adb -s $D wait-for-device
 for i in $(seq 1 30); do
   [ "$(adb -s $D shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
   sleep 5
 done
 sleep 10
-adb -s $D shell 'su -c /data/adb/modules/kernelray/scripts/kernelray.sh status'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh status'
 adb -s $D forward tcp:11080 tcp:10808 >/dev/null
 curl -sS -o /dev/null -w 'socks=%{http_code}\n' --socks5-hostname 127.0.0.1:11080 https://www.gstatic.com/generate_204
 ```

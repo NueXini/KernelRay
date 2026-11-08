@@ -2,7 +2,7 @@
 # KernelSU Modules metadata. Reference: https://developers.kernelsu.org/docs/module-yaml
 # version / versionCode come from module/module.prop inside the release ZIP, not from this file.
 schemaVersion: 1
-id: kernelray
+id: KernelRay
 name: KernelRay
 summary: Runs an Xray core from the WebUI as a KernelSU module
 description: README.md
@@ -22,4 +22,4 @@ compatibility:
   architectures: [arm64-v8a, x86_64]
 
 release:
-  assetPattern: "kernelray-*.zip"
+  assetPattern: "KernelRay-*.zip"

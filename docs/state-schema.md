@@ -1,6 +1,6 @@
 # `state.json` — user intent
 
-Location: `/data/adb/modules/kernelray/state.json`, mode `0600`, owner `root`.
+Location: `/data/adb/modules/KernelRay/state.json`, mode `0600`, owner `root`.
 
 `state.json` is the **intent**: which nodes the user has, and which one the user asked for.
 `config.json` is the **derived artifact** the core actually runs. They are not the same file and

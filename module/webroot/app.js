@@ -1,7 +1,7 @@
 (function () {
 "use strict";
 
-var MOD = "/data/adb/modules/kernelray";
+var MOD = "/data/adb/modules/KernelRay";
 var CLI = MOD + "/scripts/kernelray.sh";
 // Config, node store and logs sit in the module dir too — one root, nothing outside it.
 var STATE = MOD + "/state.json";

@@ -4,8 +4,8 @@ Status: accepted (supersedes the module-dir / data-dir split)
 
 ## Context
 
-The first layout kept two roots: mechanism in `/data/adb/modules/kernelray`, and user data
-(`config.json`, logs, runtime state) in `/data/adb/kernelray`. That is the pattern most modules
+The first layout kept two roots: mechanism in `/data/adb/modules/KernelRay`, and user data
+(`config.json`, logs, runtime state) in `/data/adb/KernelRay`. That is the pattern most modules
 follow, and its motivation is real — KernelSU **replaces the module directory wholesale on
 update**, so anything the user put there is destroyed by upgrading.
 
@@ -18,7 +18,7 @@ store, logs, status — lives under one root, and the module leaves no residue w
 
 ## Decision
 
-One root: `/data/adb/modules/kernelray`. The module writes only there.
+One root: `/data/adb/modules/KernelRay`. The module writes only there.
 
 Consequences we accept:
 
@@ -35,7 +35,7 @@ Consequences we accept:
 - **Module dir + data dir (the previous layout).** Survives updates, but violates the storage
   constraint: state would live somewhere other than the module directory.
 - **Module dir plus an install-time copy from the previous module dir.** KernelSU keeps the old
-  directory at `/data/adb/modules/kernelray` while unpacking the new one into
+  directory at `/data/adb/modules/KernelRay` while unpacking the new one into
   `/data/adb/modules_update/`, so `customize.sh` *could* migrate user data forward and keep the
   same path constraint. Rejected: it is a hand-rolled update protocol that silently decides
   which of two copies wins, and it still loses edits made between install and reboot.

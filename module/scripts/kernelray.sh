@@ -2,15 +2,15 @@
 # KernelRay shared helpers. Sourced by customize.sh / uninstall.sh.
 #
 # Layout contract:
-#   everything lives in the module dir (/data/adb/modules/kernelray): mechanism, core,
+#   everything lives in the module dir (/data/adb/modules/KernelRay): mechanism, core,
 #   user config, node store, logs and runtime state. Nothing is written outside it, so
 #   uninstalling the module leaves no residue — and a module update replaces the whole
 #   directory, which resets config/state (see docs/adr/0002).
 #
 # Override KR_MODDIR during install: customize.sh sets it to $MODPATH.
 
-KR_ID=kernelray
-KR_MODDIR=${KR_MODDIR:-/data/adb/modules/kernelray}
+KR_ID=KernelRay
+KR_MODDIR=${KR_MODDIR:-/data/adb/modules/KernelRay}
 KR_BINDIR=$KR_MODDIR/bin
 KR_CONF=$KR_MODDIR/config.json
 KR_LOGDIR=$KR_MODDIR/logs
