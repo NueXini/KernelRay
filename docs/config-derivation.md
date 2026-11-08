@@ -92,8 +92,10 @@ either form with `KR_TAKEOVER=1|0`; the start-time engagement forces the form it
 enforce.
 
 The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
-`dns-out` outbound; the `dns` module (upstream depends on the 分流模式, below); and the routing
-rules — the applied node's hostname resolves through `direct` (skipped when the host is an IP
+`dns-out` outbound; the `dns` module (upstream depends on the 分流模式, below) carrying
+`tag: "dns"` — the name every DNS routing rule below matches on, so the core stamps the
+module's own upstream queries with it instead of its internal `xray.system.<uuid>`; and the
+routing rules — the applied node's hostname resolves through `direct` (skipped when the host is an IP
 literal), the DNS module's upstream queries go through `proxy`, and port 53 tcp/udp goes to
 `dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholder becomes the bypass mark
 19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is written by

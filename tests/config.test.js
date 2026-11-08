@@ -331,7 +331,10 @@ check("takeover render: tproxy inbound, dns module and routing are spliced in", 
   eq(cfg.outbounds.length, 4, "proxy + direct + block + dns-out");
   eq(cfg.outbounds[3], { tag: "dns-out", protocol: "dns", settings: {} }, "dns-out");
   eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "node outbound carries the bypass mark");
-  eq(cfg.dns, { servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns upstream: A-only, so apps never leak over v6");
+  // The dns tag is not cosmetic: the rules below route on inboundTag:["dns"], and without
+  // it the core tags the module's upstream queries xray.system.<uuid> -- they then fall to
+  // port 53 -> dns-out and the module ends up asking itself (ADR 0006).
+  eq(cfg.dns, { tag: "dns", servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns upstream: A-only, so apps never leak over v6");
   eq(cfg.routing.rules[0], {
     inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct"
   }, "the node host resolves through direct (bootstrap)");

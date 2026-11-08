@@ -194,6 +194,11 @@ check("render: 大陆直连 splits DNS and sends mainland destinations direct", 
   }, "second domestic resolver");
   eq(cfg.dns.servers[2], "https://1.1.1.1/dns-query", "DoH stays the fallback");
   eq(cfg.dns.queryStrategy, "UseIPv4", "queryStrategy survives the split");
+  // The routing rules below match inboundTag:["dns"]; the core only tags the DNS module's
+  // upstream queries with it when the dns block declares that tag -- without it the tag is
+  // xray.system.<uuid>, every upstream query falls through to port 53 -> dns-out (back into
+  // this module), and the domestic resolvers are never asked at all.
+  eq(cfg.dns.tag, "dns", "the dns module carries the tag its routing rules match");
 
   eq(cfg.routing.domainStrategy, "IPIfNonMatch", "unmatched domains get resolved and re-tested");
   eq(cfg.routing.rules, CN_RULES_TAKEOVER, "rules in order");
@@ -203,7 +208,7 @@ check("render: 全局 keeps the pre-0014 takeover blocks byte for byte", () => {
   const m = makeModule();
   writeOutbound(m);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
-  eq(cfg.dns, { servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns");
+  eq(cfg.dns, { tag: "dns", servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns");
   eq(cfg.routing.domainStrategy, "AsIs", "strategy");
   eq(cfg.routing.rules, [
     { inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct" },
@@ -259,7 +264,7 @@ check("degrade: a cn render without geo data falls back to 全局 and says so", 
   runShell(m.dir, BODY_PREF, ["cn"]);
   fs.unlinkSync(m.geosite);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
-  eq(cfg.dns, { servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" },
+  eq(cfg.dns, { tag: "dns", servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" },
     "the global dns block, not a dead config");
   eq(cfg.routing.domainStrategy, "AsIs", "the global strategy");
   eq(cfg.routing.rules.length, 3, "the global rule set");

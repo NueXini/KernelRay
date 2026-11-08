@@ -515,7 +515,10 @@ kr_tp_dns_block() { # <host> <escaped host> -> KR_DNS_BLOCK
   if [ -n "$1" ] && [ -n "$_nodeip" ]; then
     _hosts=',"hosts":{"full:'$2'":"'$_nodeip'"}'
   fi
-  KR_DNS_BLOCK='{"servers":['$_servers'],"queryStrategy":"UseIPv4"'$_hosts'}'
+  # The "dns" tag is what makes the routing block's inboundTag:["dns"] rules reach these
+  # upstream queries at all: without it the core tags them xray.system.<uuid> and they fall
+  # through to the port-53 -> dns-out rule, i.e. straight back into this module (ADR 0006).
+  KR_DNS_BLOCK='{"tag":"dns","servers":['$_servers'],"queryStrategy":"UseIPv4"'$_hosts'}'
   return 0
 }
 

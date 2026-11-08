@@ -58,3 +58,17 @@ the node's UDP support.
   the resolver the app chose.
 - **fake-ip.** Only pays off when routing decisions need domains; this version has one proxy
   outbound, so it adds a subsystem without changing where traffic goes.
+
+## Amendment
+
+The routing rules match `inboundTag: ["dns"]`, so the rendered `dns` block **must declare
+`"tag": "dns"`**. Xray only stamps the module's own upstream queries with that tag when the block
+names it; with no tag they carry `xray.system.<uuid>`, none of the `inboundTag: ["dns"]` rules
+fire, and the queries fall through to the later `port 53 -> dns-out` rule — the module answering
+itself instead of asking the resolver. Observed on device in 大陆直连 before the fix: the
+domestic-resolver queries were self-answered (the DoH answer came back labelled `223.5.5.5`),
+`expectIPs: ["geoip:cn"]` then rejected those DoH-shaped answers, mainland names resolved to
+overseas CDN addresses — or failed outright when the node was down, since the DoH upstream is the
+only server that still worked — each lookup took 4–12 s, and no mainland destination ever took
+`direct`. The tag is not cosmetic: the decision above ("`dns.tag` + `inboundTag` routing") only
+works when both halves name the same tag.
