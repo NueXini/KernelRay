@@ -1816,7 +1816,9 @@ function deleteNodes(ids) {
     }) : Promise.resolve();
   }
   return chain.then(function () {
-    return writeState(state);
+    return writeState(state).then(function () {
+      logNodeLine("deleted " + ids.length + " nodes");
+    });
   });
 }
 
@@ -2013,6 +2015,26 @@ function renderFailedRows(rows) {
   });
 }
 
+// The import/delete lines the module log carries for UI-side store changes: the shell
+// never sees them -- the UI writes the store straight through the bridge -- so
+// `mlog append` is the one way in. Best effort: a failed log line must never touch the
+// operation's own result. Single-quoted: the messages are digits, spaces and parens.
+function logNodeLine(message) {
+  exec(CLI + " mlog append Node '" + message + "'").catch(function () {});
+}
+
+// The log line matches the toast's numbers: all-new rows read (3 new), a mix reads
+// (2 updated, 1 failed), and no suffix segment when nothing failed and nothing updated.
+function importLogLine(added, updated, failed) {
+  var msg = "imported " + (added + updated) + " nodes";
+  var bits = [];
+  if (added) { bits.push(String(added) + " new"); }
+  if (updated) { bits.push(String(updated) + " updated"); }
+  if (failed) { bits.push(String(failed) + " failed"); }
+  if (bits.length) { msg += " (" + bits.join(", ") + ")"; }
+  return msg;
+}
+
 // One gesture: parse the input and merge the parseable rows into the store. With no node
 // applied yet the same gesture also switches the node applyAfterImport names (ADR 0012);
 // with one already applied nothing but the store changes.
@@ -2044,6 +2066,7 @@ function doImport() {
       // would leave a re-imported node marked dirty after its own apply succeeded.
       lastStateObj = state;
       nextId = applyAfterImport(state, lastApplied);
+      logNodeLine(importLogLine(res.added, res.updated, bad.length));
       var msg = T.importDone + " " + res.added;
       if (res.updated) { msg += T.importUpdated + " " + res.updated; }
       if (!bad.length) {

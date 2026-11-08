@@ -210,10 +210,13 @@ _Avoid_: xray log (that is the file, not the concept), access log, run log
 
 **模块日志 (Module log)**:
 `logs/kernelray.log`, the log the module's own scripts write: starts, renders, takeover
-and failure lines. It has no levels and no preference of its own; the 日志行数 caps how
+and failure lines. Every line carries one tag from the closed set `Node` `DNS` `Core`
+`Config` `TProxy` `Routing` `Module`, and the WebUI's node import and delete lines enter
+through the same set (`mlog append`) — the tag set is shared vocabulary, not a
+per-caller choice. It has no levels and no preference of its own; the 日志行数 caps how
 much of it the Log page shows. A module update wipes it with the rest of the module dir
 (see `docs/adr/0002`).
-_Avoid_: kernelray log (that is the file, not the concept), system log, service log
+_Avoid_: kernelray log (that is the file, not the concept), system log, service log, free-form tags
 
 **日志等级 (Log level)**:
 The verbosity of the 核心's own log (`logs/xray.log`): how much the core writes there. It is a

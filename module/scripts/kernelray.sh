@@ -56,30 +56,50 @@ KR_START_STEP=${KR_START_STEP:-0.05}
 
 kr_now() { date +%s; }
 
+# The closed tag set every module log line carries. The WebUI's `mlog append` passes the
+# same words, so shell and UI share one vocabulary; `kr_log` refuses a word outside the
+# set so a new call site cannot invent its own spelling.
+KR_LOG_TAGS="Node DNS Core Config TProxy Routing Module"
+
+kr_log_tag_ok() { # <tag>: 0 when it is one of the closed set
+  case " $KR_LOG_TAGS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
 # The console line goes to the caller (KernelSU log, CLI); the same line lands in the
-# module's own log, which is the one the WebUI's takeover card reads from. A missing
+# module's own log, which is the one the WebUI's log page reads from. A missing
 # log dir (before kr_dirs) is tolerated silently. One timestamp serves both copies: a
 # log line used to fork `date` twice, and a start writes a handful of lines.
-kr_log() {
+kr_log() { # <tag> <message...>
+  kr_log_tag_ok "$1" || {
+    echo "kr_log: unknown tag '$1' ($KR_LOG_TAGS)" >&2
+    return 2
+  }
+  _tag=$1
+  shift
   _ts=$(date '+%Y-%m-%d %H:%M:%S')
-  printf '%s kernelray[%s] %s\n' "$_ts" "$$" "$*"
-  kr_log_write "$_ts" "$@"
+  printf '%s [%s] %s\n' "$_ts" "$_tag" "$*"
+  kr_log_write "$_ts" "$_tag" "$@"
 }
 
 # The module log without the console copy: for lines written from inside a render, whose
 # stdout is the config itself.
-kr_log_file() {
+kr_log_file() { # <tag> <message...>
+  kr_log_tag_ok "$1" || {
+    echo "kr_log_file: unknown tag '$1' ($KR_LOG_TAGS)" >&2
+    return 2
+  }
   kr_log_write "$(date '+%Y-%m-%d %H:%M:%S')" "$@"
 }
 
-kr_log_write() { # <timestamp> <message...>
+kr_log_write() { # <timestamp> <tag> <message...>
   _ts=$1
-  shift
+  _tag=$2
+  shift 2
   # A log line creates its own directory: the first line can be written by a render, before
   # any entry point called kr_dirs.
   [ -d "$KR_LOGDIR" ] || mkdir -p "$KR_LOGDIR" 2>/dev/null
   # 2>/dev/null first: a missing log dir (before kr_dirs) must not print redirection errors.
-  printf '%s kernelray[%s] %s\n' "$_ts" "$$" "$*" 2>/dev/null \
+  printf '%s [%s] %s\n' "$_ts" "$_tag" "$*" 2>/dev/null \
     >>"$KR_LOGDIR/kernelray.log"
 }
 
@@ -239,7 +259,7 @@ kr_core_pids() {
 kr_kill_strays() { # <pid to keep, may be empty>
   for _p in $(kr_core_pids); do
     [ -n "$1" ] && [ "$_p" = "$1" ] && continue
-    kr_log "killing stray core pid $_p"
+    kr_log Core "killing stray core pid $_p"
     kill "$_p" 2>/dev/null
   done
 }
@@ -293,7 +313,7 @@ kr_lock() {
   while ! mkdir "$KR_RUNDIR/start.lock" 2>/dev/null; do
     _i=$((_i + 1))
     if [ "$_i" -eq 50 ]; then
-      kr_log "start lock stuck, clearing it"
+      kr_log Core "start lock stuck, clearing it"
       rm -rf "$KR_RUNDIR/start.lock"
     fi
     [ "$_i" -ge 60 ] && return 1
@@ -448,9 +468,9 @@ kr_loglevel_set() { # <none|error|warning|info|debug>
     chmod 600 "$KR_LOGLEVEL" 2>/dev/null
   fi
   if [ "$_old" = "$1" ]; then
-    kr_log "log level: $_old (unchanged)"
+    kr_log Core "log level: $_old (unchanged)"
   else
-    kr_log "log level: $_old -> $1 (takes effect at the next core start)"
+    kr_log Core "log level: $_old -> $1 (takes effect at the next core start)"
   fi
   return 0
 }
@@ -504,7 +524,7 @@ kr_status_write() { # <state> <phase>
 kr_render_config() { # <outbound-file> [route-mode override]
   _ob=${1:-}
   if [ ! -f "$KR_TMPL" ]; then
-    kr_log "missing config template $KR_TMPL"
+    kr_log Config "missing config template $KR_TMPL"
     return 1
   fi
   # One pass over the template instead of four `grep -q` forks. The bit order is the
@@ -518,15 +538,15 @@ kr_render_config() { # <outbound-file> [route-mode override]
   ' "$KR_TMPL" 2>/dev/null)
   case "$_tmpl_ph" in
     1111) ;;
-    0*) kr_log "config template $KR_TMPL has no outbound placeholder"; return 1 ;;
-    ?0*) kr_log "config template $KR_TMPL has no inbound port placeholders"; return 1 ;;
-    ???0) kr_log "config template $KR_TMPL has no loglevel placeholder"; return 1 ;;
-    *) kr_log "config template $KR_TMPL has no placeholders"; return 1 ;;
+    0*) kr_log Config "config template $KR_TMPL has no outbound placeholder"; return 1 ;;
+    ?0*) kr_log Config "config template $KR_TMPL has no inbound port placeholders"; return 1 ;;
+    ???0) kr_log Config "config template $KR_TMPL has no loglevel placeholder"; return 1 ;;
+    *) kr_log Config "config template $KR_TMPL has no placeholders"; return 1 ;;
   esac
   # No outbound, no config: the core only ever runs a config derived from an applied
   # node (ADR 0010). There is no freedom fallback to fall back to.
   if [ -z "$_ob" ] || [ ! -s "$_ob" ]; then
-    kr_log "no node outbound to render; apply a node first"
+    kr_log Node "no node outbound to render; apply a node first"
     return 1
   fi
   _line=$(cat "$_ob") || return 1
@@ -545,7 +565,7 @@ kr_render_config() { # <outbound-file> [route-mode override]
   _mark=0
   if [ "$_takeover" = 1 ]; then
     if ! kr_tp_render_blocks "$_route"; then
-      kr_log "could not build the takeover blocks"
+      kr_log TProxy "could not build the takeover blocks"
       return 1
     fi
     _tp_in=$KR_TP_INBOUND
@@ -566,7 +586,7 @@ kr_render_config() { # <outbound-file> [route-mode override]
     # The preference asked for cn and the geo data is gone: the safe direction is everything
     # through the node, never a dead core. Log file only -- this function's stdout is the
     # config.
-    kr_log_file "geo data missing under $KR_BINDIR; rendered the global routing form"
+    kr_log_file Routing "geo data missing under $KR_BINDIR; rendered the global routing form"
   fi
   # The outbound and the takeover blocks pass through the environment, not interpolated
   # into awk's program or a shell string: JSON contains backslashes, quotes and `` $ ``, all
@@ -672,20 +692,20 @@ kr_conf_install() { # <0|1 form>
 # blackholes traffic (docs/adr/0008, 0011). Anything else is refused with the remedy.
 kr_conf_accept_ondisk() {
   if [ ! -s "$KR_CONF" ]; then
-    kr_log "no config on disk to fall back to"
+    kr_log Config "no config on disk to fall back to"
     echo "no config for the applied node; re-tap the node in the WebUI" >&2
     return 1
   fi
   _want_form=$(kr_config_form)
   _have_form=$(sed -n '1p' "$KR_CONF_FORM" 2>/dev/null)
   if [ "$_have_form" != "$_want_form" ]; then
-    kr_log "config on disk is form ${_have_form:-unknown} but this start needs form $_want_form"
+    kr_log Config "config on disk is form ${_have_form:-unknown} but this start needs form $_want_form"
     echo "the config on disk does not match the switch; re-tap the node in the WebUI" >&2
     return 1
   fi
   if cmp -s "$KR_CONF" "$KR_CONF_TESTED"; then return 0; fi
   if ! "$KR_BINDIR/xray" run -test -c "$KR_CONF" >>"$KR_LOG" 2>&1; then
-    kr_log "xray -test rejected the config on disk"
+    kr_log Config "xray -test rejected the config on disk"
     echo "config test failed (see $KR_LOG)" >&2
     return 2
   fi
@@ -716,23 +736,23 @@ kr_config_candidate() { # <applied-id> [route-mode override]
   _route=${2:-}
   kr_dirs
   if [ -z "$_id" ]; then
-    kr_log "no applied node; nothing to render"
+    kr_log Config "no applied node; nothing to render"
     echo "no applied node; apply a node first" >&2
     return 1
   fi
   if [ ! -s "$KR_OUTBOUND" ]; then
-    kr_log "applied id $_id has no rendered outbound"
+    kr_log Config "applied id $_id has no rendered outbound"
     echo "no rendered outbound (apply from the WebUI first)" >&2
     return 1
   fi
   _meta=$(kr_meta_get id) || _meta=""
   if [ "$_meta" != "$_id" ]; then
-    kr_log "applied id $_id: outbound.meta belongs to '$_meta'"
+    kr_log Config "applied id $_id: outbound.meta belongs to '$_meta'"
     echo "outbound.json does not belong to node $_id" >&2
     return 1
   fi
   if ! kr_core_works; then
-    kr_log "core missing or not executable"
+    kr_log Core "core missing or not executable"
     echo "core missing or not executable" >&2
     return 1
   fi
@@ -755,7 +775,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
     fi
     if ! "$KR_BINDIR/xray" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
       rm -f "$_cand"
-      kr_log "xray -test rejected the config on disk"
+      kr_log Config "xray -test rejected the config on disk"
       echo "config test failed (see $KR_LOG)" >&2
       return 2
     fi
@@ -765,7 +785,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
   fi
   if ! "$KR_BINDIR/xray" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
     rm -f "$_cand"
-    kr_log "xray -test rejected the generated config"
+    kr_log Config "xray -test rejected the generated config"
     echo "config test failed (see $KR_LOG)" >&2
     return 2
   fi
@@ -783,7 +803,7 @@ kr_ensure_config() {
   if [ -n "$_n" ] && [ "$_meta" != "$_n" ]; then
     # A failed switch: outbound.json already describes the node the user tried, so this
     # node's config cannot be re-derived -- the one on disk is it (ADR 0007).
-    kr_log "ensure: applied id $_n, outbound.meta belongs to '$_meta'; keeping the config on disk"
+    kr_log Node "ensure: applied id $_n, outbound.meta belongs to '$_meta'; keeping the config on disk"
     kr_conf_accept_ondisk
     return $?
   fi
@@ -813,7 +833,7 @@ kr_swap_install() { # <candidate> <applied-id|"">
   if [ -f "$KR_CONF" ]; then
     if ! cp -f "$KR_CONF" "$_prev" 2>/dev/null; then
       rm -f "$_prev" "$_cand"
-      kr_log "could not back up the current config"
+      kr_log Config "could not back up the current config"
       echo "could not back up the current config" >&2
       return 1
     fi
@@ -832,7 +852,7 @@ kr_swap_install() { # <candidate> <applied-id|"">
   if ! mv -f "$_cand" "$KR_CONF"; then
     rm -f "$_cand"
     [ "$KR_SWAP_WAS" = 1 ] && kr_start
-    kr_log "could not replace config"
+    kr_log Config "could not replace config"
     echo "could not replace config" >&2
     return 1
   fi
@@ -863,7 +883,7 @@ kr_swap_start() {
 kr_swap_rollback() {
   _prev=$KR_RUNDIR/config.json.prev
   _formprev=$KR_RUNDIR/config.form.prev
-  kr_log "new config did not start; restoring previous config"
+  kr_log Config "new config did not start; restoring previous config"
   if [ -f "$_prev" ]; then
     _restored_form=$(sed -n '1p' "$_formprev" 2>/dev/null)
     mv -f "$_prev" "$KR_CONF"
@@ -930,11 +950,11 @@ kr_apply() { # <node id>
     # config.json already is this node's config: no test, no restart, no traffic gap. Only
     # the applied pointer can still be out of sync (a failed switch leaves it behind).
     kr_applied_write "$_id" || return 1
-    kr_log "applied node $_id (config unchanged)"
+    kr_log Node "applied node $_id (config unchanged)"
     return 0
   fi
   kr_swap_config "$KR_CANDIDATE" "$_id" || return 1
-  kr_log "applied node $_id"
+  kr_log Node "applied node $_id"
   return 0
 }
 
@@ -946,17 +966,17 @@ kr_apply() { # <node id>
 kr_apply_ports() {
   kr_dirs
   _n=$(kr_applied_id) || {
-    kr_log "ports: no applied node"
+    kr_log Node "ports: no applied node"
     echo "no applied node; apply a node first" >&2
     return 1
   }
   kr_config_candidate "$_n" || return 1
   if [ -z "$KR_CANDIDATE" ]; then
-    kr_log "ports: the config already carries the saved ports"
+    kr_log Node "ports: the config already carries the saved ports"
     return 0
   fi
   kr_swap_config "$KR_CANDIDATE" "" || return 1
-  kr_log "ports applied: $(kr_setting_port socksPort 10808) socks / $(kr_setting_port httpPort 10809) http"
+  kr_log Node "ports applied: $(kr_setting_port socksPort 10808) socks / $(kr_setting_port httpPort 10809) http"
   return 0
 }
 
@@ -971,7 +991,7 @@ kr_unapply() {
   # Never pull the config out from under a live core: that would be a stop, and a stop is
   # a different gesture with a different consequence (fail-closed rules stay up).
   if kr_running; then
-    kr_log "unapply: the core is running; stop it first"
+    kr_log Node "unapply: the core is running; stop it first"
     echo "core is running; stop it first" >&2
     return 1
   fi
@@ -981,7 +1001,7 @@ kr_unapply() {
   rm -f "$KR_CONF" "$KR_APPLIED" "$KR_CONF_TESTED" "$KR_CONF_FORM" \
     "$KR_OUTBOUND" "$KR_OUTBOUND_META" \
     "$KR_PIDFILE" "$KR_STARTED" "$KR_RUNDIR/nodeip"
-  kr_log "unapplied: config, applied id, rendered outbound and takeover rules removed"
+  kr_log Node "unapplied: config, applied id, rendered outbound and takeover rules removed"
   kr_status_write stopped no-node
   return 0
 }
@@ -989,7 +1009,7 @@ kr_unapply() {
 kr_start() {
   kr_dirs
   kr_cleanup_legacy
-  kr_lock || { kr_log "could not acquire start lock"; return 1; }
+  kr_lock || { kr_log Core "could not acquire start lock"; return 1; }
   kr_start_locked
   _rc=$?
   # Release on return, not only via the EXIT trap: apply can start twice (new config,
@@ -1002,7 +1022,7 @@ kr_start() {
 kr_start_locked() {
   if kr_running; then
     kr_kill_strays "$(kr_pid)"
-    kr_log "already running (pid $(kr_pid))"
+    kr_log Core "already running (pid $(kr_pid))"
     kr_status_write running "${KR_TP_PHASE:-idle}"
     return 0
   fi
@@ -1013,7 +1033,7 @@ kr_start_locked() {
 
   _core=$KR_BINDIR/xray
   if ! kr_core_works; then
-    kr_log "core missing or not executable: $_core"
+    kr_log Core "core missing or not executable: $_core"
     kr_status_write failed no-core
     return 1
   fi
@@ -1021,7 +1041,7 @@ kr_start_locked() {
   # (ADR 0010). Without one there is nothing to start; the honest status is a stop,
   # not a direct run.
   if ! kr_applied_id >/dev/null; then
-    kr_log "no applied node; the core stays stopped"
+    kr_log Core "no applied node; the core stays stopped"
     echo "no applied node; tap a node in the node list to apply one first" >&2
     kr_status_write stopped no-node
     return 1
@@ -1035,7 +1055,7 @@ kr_start_locked() {
     if kr_tp_switch_on; then
       kr_tp_engage
     elif kr_tp_rules_present; then
-      kr_tp_log "start: the tproxy switch is off; removing stale rules"
+      kr_tp_log Tproxy "start: the tproxy switch is off; removing stale rules"
       kr_tp_remove
     else
       # No rules and the switch off: the cache must say so even when it was left stale
@@ -1055,7 +1075,7 @@ kr_start_locked() {
   _rc=$?
   if [ "$_rc" != 0 ]; then
     if [ "$_rc" = 2 ]; then
-      kr_log "config test failed, see $KR_LOG"
+      kr_log Config "config test failed, see $KR_LOG"
       kr_status_write failed config-invalid
     else
       kr_status_write failed no-config
@@ -1072,12 +1092,12 @@ kr_start_locked() {
 
   # Wait for the fact (the inbound listening), not for a fixed second.
   if kr_core_wait_ready "$_pid"; then
-    kr_log "started pid $_pid core $_core"
+    kr_log Core "started pid $_pid core $_core"
     kr_status_write running "${KR_TP_PHASE:-idle}"
     return 0
   fi
   rm -f "$KR_PIDFILE"
-  kr_log "core exited right after start, see $KR_LOG"
+  kr_log Core "core exited right after start, see $KR_LOG"
   kr_status_write failed crashed
   return 1
 }
@@ -1085,7 +1105,7 @@ kr_start_locked() {
 kr_stop() {
   if ! kr_running; then
     rm -f "$KR_PIDFILE" "$KR_STARTED"
-    kr_log "not running"
+    kr_log Core "not running"
     kr_status_write stopped idle
     return 0
   fi
@@ -1100,7 +1120,7 @@ kr_stop() {
   done
   kill -9 "$_p" 2>/dev/null
   rm -f "$KR_PIDFILE" "$KR_STARTED"
-  kr_log "stopped pid $_p"
+  kr_log Core "stopped pid $_p"
   kr_status_write stopped idle
 }
 
@@ -1259,6 +1279,23 @@ kr_tail() {
   tail -n "$_n" "$_f" 2>/dev/null || echo "(cannot read $_f)"
 }
 
+# kr_mlog_append <tag> <message...>: one module log line from the WebUI. Node import and
+# delete never pass through the shell -- the UI writes the store straight through the
+# bridge -- so this is the UI's only way in. The tag gets the same closed-set check as
+# kr_log, and the message is flattened to one line so a stray newline in a UI string
+# cannot break the line format. File only: this is not the command's result, and a console
+# copy of a UI bookkeeping line is noise.
+kr_mlog_append() { # <tag> <message...>
+  kr_log_tag_ok "$1" || {
+    echo "mlog append: unknown tag '$1' ($KR_LOG_TAGS)" >&2
+    return 2
+  }
+  _tag=$1
+  shift
+  _msg=$(printf '%s' "$*" | tr '\n\r\t' '   ')
+  kr_log_file "$_tag" "$_msg"
+}
+
 kr_cli() {
   _cmd=${1:-status}
   [ $# -gt 0 ] && shift
@@ -1290,7 +1327,12 @@ kr_cli() {
       ;;
     status) kr_status_kv "${1:-}" ;;
     log) kr_tail "${1:-200}" "$KR_LOG" ;;
-    mlog) kr_tail "${1:-200}" "$KR_MLOG" ;;
+    mlog)
+      case "${1:-}" in
+        append) shift; kr_mlog_append "$@" ;;
+        *) kr_tail "${1:-200}" "$KR_MLOG" ;;
+      esac
+      ;;
     tproxy)
       case "${1:-}" in
         on|off) kr_tproxy_set "$1" ;;
@@ -1302,7 +1344,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac

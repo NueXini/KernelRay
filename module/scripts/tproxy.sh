@@ -40,7 +40,9 @@ KR_DOH_RESOLVE=https://223.5.5.5/resolve
 # names the binary outright. Overridable so a test can stub it.
 KR_BUSYBOX=${KR_BUSYBOX:-/data/adb/ksu/bin/busybox}
 
-kr_tp_log() { kr_log "$*"; }
+# Tagged passthrough to kr_log; the tproxy-side lines share it. Routing lines call
+# kr_log directly with their own tag.
+kr_tp_log() { kr_log "$@"; }
 
 # The persisted tproxy switch (tproxy透明代理开关): presence of the file is the user's
 # choice that takeover engages when the core starts. It is on from install (ADR 0011)
@@ -55,7 +57,7 @@ kr_tp_default_on() {
   kr_dirs
   printf 'on\n' >"$KR_TP_SWITCH" 2>/dev/null || return 0
   chmod 600 "$KR_TP_SWITCH" 2>/dev/null
-  kr_tp_log "tproxy switch defaults to on"
+  kr_tp_log TProxy "tproxy switch defaults to on"
 }
 
 # The switch write since ADR 0011: on|off only persists the preference. It is applied
@@ -70,11 +72,11 @@ kr_tproxy_set() { # <on|off>
         return 1
       }
       chmod 600 "$KR_TP_SWITCH" 2>/dev/null
-      kr_tp_log "tproxy switch: on (takes effect at the next core start)"
+      kr_tp_log TProxy "tproxy switch: on (takes effect at the next core start)"
       ;;
     off)
       rm -f "$KR_TP_SWITCH"
-      kr_tp_log "tproxy switch: off (takes effect at the next core start)"
+      kr_tp_log TProxy "tproxy switch: off (takes effect at the next core start)"
       ;;
     *)
       echo "usage: kr_tproxy_set {on|off}" >&2
@@ -311,7 +313,7 @@ kr_tp_routes() {
   # and a default-only table would ship them to the gateway and lose them.
   _def4=$(ip route show table all 2>/dev/null | grep -m1 '^default ')
   if [ -z "$_def4" ]; then
-    kr_tp_log "no ipv4 default route; cannot build the bypass path"
+    kr_tp_log TProxy "no ipv4 default route; cannot build the bypass path"
     return 1
   fi
   _r=$(kr_tp_copy_route 4 "$_def4") || return 1
@@ -334,10 +336,10 @@ kr_tp_routes() {
       ip -6 rule del pref $KR_BYPASS_PREF 2>/dev/null
       ip -6 rule add pref $KR_BYPASS_PREF fwmark $KR_BYPASS lookup $KR_BYPASS_TABLE || return 1
     else
-      kr_tp_log "could not copy the ipv6 default route; no v6 bypass"
+      kr_tp_log TProxy "could not copy the ipv6 default route; no v6 bypass"
     fi
   else
-    kr_tp_log "no ipv6 default route; the bypass table has no v6 route"
+    kr_tp_log TProxy "no ipv6 default route; the bypass table has no v6 route"
   fi
   return 0
 }
@@ -359,27 +361,27 @@ kr_tp_copy_route() { # <4|6> <route line>
 # again: a half-capture is a silent leak, not a smaller feature (docs/adr/0004).
 kr_tp_install() {
   if kr_tp_rules_present; then
-    kr_tp_log "takeover rules already present"
+    kr_tp_log TProxy "takeover rules already present"
     kr_tp_rules_cache_write 1
     return 0
   fi
-  kr_tp_log "installing takeover rules (mark $KR_MARK, table $KR_TABLE, pref $KR_RULE_PREF, port $KR_TP_PORT)"
+  kr_tp_log TProxy "installing takeover rules (mark $KR_MARK, table $KR_TABLE, pref $KR_RULE_PREF, port $KR_TP_PORT)"
   if ! kr_tp_ipt_rules iptables; then
-    kr_tp_log "iptables rules failed; removing everything again"
+    kr_tp_log TProxy "iptables rules failed; removing everything again"
     kr_tp_remove
     return 1
   fi
   if ! kr_tp_ipt_rules ip6tables; then
-    kr_tp_log "ip6tables rules failed; removing everything again"
+    kr_tp_log TProxy "ip6tables rules failed; removing everything again"
     kr_tp_remove
     return 1
   fi
   if ! kr_tp_routes; then
-    kr_tp_log "policy routing failed; removing everything again"
+    kr_tp_log TProxy "policy routing failed; removing everything again"
     kr_tp_remove
     return 1
   fi
-  kr_tp_log "takeover rules installed"
+  kr_tp_log TProxy "takeover rules installed"
   kr_tp_rules_cache_write 1
   return 0
 }
@@ -443,9 +445,13 @@ kr_tp_resolve_node() {
     "$KR_DOH_RESOLVE?name=$_enc&type=A" 2>/dev/null |
     grep -o '"type":1,"data":"[0-9.]*"' | head -n 1 |
     sed 's/.*"data":"\([0-9.]*\)".*/\1/')
-  [ -n "$_out" ] && { echo "$_out"; return 0; }
+  [ -n "$_out" ] && {
+    kr_log_file DNS "resolved $_host -> $_out via DoH"
+    echo "$_out"
+    return 0
+  }
   # Not kr_log: this function's stdout is its return value.
-  kr_log_file "the DoH ask failed; falling back to the system resolver"
+  kr_log_file DNS "the DoH ask failed; falling back to the system resolver"
   _out=$(ping -c1 -W2 "$_host" 2>/dev/null | sed -n 's/^[^(]*(\([0-9.]*\)).*/\1/p' | head -n 1)
   [ -n "$_out" ] && echo "$_out"
 }
@@ -459,10 +465,10 @@ kr_tp_pin_node() {
   if [ -n "$_ip" ]; then
     printf '%s\n' "$_ip" >"$KR_NODEIP"
     chmod 600 "$KR_NODEIP" 2>/dev/null
-    kr_tp_log "pinned node address $_ip"
+    kr_tp_log Node "pinned node address $_ip"
   else
     rm -f "$KR_NODEIP"
-    kr_tp_log "could not pre-resolve the node host; bootstrap falls back to the direct DoH rule"
+    kr_tp_log DNS "could not pre-resolve the node host; bootstrap falls back to the direct DoH rule"
   fi
 }
 
@@ -607,18 +613,18 @@ kr_route_set() { # <global|cn>
   kr_dirs
   _cur=$(kr_route_mode)
   if [ "$_cur" = "$1" ]; then
-    kr_log "routing: already $1"
+    kr_log Routing "already $1"
     return 0
   fi
   if [ "$1" = cn ] && ! kr_geodata_ok; then
-    kr_log "routing: cn needs $KR_BINDIR/{geosite,geoip}.dat"
+    kr_log Routing "cn needs $KR_BINDIR/{geosite,geoip}.dat"
     echo "geo data is missing ($KR_BINDIR); the routing mode stays $_cur" >&2
     return 1
   fi
   _n=$(kr_applied_id) || _n=""
   if [ -z "$_n" ]; then
     kr_route_write "$1" || return 1
-    kr_log "routing: $_cur -> $1 (no applied node; the next apply renders it)"
+    kr_log Routing "$_cur -> $1 (no applied node; the next apply renders it)"
     return 0
   fi
   # Render the candidate with this mode before the preference is written: a config the core
@@ -629,7 +635,7 @@ kr_route_set() { # <global|cn>
     return 1
   fi
   if [ -z "$KR_CANDIDATE" ]; then
-    kr_log "routing: $1 (the config already carries it)"
+    kr_log Routing "$1 (the config already carries it)"
     return 0
   fi
   # The mode is the intent this config was rendered from, so the rollback must restore it
@@ -642,11 +648,11 @@ kr_route_set() { # <global|cn>
   if ! kr_swap_start; then
     kr_route_write "$_cur"
     kr_swap_rollback
-    kr_log "routing: the $1 config did not start; the mode is back to $_cur"
+    kr_log Routing "the $1 config did not start; the mode is back to $_cur"
     return 1
   fi
   rm -f "$KR_RUNDIR/config.json.prev" "$KR_RUNDIR/config.form.prev"
-  kr_log "routing: $_cur -> $1"
+  kr_log Routing "$_cur -> $1"
   return 0
 }
 
@@ -683,12 +689,12 @@ kr_tp_engage() {
     # with the switch defaulting on, that path would take a freshly installed
     # device's traffic hostage until a node is applied. The start gate (ADR 0010)
     # keeps the core down; the rules wait with it.
-    kr_tp_log "engage: no usable outbound for the applied node; takeover skipped"
+    kr_tp_log TProxy "engage: no usable outbound for the applied node; takeover skipped"
     return 0
   fi
   _why=$(kr_tp_conflict) || _why=""
   if [ -n "$_why" ]; then
-    kr_tp_log "engage: conflict, takeover not enforced: $_why"
+    kr_tp_log TProxy "engage: conflict, takeover not enforced: $_why"
     KR_TP_PHASE=failed/conflict
     kr_status_write stopped failed/conflict
     return 0
@@ -697,13 +703,13 @@ kr_tp_engage() {
   # apply that already pinned for this render does not ask twice.
   kr_tp_pin_node
   if ! kr_tp_install; then
-    kr_tp_log "engage: rule install failed, takeover not enforced"
+    kr_tp_log TProxy "engage: rule install failed, takeover not enforced"
     KR_TP_PHASE=failed/rules
     kr_status_write stopped failed/rules
     return 0
   fi
   KR_TP_PHASE=idle
-  kr_tp_log "engage: takeover rules installed before the core starts"
+  kr_tp_log TProxy "engage: takeover rules installed before the core starts"
   return 0
 }
 

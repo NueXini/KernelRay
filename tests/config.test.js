@@ -1324,6 +1324,50 @@ check("status: log sizes are reported only when the log page asks", () => {
   if (!/^mlogsize=7$/m.test(withLog)) { throw new Error("mlogsize: " + withLog); }
 });
 
+check("kr_log: the tag rides the line and an unknown tag is refused", () => {
+  const m = makeModule();
+  const out = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_log Core "started pid 42"; echo "rc=$?"');
+  if (!/\[Core\] started pid 42/.test(out)) { throw new Error("console copy: " + out); }
+  if (!/rc=0/.test(out)) { throw new Error("rc: " + out); }
+  const mlog = fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8");
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[Core\] started pid 42$/m.test(mlog)) {
+    throw new Error("file line: " + JSON.stringify(mlog));
+  }
+  // A word outside the closed set fails fast and appends nothing.
+  const bad = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_log Bogus "x" 2>/dev/null; echo "rc=$?"');
+  if (!/rc=2/.test(bad)) { throw new Error("unknown tag rc: " + bad); }
+  eq(fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8"), mlog,
+    "a refused tag must not append");
+});
+
+check("mlog append: lands in the module log, flattened to one line", () => {
+  const m = makeModule();
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_mlog_append Node "imported 3 nodes (3 new)"; echo "rc=$?"');
+  if (!/rc=0/.test(out)) { throw new Error("rc: " + out); }
+  const mlog = fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8");
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[Node\] imported 3 nodes \(3 new\)$/m.test(mlog)) {
+    throw new Error("file line: " + JSON.stringify(mlog));
+  }
+  // A UI string with a newline must not split the line format.
+  runShell(m.dir, '. "$KR_TEST_SCRIPT"; m=$(printf "two\\nlines"); kr_mlog_append Node "$m"');
+  const lines = fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8").trim().split("\n");
+  eq(lines.length, 2, "a newline in the message must not add a line");
+  if (!/\[Node\] two lines$/.test(lines[1])) { throw new Error("flattened: " + lines[1]); }
+});
+
+check("mlog: append goes through the CLI dispatch, tail still works, tags are checked", () => {
+  const m = makeModule();
+  const out = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_cli mlog append Node "deleted 2 nodes"; echo "rc=$?"');
+  if (!/rc=0/.test(out)) { throw new Error("rc: " + out); }
+  const bad = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_cli mlog append Nope "x" 2>/dev/null; echo "rc=$?"');
+  if (!/rc=2/.test(bad)) { throw new Error("unknown tag rc: " + bad); }
+  const tail = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli mlog 5');
+  if (!/\[Node\] deleted 2 nodes$/m.test(tail)) { throw new Error("tail: " + tail); }
+});
+
 check("status: the state revision and the rendered meta id ride along", () => {
   const m = makeModule();
   writeStatePorts(m, { socksPort: 12008, httpPort: 12009 }, { extra: { revision: 7 } });
