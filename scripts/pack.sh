@@ -9,8 +9,15 @@ out="${1:-$root/build}"
 
 prop="$mod/module.prop"
 id=$(sed -n 's/^id=//p' "$prop")
-version=$(sed -n 's/^version=//p' "$prop")
-code=$(sed -n 's/^versionCode=//p' "$prop")
+# The version is the pack date (ADR 0020): YY.MM.DD, and versionCode is the same date as
+# YYMMDD (monotonic, so the installer still sees an upgrade). Stamped here, not by hand in
+# module.prop, makes a forgotten bump impossible -- the date always matches the build. Both
+# read UTC (date -u): the version is then a pure function of absolute time, so packing from
+# different timezones yields the same number and versionCode can never go backwards.
+version=$(date -u +%y.%m.%d)
+code=$(date -u +%y%m%d)
+sed -i "s/^version=.*/version=$version/" "$prop"
+sed -i "s/^versionCode=.*/versionCode=$code/" "$prop"
 
 [ -f "$mod/bin/xray" ] ||
   { echo "error: no core at module/bin/xray (see module/bin/README.md)" >&2; exit 1; }
@@ -30,7 +37,7 @@ case "$_machine" in
 esac
 
 mkdir -p "$out"
-zip="$out/$id-$code-$version.zip"
+zip="$out/$id-$version.zip"
 rm -f "$zip"
 
 cd "$mod"

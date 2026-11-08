@@ -42,9 +42,13 @@ node tests/routing.test.js             # 21 routing tests passing（分流模式
 ## 2. 打包
 
 ```sh
-bash scripts/pack.sh          # → build/KernelRay-<versionCode>-<version>.zip
+bash scripts/pack.sh          # → build/KernelRay-<version>.zip
 ls -l build/                  # 确认时间戳是刚才的，别推了旧包
 ```
+
+版本就是打包日期（ADR 0020）：`pack.sh` 自动把 `version=YY.MM.DD`、
+`versionCode=YYMMDD` 写进 `module.prop`，不用手改，忘改版本号这件事不可能发生。
+同一天重打包会得到同名 ZIP，`rm -f` 旧的直接覆盖。
 
 有核心时约 12 MB。ZIP 内容是 `module/` 的**根**，并排除 `config.json`/`state.json`/
 `outbound.json`/`outbound.meta`/`logs/`/`runtime/`（都是设备上的运行数据）。
@@ -224,7 +228,7 @@ adb -s $D shell 'su -c "grep loglevel /data/adb/modules/KernelRay/config.json"'
 ## 9. 模拟升级 / 卸载
 
 ```sh
-# 升级 = 提高 versionCode → 重打包 → 重复 2~6 步
+# 升级 = 重打包（pack.sh 自动把 versionCode 跳到当天日期）→ 重复 2~6 步
 #   注意：模块目录被整体替换，state.json / config.json / outbound.json /
 #   outbound.meta / logs / runtime 会被清空（docs/adr/0002）
 
