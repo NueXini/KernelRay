@@ -173,8 +173,8 @@ kr_version_refresh() {
   printf '%s\n' "$_v" >"$KR_VERFILE" 2>/dev/null
 }
 
-# The cached version without ever probing the core: the status poll must not pay a
-# process for a fact that only changes at install/start (kr_version_refresh).
+# The cached version without ever probing the core: the only reader is the install
+# print (customize.sh), and the version only changes when the module is reinstalled.
 kr_version_read() { # sets KR_VERSION_VAL; 1 when the cache is absent or empty
   KR_VERSION_VAL=""
   [ -s "$KR_VERFILE" ] || return 1
@@ -1017,7 +1017,6 @@ kr_start_locked() {
     kr_status_write failed no-core
     return 1
   fi
-  kr_version_refresh
   # The gate: the core never runs a config that is not derived from an applied node
   # (ADR 0010). Without one there is nothing to start; the honest status is a stop,
   # not a direct run.
@@ -1187,10 +1186,6 @@ EOF
   fi
   _node=""
   kr_applied_read && _node=$KR_APPLIED_VAL
-  # The version cache is read, never refreshed here: a 2s poll must not run the core.
-  _ver=-
-  [ -x "$KR_BINDIR/xray" ] && kr_version_read && _ver=$KR_VERSION_VAL
-  [ -n "$_ver" ] || _ver=-
   _tp=off
   _rules=absent
   if command -v kr_tp_switch_on >/dev/null 2>&1; then
@@ -1227,8 +1222,6 @@ EOF
   echo "phase=$_phase"
   echo "pid=$_pid"
   echo "started=$_started"
-  echo "version=$_ver"
-  echo "core=$KR_BINDIR/xray"
   echo "conf=$KR_CONF"
   echo "log=$KR_LOG"
   echo "node=$_node"

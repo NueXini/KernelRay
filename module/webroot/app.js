@@ -22,7 +22,7 @@ var langPref = "auto"; // "auto" | "zh" | "en"; resolved against navigator.langu
 var themePref = "auto"; // "auto" | "light" | "dark"; resolved against the system when "auto"
 var DICT_ZH = {
   start: "启动", stop: "停止", follow: "跟随", pause: "暂停", refresh: "刷新",
-  pid: "进程", up: "运行时长", port: "端口", core: "核心", conf: "配置",
+  pid: "进程", up: "运行时长", port: "端口", conf: "配置",
   running: "运行中", stopped: "已停止", starting: "启动中", stopping: "停止中",
   failed: "启动失败", unknown: "未知",
   noBridge: "没有检测到 KernelSU 桥接，请从 KernelSU 管理器的模块页面打开本页面。",
@@ -119,7 +119,7 @@ var DICT_ZH = {
 };
 var DICT_EN = {
   start: "Start", stop: "Stop", follow: "Follow", pause: "Pause", refresh: "Refresh",
-  pid: "PID", up: "Uptime", port: "Ports", core: "Core", conf: "Config",
+  pid: "PID", up: "Uptime", port: "Ports", conf: "Config",
   running: "running", stopped: "stopped", starting: "starting", stopping: "stopping",
   failed: "failed", unknown: "unknown",
   noBridge: "KernelSU bridge not found. Open this page from the module card in the KernelSU manager.",
@@ -221,11 +221,11 @@ var $ = function (id) { return document.getElementById(id); };
 var els = {
   banner: $("banner"), badge: $("badge"), start: $("start"), stop: $("stop"),
   hint: $("hint"), pid: $("v-pid"), up: $("v-up"), port: $("v-port"),
-  core: $("v-core"), conf: $("v-conf"), log: $("log"), follow: $("follow"),
+  conf: $("v-conf"), log: $("log"), follow: $("follow"),
   logTabCore: $("logtab-core"), logTabModule: $("logtab-module"),
   logNav: $("lognav"), logTop: $("log-top"), logBottom: $("log-bottom"),
   refresh: $("refresh"), pause: $("pause"), toast: $("toast"),
-  lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"), lCore: $("l-core"),
+  lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"),
   lConf: $("l-conf"), lFollow: $("l-follow"), lPause: $("l-pause"),
   addNode: $("add-node"),
   nList: $("n-list"), nHint: $("n-hint"), lList: $("l-nodes"),
@@ -313,7 +313,6 @@ function label(key) {
   els.lPid.textContent = T.pid;
   els.lUp.textContent = T.up;
   els.lPort.textContent = T.port;
-  els.lCore.textContent = T.core;
   els.lConf.textContent = T.conf;
   els.lList.textContent = T.listTitle;
   els.editNode.textContent = editMode ? T.done : T.edit;
@@ -2092,7 +2091,6 @@ function renderStatus(kv) {
     ? uptime(Math.floor(Date.now() / 1000) - Number(kv.started))
     : "–";
   els.port.textContent = kv.socks ? "socks " + kv.socks + " · http " + kv.http : "–";
-  els.core.textContent = kv.version && kv.version !== "-" ? kv.version : (kv.core || "–");
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
     // Rule presence, not the switch preference: a core started while the switch was

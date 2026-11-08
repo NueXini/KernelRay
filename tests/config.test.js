@@ -995,7 +995,7 @@ check("rules cache: install records present=1 and remove records present=0", () 
   }
 });
 
-check("status: the poll never runs the core to learn its version", () => {
+check("status: the poll never runs the core", () => {
   const m = makeModule();
   const calls = path.join(m.dir, "version.calls");
   const core = [
@@ -1012,7 +1012,7 @@ check("status: the poll never runs the core to learn its version", () => {
   fs.chmodSync(path.join(m.dir, "bin", "xray"), 0o755);
   const kv = runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
-  if (!/^version=-$/m.test(kv)) { throw new Error(kv); }
+  if (/^version=/m.test(kv)) { throw new Error(kv); }
   if (fs.existsSync(calls)) {
     throw new Error("the poll ran the core: " + fs.readFileSync(calls, "utf8"));
   }

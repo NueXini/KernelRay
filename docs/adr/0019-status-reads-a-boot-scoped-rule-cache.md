@@ -60,9 +60,6 @@ of truth.**
 - `kr_status_kv` reads `runtime/status.json` once (one `awk`) instead of one `sed` per field.
 - `kr_settings_ports` parses both inbound ports in one `awk`; `kr_setting_port` remains the
   one-field interface for the other callers. The render uses the combined reader too.
-- The poll reads the cached version; it never runs `xray -version`. A missing cache reports
-  `version=-` until the next install/start refreshes it.
-- `core=` uses `$KR_BINDIR/xray` instead of a `$(kr_core)` subshell.
 
 ## Consequences
 
