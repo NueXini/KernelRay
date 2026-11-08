@@ -131,19 +131,27 @@ Protocol-specific fields:
 Identity is the tuple, lowercased on the host:
 
 ```
-protocol | address | port | credential…
+protocol | address | port | credential… | sni | host
 ```
 
 where the credential is `uuid` for vless/vmess, `password` for trojan, `method` + `password` for
-ss. `name`, `transport`, `security`, `sni` and the transport parameters are **not** part of it.
+ss; `sni` and `host` (the transport host header) join it lowercased and empty when absent. `name`,
+`transport`, `security`, `fingerprint`, `alpn` and the remaining transport parameters are **not**
+part of it.
+
+`sni` and `host` are identity because a CDN-fronted address routes by them: the address and port
+only name the edge, and the server the traffic actually reaches is picked by the SNI (for TLS)
+and the host header (for ws/http). Two links sharing address, port and credential but differing
+there are different nodes, not two descriptions of one.
 
 Consequences, all deliberate:
 
 - Re-importing the same node replaces it in place and keeps the original `id`; renaming a node
   and importing it again does not create a second entry.
-- Changing a node's SNI or transport in the URI produces the same identity, so *that* edit is
-  applied to the existing entry rather than creating a new one. The entry is marked `dirty`,
-  because the id alone would otherwise make the applied config look current.
+- Changing a node's transport, fingerprint or path in the URI produces the same identity, so
+  *that* edit is applied to the existing entry rather than creating a new one. The entry is
+  marked `dirty`, because the id alone would otherwise make the applied config look current.
+  Changing the `sni` or `host` is different: it is a different node and appends a new entry.
 - `id` values written by older builds (md5-style) are kept as-is when a node is matched by
   identity — the identity, not the hash, is what decides.
 

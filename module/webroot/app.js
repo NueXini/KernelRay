@@ -722,14 +722,18 @@ function parseLink(link) {
   return parseFail("不支持的协议：" + scheme);
 }
 
-// Identity decides deduplication: protocol + host + port + credential. Name, transport and
-// TLS parameters are presentation, not identity (see docs/state-schema.md).
+// Identity decides deduplication: protocol + host + port + credential + sni + ws host. Name,
+// transport and the remaining TLS parameters are presentation, not identity. The sni and the
+// transport host are identity because a CDN-fronted address routes by them: two links that
+// share address, port and credential but differ there reach different servers (see
+// docs/state-schema.md).
 function identityOf(node) {
   var cred;
   if (node.protocol === "ss") { cred = [node.method, node.password]; }
   else if (node.protocol === "trojan") { cred = [node.password]; }
   else { cred = [node.uuid]; }
   var parts = [node.protocol, String(node.address || "").toLowerCase(), node.port];
+  parts.push(String(node.sni || "").toLowerCase(), String(node.host || "").toLowerCase());
   for (var i = 0; i < cred.length; i++) {
     parts.push(cred[i] === null || cred[i] === undefined ? "" : String(cred[i]));
   }

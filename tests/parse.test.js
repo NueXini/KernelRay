@@ -280,6 +280,40 @@ check("identity: different credentials on the same host are different nodes", ()
   if (a === b) { throw new Error("uuid must be part of identity"); }
 });
 
+check("identity: a different SNI is a different node (CDN fronting selects the origin by SNI)", () => {
+  const a = P.idOf(P.parseLink(
+    "vless://u@edge.example.com:443?security=tls&sni=a.example.com&type=ws#one").node);
+  const b = P.idOf(P.parseLink(
+    "vless://u@edge.example.com:443?security=tls&sni=b.example.com&type=ws#two").node);
+  if (a === b) { throw new Error("sni must be part of identity"); }
+});
+
+check("identity: a different ws host is a different node", () => {
+  const a = P.idOf(P.parseLink(
+    "vless://u@edge.example.com:443?security=tls&type=ws&host=a.example.com#one").node);
+  const b = P.idOf(P.parseLink(
+    "vless://u@edge.example.com:443?security=tls&type=ws&host=b.example.com#two").node);
+  if (a === b) { throw new Error("host must be part of identity"); }
+});
+
+check("identity: sni and host case are not significant", () => {
+  const a = P.idOf(P.parseLink(
+    "vless://u@edge.example.com:443?security=tls&sni=A.Example.com&type=ws&host=CDN.Example.com#one").node);
+  const b = P.idOf(P.parseLink(
+    "vless://u@edge.example.com:443?security=tls&sni=a.example.com&type=ws&host=cdn.example.com#two").node);
+  eq(a, b, "id");
+});
+
+check("input: two links sharing address/port/uuid but differing in sni/host import as two nodes", () => {
+  const rows = P.parseInput(
+    "vless://u@edge.example.com:443?security=tls&sni=a.example.com&type=ws&host=a.example.com#one\n" +
+    "vless://u@edge.example.com:443?security=tls&sni=b.example.com&type=ws&host=b.example.com#two");
+  eq(rows.length, 2, "row count");
+  eq(rows[0].node.dupOf, undefined, "first is not a duplicate");
+  eq(rows[1].node.dupOf, undefined, "second is not a duplicate");
+  if (rows[0].node.id === rows[1].node.id) { throw new Error("ids must differ"); }
+});
+
 check("identity: host case is not significant", () => {
   const a = P.idOf(P.parseLink("trojan://pw@Host.Example.com:443#a").node);
   const b = P.idOf(P.parseLink("trojan://pw@host.example.com:443#b").node);
