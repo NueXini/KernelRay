@@ -93,9 +93,19 @@ is still direct** (rules not yet installed) and write the answer to `runtime/nod
 the takeover render puts it into the DNS module's `hosts`, so the core answers the
 node domain locally. The network-provided resolver is the thing a polluted network
 poisons, so the first ask is Ali DoH (`https://223.5.5.5/resolve`, an IP literal that
-needs no lookup of its own) via `curl`, taking the first A record to match the DNS
-module's `UseIPv4`; devices without `curl` — and calls that fail — fall back to the
-system resolver (`ping`). Resolution failure is not fatal — the direct-DoH routing
+needs no lookup of its own) via `/data/adb/ksu/bin/busybox wget`, taking the first A
+record to match the DNS module's `UseIPv4`. KernelSU's busybox ships the wget applet,
+but symlinks only `busybox`/`ksud`/`resetprop` into `/data/adb/ksu/bin`, so PATH has
+neither `wget` nor `curl` and the ask names the binary outright.
+Certificate verification is off (`--no-check-certificate`): Android's busybox has no CA
+store to verify against, so a verified ask would almost always fail back to the system
+resolver — the very thing this pin exists to avoid. An unverified ask to a fixed IP is
+still stronger than that fallback: a forged answer needs an on-path attacker, pollution
+only needs the resolver. `-T 4` bounds reads only, so a `timeout 4` wrapper (the same
+busybox) gives the ask a hard whole-call budget — a connect on a hostile network can
+otherwise hang for tens of seconds, and a start must not wait on it. A failed ask is
+logged. A device without KernelSU's busybox — and calls that fail — fall
+back to the system resolver (`ping`). Resolution failure is not fatal — the direct-DoH routing
 rule remains as the fallback, and the log says so. A stale pin (node IP changed, or
 the device changed network) is rebuilt by toggling the switch.
 

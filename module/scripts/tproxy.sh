@@ -35,6 +35,10 @@ KR_CN_DNS1=223.5.5.5
 KR_CN_DNS2=119.29.29.29
 # Ali DoH's JSON API. An IP literal, so asking it needs no lookup of its own.
 KR_DOH_RESOLVE=https://223.5.5.5/resolve
+# KernelSU's busybox carries the wget applet, but PATH carries neither wget nor curl --
+# KernelSU symlinks only busybox/ksud/resetprop into /data/adb/ksu/bin -- so the ask
+# names the binary outright. Overridable so a test can stub it.
+KR_BUSYBOX=${KR_BUSYBOX:-/data/adb/ksu/bin/busybox}
 
 kr_tp_log() { kr_log "$*"; }
 
@@ -415,9 +419,16 @@ kr_tp_json_escape() {
 # the result is pinned into the core DNS module's hosts so the node connection never
 # depends on an upstream resolver (the bootstrap deadlock, see docs/adr/0008). The
 # system resolver is exactly what a polluted network poisons, so the first ask is the
-# fixed DoH endpoint via curl (A records only, matching the DNS module's UseIPv4);
-# a missing curl or a failed call falls back to the system resolver. Prints the ip,
-# or nothing when the host is a literal or unresolvable.
+# fixed DoH endpoint via $KR_BUSYBOX wget (A records only, matching the DNS module's
+# UseIPv4); KernelSU's busybox ships the applet, PATH ships neither wget nor curl.
+# TLS verification is off
+# (--no-check-certificate): Android's busybox has no CA store to verify against, and an
+# unverified ask over a fixed IP beats falling back to the resolver that pollution
+# poisons (docs/adr/0008). -T bounds reads only; a connect on a hostile network can
+# otherwise hang for tens of seconds (observed: ~50 s), so the busybox timeout applet
+# gives the ask back its hard whole-call budget -- the curl --max-time semantics. A
+# missing busybox or a failed ask falls back to the system
+# resolver. Prints the ip, or nothing when the host is a literal or unresolvable.
 kr_tp_resolve_node() {
   _host=$(kr_meta_get host 2>/dev/null)
   case "$_host" in
@@ -425,13 +436,16 @@ kr_tp_resolve_node() {
     *[!0-9.]*) ;; # a domain: resolve it
     *) return 0 ;; # an ipv4 literal
   esac
-  if command -v curl >/dev/null 2>&1; then
-    _out=$(curl -sS --max-time 4 --get --data-urlencode "name=$_host" \
-      --data-urlencode "type=A" "$KR_DOH_RESOLVE" 2>/dev/null |
-      grep -o '"type":1,"data":"[0-9.]*"' | head -n 1 |
-      sed 's/.*"data":"\([0-9.]*\)".*/\1/')
-    [ -n "$_out" ] && { echo "$_out"; return 0; }
-  fi
+  # Percent-encode the query value; % first, so no later rule double-encodes.
+  _enc=$(printf '%s' "$_host" | sed -e 's/%/%25/g' -e 's/&/%26/g' -e 's/=/%3D/g' \
+    -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/ /%20/g')
+  _out=$("$KR_BUSYBOX" timeout 4 "$KR_BUSYBOX" wget -q -T 4 -t 1 -O - --no-check-certificate \
+    "$KR_DOH_RESOLVE?name=$_enc&type=A" 2>/dev/null |
+    grep -o '"type":1,"data":"[0-9.]*"' | head -n 1 |
+    sed 's/.*"data":"\([0-9.]*\)".*/\1/')
+  [ -n "$_out" ] && { echo "$_out"; return 0; }
+  # Not kr_log: this function's stdout is its return value.
+  kr_log_file "the DoH ask failed; falling back to the system resolver"
   _out=$(ping -c1 -W2 "$_host" 2>/dev/null | sed -n 's/^[^(]*(\([0-9.]*\)).*/\1/p' | head -n 1)
   [ -n "$_out" ] && echo "$_out"
 }

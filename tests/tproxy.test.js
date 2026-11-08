@@ -73,9 +73,16 @@ const fakeSettings = [
 ].join("\n");
 
 // No network in these tests: the node-host resolve (kr_tp_pin_node) must fail fast instead
-// of waiting out curl's --max-time and ping's -W2.
-const fakeCurl = [
+// of waiting out busybox wget's -T and ping's -W2. FAKE_WGET_JSON, when set, is the DoH answer
+// the stub prints; without it the stub fails like an unreachable network. The stub is
+// named "busybox" because the resolve calls $KR_BUSYBOX (overridden to the stub) wget.
+const fakeWget = [
   "#!/bin/sh",
+  'printf "%s\\n" "$(basename "$0") $*" >>"$FAKE_LOG"',
+  // The resolve wraps the ask in `busybox timeout 4 busybox wget ...`; play the wrapper
+  // by re-execing with the inner argv, so the logged ask line is the inner one.
+  'if [ "$1" = timeout ]; then shift 2; exec "$0" "$@"; fi',
+  '[ -n "$FAKE_WGET_JSON" ] && { printf "%s\\n" "$FAKE_WGET_JSON"; exit 0; }',
   "exit 1",
   ""
 ].join("\n");
@@ -146,7 +153,7 @@ function makeModule() {
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   for (const [name, body] of [["iptables", fakeIpt], ["ip6tables", fakeIpt],
-    ["ip", fakeIp], ["settings", fakeSettings], ["curl", fakeCurl], ["ping", fakePing]]) {
+    ["ip", fakeIp], ["settings", fakeSettings], ["busybox", fakeWget], ["ping", fakePing]]) {
     fs.writeFileSync(path.join(stubs, name), body, "utf8");
     fs.chmodSync(path.join(stubs, name), 0o755);
   }
@@ -168,6 +175,7 @@ function runShell(m, body, extraEnv) {
     env: Object.assign({}, process.env, {
       KR_MODDIR: shPath(m.dir),
       KR_TEST_SCRIPT: shPath(script),
+      KR_BUSYBOX: shPath(path.join(m.dir, "stubs", "busybox")),
       FAKE_LOG: shPath(path.join(m.dir, "iptables.log")),
       FAKE_IP_DEF: "default via 10.0.2.2 dev wlan0",
       PATH: posixPathEnv(path.join(m.dir, "stubs")),
@@ -450,6 +458,47 @@ check("engage: with no conflict the takeover config is on disk before the core s
     eq(status(m).phase, "idle", "phase");
     if (!fs.existsSync(m.tproxy)) { throw new Error("switch file must survive a successful engage"); }
   });
+});
+
+// ---- the node pin (ADR 0008) -------------------------------------------------------------
+
+check("pin: the DoH answer via wget lands in runtime/nodeip, with the ask on record", () => {
+  const m = makeModule();
+  writeApplied(m);
+  const nodeip = path.join(m.dir, "runtime", "nodeip");
+  runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_pin_node',
+    { FAKE_WGET_JSON: '{"Status":0,"Answer":[{"type":1,"data":"203.0.113.9"}]}' });
+  eq(fs.readFileSync(nodeip, "utf8").trim(), "203.0.113.9", "nodeip content");
+
+  // The module log records the pin; the resolve path itself stayed silent because its
+  // stdout is the return value.
+  const log = fs.readFileSync(m.log, "utf8");
+  if (!log.includes("pinned node address 203.0.113.9")) {
+    throw new Error("the pin is not logged: " + log);
+  }
+
+  // The ask's shape is load-bearing: type=A matches the DNS module's UseIPv4, and the
+  // verification is off on purpose (docs/adr/0008) -- neither may regress silently.
+  const ask = fakeLog(m).split("\n").find((l) => l.includes("wget -q"));
+  if (!ask) { throw new Error("busybox wget was never called"); }
+  for (const part of ["--no-check-certificate", "name=n.example.com", "type=A"]) {
+    if (!ask.includes(part)) { throw new Error("the ask is missing " + part + ": " + ask); }
+  }
+});
+
+check("pin: a failed DoH ask logs the fallback and answers nothing", () => {
+  const m = makeModule();
+  writeApplied(m);
+  const out = runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_pin_node');
+  if (fs.existsSync(path.join(m.dir, "runtime", "nodeip"))) {
+    throw new Error("nothing to pin, nodeip must not exist");
+  }
+  if (out.includes("pinned node address")) { throw new Error("nothing was pinned"); }
+  if (!fs.existsSync(m.log)) { throw new Error("the fallback is not logged"); }
+  const log = fs.readFileSync(m.log, "utf8");
+  if (!log.includes("the DoH ask failed; falling back to the system resolver")) {
+    throw new Error("the fallback is not logged: " + log);
+  }
 });
 
 // ---- the switch is a pure preference (ADR 0011) ------------------------------------------
