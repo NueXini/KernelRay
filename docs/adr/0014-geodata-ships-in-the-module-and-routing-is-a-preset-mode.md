@@ -67,3 +67,14 @@ directory, so the two cannot drift apart — and the module stopped exporting th
 that was verified on device. The decision above is otherwise unchanged — the data still ships
 inside the ZIP and the set is still pinned per release — but the device no longer names the
 pinned set: the release notes do, and Settings reports presence rather than a version line.
+
+## Amendment — 0021
+
+分流模式 is no longer two values: 大陆直连去广告 (`cnadblock`) renders 大陆直连's rules plus the
+`geosite:category-ads-all` parts, as a mode of its own rather than a switch (docs/adr/0021). The
+option rejected above — "`geosite:category-ads-all` → `block` bundled into 大陆直连" — stays
+rejected as written: 大陆直连 itself is unchanged and blocking lives in a mode whose name says so.
+The template's `block` outbound is no longer unused, and `category-ads-all` is now a category
+this version names. 大陆直连去广告 is also the default the installer creates, so the "全局 is the
+default" sentence above describes an earlier version: 全局 is now a choice, and the absent file
+only means it.

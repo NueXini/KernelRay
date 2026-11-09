@@ -30,6 +30,7 @@ node tests/theme.test.js               # 14 theme tests passing
 node tests/config.test.js              # 67 config tests passing（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
 node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
+node tests/adblock.test.js             # 15 ad-blocking tests passing（大陆直连去广告渲染 + 失败关闭）
 ```
 
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
@@ -179,20 +180,25 @@ adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh tproxy s
 tproxy透明代理开关，或 `tproxy off`，**下次启动核心时生效**。**规则在而核心死 = 断网**
 （fail-closed，设计行为）：再启动核心即恢复接管；想直连就关掉开关再启动。
 
-**分流模式（v0.9）**：和 tproxy 开关不同，它**立即生效**——写偏好 → 重渲染 → `-test` →
-重启核心，启动失败会把偏好一起退回。偏好是 `runtime/route`（`cn` 或不存在 = `global`）：
+**分流模式**：和 tproxy 开关不同，它**立即生效**——写偏好 → 重渲染 → `-test` →
+重启核心，启动失败会把偏好一起退回。偏好是 `runtime/route`，内容是模式名（`cn` / `cnadblock`，
+不存在 = `global`）；安装时若还没设过，安装器会写成 `cnadblock`（缺 geo 数据时跳过，留 `全局`）：
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing status'
 # mode=cn / effective=cn / geodata=ok
+# 大陆直连去广告: mode=cnadblock / effective=cnadblock / geodata=ok（数据缺失时 effective 也不降级）
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing cn'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing cnadblock'
 adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/KernelRay/config.json"'
 adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.com"'
 ```
 
 `bin/` 里两个 `.dat`（就在核心旁边）由 `scripts/pack.sh` 强制要求（`xray -test` 会加载它们）。设备上删掉一个
 再 `routing cn`：CLI 拒绝切换；若偏好已是 `cn` 而文件没了，启动会降级成 `全局` 并在
-`logs/kernelray.log` 留一行 `geo data missing`——**不会**因为缺文件起不来。
+`logs/kernelray.log` 留一行 `geo data missing`——**不会**因为缺文件起不来。`cnadblock` 正好相反：
+CLI 同样拒绝切换，而偏好已是 `cnadblock` 时**启动会被拒绝**（`failed config-invalid`，模块日志一行、
+stderr 一句 `geo data missing`，WebUI toast 同一句）——缺数据时它绝不降级成 `大陆直连`。
 
 **日志等级**：只写 `runtime/loglevel`，**下次启动核心时生效**（ADR 0015）；运行中的核心要
 Stop→Start，停着的核心下次 Start 就带上。`warning` 是默认值（文件不存在），`loglevel status`

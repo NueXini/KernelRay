@@ -43,6 +43,9 @@ kr_dirs
 # The tproxy switch defaults to on (ADR 0011): the core's next start after a node is
 # applied takes the device over. An update recreates it the same way.
 command -v kr_tp_default_on >/dev/null 2>&1 && kr_tp_default_on
+# The 分流模式 defaults to 大陆直连去广告 (ADR 0021), the same install-time pattern. With the geo
+# data missing the default stays 全局, so the core can still start.
+command -v kr_route_default >/dev/null 2>&1 && kr_route_default
 # No applied node at install time, so this is a refusal by design (ADR 0010): keep its
 # "apply a node first" message out of the installer output.
 kr_ensure_config >/dev/null 2>&1
@@ -55,9 +58,13 @@ ui_print "  starting the core with a node applied also brings tproxy up."
 ui_print "- TPROXY transparent proxy is ON by default: every core start (the WebUI's Start"
 ui_print "  button) routes device traffic through the applied node. Turn it off in the"
 ui_print "  WebUI Settings (tproxy透明代理) if you only want the local socks/http inbounds."
-ui_print "- 分流模式 (Settings) defaults to 全局: everything through the applied node."
+ui_print "- 分流模式 (Settings) defaults to 大陆直连去广告: mainland domains and addresses go"
+ui_print "  direct, everything else through the node, and ad domains stop resolving. Switch to"
+ui_print "  全局 if you want everything through the applied node."
 ui_print "  大陆直连 sends mainland domains and addresses direct, with DNS split to match;"
 ui_print "  switching it re-renders the config and restarts a running core."
+ui_print "  大陆直连去广告 (Direct-CN-Adblock) adds ad blocking to 大陆直连; with the geo data"
+ui_print "  missing it refuses to start instead of degrading to 全局."
 ui_print "- Config: /data/adb/modules/$KR_ID/config.json (generated; do not hand-edit)"
 ui_print "- Log:    /data/adb/modules/$KR_ID/logs/xray.log"
 ui_print "! Everything lives in this module dir. A module update replaces it whole,"

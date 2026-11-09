@@ -577,7 +577,7 @@ kr_render_config() { # <outbound-file> [route-mode override]
     # The 空转 form keeps the 分流 -- a local socks client gets it too -- but has no dns
     # inbound, so only the geo rules are authored (docs/adr/0014). 全局 renders no routing.
     kr_route_effective "$_route"
-    if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+    if [ "$KR_ROUTE_CN" = 1 ]; then
       kr_tp_routing_block 0 "" ""
       _routing=$KR_ROUTING
     fi
@@ -719,6 +719,23 @@ kr_applied_write() { # <node id>
   return 0
 }
 
+# The message for a `-test` rejection. While 大陆直连去广告 is the mode being rendered, the ad
+# parts name geosite:category-ads-all, so the one thing that makes the test fail in practice is
+# the geo data being gone -- and that mode never degrades, so the start is refused instead
+# (docs/adr/0021). The message is then one short sentence, the same words the WebUI's hint and
+# the toast use; every other rejection keeps the generic one. The flag comes from the render, so
+# only the render paths reach this with it in hand.
+kr_config_test_failed() { # <on disk|generated>
+  if [ "${KR_ROUTE_BLOCK_ADS:-0}" = 1 ] && ! kr_geodata_ok; then
+    kr_log Routing "geo data missing; cnadblock cannot start"
+    echo "geo data missing" >&2
+    return 0
+  fi
+  kr_log Config "xray -test rejected the $1 config"
+  echo "config test failed (see $KR_LOG)" >&2
+  return 0
+}
+
 # The config this start would run: rendered from <applied-id> in the form the live rules
 # demand, and known to pass `xray -test`. Sets KR_CANDIDATE to the tested candidate's path,
 # or to "" when config.json already holds exactly those bytes -- the caller then has nothing
@@ -765,6 +782,16 @@ kr_config_candidate() { # <applied-id> [route-mode override]
     return 1
   fi
   chmod 600 "$_cand" 2>/dev/null
+  # 大陆直连去广告 never degrades, and the config on disk may already be the tested cnadblock
+  # form from before the data went away: the tested marker would then let the start through and
+  # the core would die on its own, without the one sentence this mode's failure owes the user.
+  # The render above set the flag, so this runs for exactly the renders that carry the ad parts
+  # (docs/adr/0021).
+  if [ "${KR_ROUTE_BLOCK_ADS:-0}" = 1 ] && ! kr_geodata_ok; then
+    rm -f "$_cand"
+    kr_config_test_failed generated
+    return 2
+  fi
   if cmp -s "$_cand" "$KR_CONF"; then
     # Same bytes: nothing to write and nothing to restart. Only the test result may be
     # unknown -- a config written before this marker existed, or one edited by hand -- and
@@ -775,8 +802,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
     fi
     if ! "$KR_BINDIR/xray" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
       rm -f "$_cand"
-      kr_log Config "xray -test rejected the config on disk"
-      echo "config test failed (see $KR_LOG)" >&2
+      kr_config_test_failed "on disk"
       return 2
     fi
     kr_conf_install "$_form"
@@ -785,8 +811,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
   fi
   if ! "$KR_BINDIR/xray" run -test -c "$_cand" >>"$KR_LOG" 2>&1; then
     rm -f "$_cand"
-    kr_log Config "xray -test rejected the generated config"
-    echo "config test failed (see $KR_LOG)" >&2
+    kr_config_test_failed generated
     return 2
   fi
   KR_CANDIDATE=$_cand
@@ -1307,10 +1332,10 @@ kr_cli() {
     ports) kr_apply_ports ;;
     routing)
       case "${1:-status}" in
-        global|cn) kr_route_set "$1" ;;
+        global|cn|cnadblock) kr_route_set "$1" ;;
         status) kr_route_status ;;
         *)
-          echo "usage: kernelray.sh routing {global|cn|status}" >&2
+          echo "usage: kernelray.sh routing {global|cn|cnadblock|status}" >&2
           return 2
           ;;
       esac
@@ -1344,7 +1369,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]|mlog append <tag> <message...>}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac

@@ -24,7 +24,7 @@ its Apply button is the switch gesture).
 | `runtime/config.form` | shell | the form those bytes were rendered in: `1` takeover, `0` 空转 (ADR 0017) |
 | `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route`, `boot` (the boot that wrote it; a reader treats another boot's file as `idle`, docs/adr/0018) |
 | `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
-| `runtime/route` | shell | the persisted 分流模式, `cn` when present, absent = 全局 (docs/adr/0014) |
+| `runtime/route` | shell | the persisted 分流模式, read from the file's content: `cn` or `cnadblock`, absent = 全局; the installer writes `cnadblock` when it is unset (docs/adr/0014, docs/adr/0021) |
 | `runtime/rules` | shell | the boot-scoped cache of the last real rule-presence check: the status poll reads it; install/remove and a cache miss write it; the start path still asks iptables (docs/adr/0019) |
 | `runtime/loglevel` | shell | the persisted 日志等级; absent = 警告 (docs/adr/0015) |
 | `bin/` | repo | the core and the geo data it loads: `xray`, `geosite.dat`, `geoip.dat` (docs/adr/0014) |
@@ -70,8 +70,8 @@ and four outbounds —
   `,"__KERNELRAY_DNS_OUTBOUND__"` in `outbounds`, plus the top-level `"dns"` and `"routing"`
   keys whose values are quoted placeholders. With takeover on the line is replaced by the
   real block (authored in `tproxy.sh`); with takeover off the line disappears — except
-  `routing`, which exists in both forms since ADR 0014 (spliced in 大陆直连, dropped in 全局)
-  and is handled by the renderer before the form branch. Both results are valid JSON, and so
+  `routing`, which exists in both forms since ADR 0014 (spliced in the two geo modes, dropped
+  in 全局) and is handled by the renderer before the form branch. Both results are valid JSON, and so
   is the template itself — every placeholder is a quoted string.
 - `config.json` never contains a placeholder. `kr_render_config` refuses a template without
   the outbound one.
@@ -92,7 +92,8 @@ either form with `KR_TAKEOVER=1|0`; the start-time engagement forces the form it
 enforce.
 
 The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
-`dns-out` outbound; the `dns` module (upstream depends on the 分流模式, below) carrying
+`dns-out` outbound; the `dns` module (upstream depends on the 分流模式, and 大陆直连去广告 adds
+its `hosts` sink, below) carrying
 `tag: "dns"` — the name every DNS routing rule below matches on, so the core stamps the
 module's own upstream queries with it instead of its internal `xray.system.<uuid>`; and the
 routing rules — the applied node's hostname resolves through `direct` (skipped when the host is an IP
@@ -101,8 +102,9 @@ literal), the DNS module's upstream queries go through `proxy`, and port 53 tcp/
 19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is written by
 the UI renderer, which cannot know the switch state.
 
-The 空转 form keeps the 分流 rules when the mode is 大陆直连 (there is no `dns` inbound, so only
-the geo rules are authored); in 全局 it has no `routing` key at all.
+The 空转 form keeps the 分流 rules when the mode is 大陆直连 or 大陆直连去广告 (there is no `dns`
+inbound, so only the routing rules are authored — the ad sink is the takeover form's alone); in
+全局 it has no `routing` key at all.
 
 Applying a node while the rules are up renders the takeover form — a no-takeover config
 would lose routing for the node outbound. Since ADR 0011 the switch (`kernelray.sh tproxy
@@ -284,29 +286,49 @@ are reset together.
 
 ## 分流模式 (routing mode)
 
-`kernelray.sh routing global|cn` writes the preference and re-derives the config at once
-([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)): render the
-new form → `xray -test` → write `runtime/route` → swap (the `ports` path, including its stop,
-restart and rollback). `global` is the absent file; `cn` writes `cn\n`, mode `0600`.
+`kernelray.sh routing global|cn|cnadblock` writes the preference and re-derives the config at
+once ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md),
+[ADR 0021](adr/0021-ad-blocking-is-a-third-routing-mode.md)): render the new form → `xray -test`
+→ write `runtime/route` → swap (the `ports` path, including its stop, restart and rollback).
+`global` is the absent file; `cn` and `cnadblock` write their own name plus a newline, mode
+`0600` — the file is a value, not a presence flag.
 
-- **Refusals.** `routing cn` exits non-zero, changing nothing, when the geo data is missing
-  or when `-test` rejects the candidate. A swap that fails restores the preference to the old
-  mode *before* the rollback starts the old config, because that start re-derives the config
-  from the mode — restoring the bytes without the preference would only render the failing mode
-  again (ADR 0017).
+- **Refusals.** `routing cn` and `routing cnadblock` exit non-zero, changing nothing, when the
+  geo data is missing or when `-test` rejects the candidate. A swap that fails restores the
+  preference to the old mode *before* the rollback starts the old config, because that start
+  re-derives the config from the mode — restoring the bytes without the preference would only
+  render the failing mode again (ADR 0017).
 - **No applied node.** There is nothing to re-render: the preference is written and the next
   apply renders it.
+- **Default.** The installer writes `cnadblock` when `runtime/route` is still unset
+  (`kr_route_default`, the `kr_tp_default_on` pattern), and skips it while the geo data is
+  missing — then 全局 stays the mode, because a default the core refuses to start with is worse
+  than one that does less (docs/adr/0021). A user's 全局 is an absent file, so the next install
+  or update recreates the default.
 - **Degradation.** `kr_route_effective` is what the render may use: `cn` only while
   `bin/geosite.dat` and `bin/geoip.dat` both exist and are non-empty, else `global`
   plus a line in `kernelray.log`. The preference is never rewritten — a start that finds the
-  data gone runs everything through the node rather than a config that cannot load.
+  data gone runs everything through the node rather than a config that cannot load. **`cnadblock`
+  never degrades**: a mode whose name promises blocking must not render as 大陆直连, so the
+  missing file is left to `xray -test` and the start is refused instead — `failed
+  config-invalid`, one `Routing` line in `kernelray.log`, `geo data missing` on stderr for the
+  WebUI's toast, and the switch refuses the same way up front. That is the one deliberate
+  departure from 0014's "never a dead core" (ADR 0021). The same function sets `KR_ROUTE_CN`
+  and `KR_ROUTE_BLOCK_ADS`, which the DNS and routing builders read instead of comparing mode
+  strings.
 - **The blocks.** 大陆直连 adds to the takeover form: two domestic resolvers
   (`223.5.5.5`, `119.29.29.29`) filtered by `expectIPs: ["geoip:cn"]` for `domains:
   ["geosite:cn"]`, with the DoH kept as the fallback for everything else; a routing rule that
   sends those resolvers' own queries `direct`; `domainStrategy: IPIfNonMatch`; and
   `geoip:private`, `geosite:private`, `geosite:cn`, `geoip:cn` → `direct`. The 空转 form gets
-  the last four only. 全局 keeps the pre-0014 blocks byte for byte (`AsIs`, one DoH, three
-  rules).
+  the last four only. 大陆直连去广告 adds two more to that render: `dns.hosts["geosite:category-ads-all"]
+  = "#3"` — the DNS module answers an empty response with rcode 3 (NXDOMAIN) instead of
+  resolving, so an ad domain never gets an address (`#<n>` needs core ≥ 25.7.23) — and
+  `{"domain": ["geosite:category-ads-all"], "outboundTag": "block"}`, placed after the
+  dns/port-53 group and before the geo rules: first match wins, so a mainland ad domain must not
+  fall into `geosite:cn` → `direct`, and a resolver query must not be swallowed by the block.
+  The 空转 form gets the routing rule alone (no dns module, no sink). 全局 keeps the pre-0014
+  blocks byte for byte (`AsIs`, one DoH, three rules).
 - **The asset path.** Nothing is exported. `bin/` holds the core and its data, and with
   `XRAY_LOCATION_ASSET` unset the core resolves `geosite.dat`/`geoip.dat` from its own
   executable's directory — 26.10.29 searches there, not the cwd (verified on device: a core in

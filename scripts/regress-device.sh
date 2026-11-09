@@ -50,13 +50,14 @@ expect() { # <name> <got> <want>
   if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "got '$2' want '$3'"; fi
 }
 
-reset_all() { # clean state: stopped, no node, tproxy on, no rules
+reset_all() { # clean state: stopped, no node, tproxy on, no rules, the install default mode
   $S tproxy off >/dev/null 2>&1
   $S stop >/dev/null 2>&1
   $S start >/dev/null 2>&1     # switch off: takes stale rules down
   $S stop >/dev/null 2>&1
   $S unapply >/dev/null 2>&1
   $S tproxy on >/dev/null 2>&1
+  $S routing cnadblock >/dev/null 2>&1   # what the installer leaves on a fresh install
   : > "$L" 2>/dev/null
 }
 
@@ -235,6 +236,22 @@ grep -q geosite:cn "$M/config.json" && bad "P1-11c degraded to global" "cn rules
 mv /data/local/tmp/geoip.bak "$M/bin/geoip.dat"
 $S routing global >/dev/null 2>&1
 
+# P1-13: missing geo data with the cnadblock preference -> the start is refused, not degraded
+# (docs/adr/0021: a mode named 去广告 must not silently run as 大陆直连)
+$S routing cnadblock >/dev/null 2>&1
+mv "$M/bin/geosite.dat" /data/local/tmp/geosite.bak
+$S stop >/dev/null 2>&1
+r=$($S start 2>&1); rc=$?
+expect "P1-13a refused" "$rc" "1"
+echo "$r" | grep -qx "geo data missing" && ok "P1-13b message" || bad "P1-13b message" "$r"
+# status.json says failed/config-invalid; the kv's state comes from the live process, so it
+# reads stopped -- the phase is what names the reason.
+expect "P1-13c state" "$(state)" "stopped"
+expect "P1-13d phase" "$(phase)" "config-invalid"
+grep -q "cnadblock cannot start" "$KL" && ok "P1-13e logged" || bad "P1-13e logged" "$(tail -2 "$KL" | tr '\n' ' ')"
+mv /data/local/tmp/geosite.bak "$M/bin/geosite.dat"
+$S routing global >/dev/null 2>&1
+
 # P1-12: no applied node -> refuse, no rules
 $S stop >/dev/null 2>&1
 $S unapply >/dev/null 2>&1
@@ -356,6 +373,18 @@ if [ "$(cat /tmp/pin.t)" = "$(cat /tmp/stop.t)" ]; then
 else
   ok "P2-20 pin order"
 fi
+
+# P2-21: cnadblock renders the ad sink and the block rule (only the real core can prove it
+# accepts the `#3` hosts value)
+$S routing global >/dev/null 2>&1
+$S routing cnadblock >/dev/null 2>&1
+# -F: the config is compact JSON, and toybox grep has no \| alternation in BRE.
+grep -qF '"geosite:category-ads-all":"#3"' "$M/config.json" && \
+  ok "P2-21a dns sink" || bad "P2-21a dns sink" "no ad sink in config.json"
+grep -qF '"domain":["geosite:category-ads-all"],"outboundTag":"block"' "$M/config.json" && \
+  ok "P2-21b block rule" || bad "P2-21b block rule" "no block rule in config.json"
+expect "P2-21c routing=cnadblock" "$($S status | sed -n 's/^routing=//p')" "cnadblock"
+$S routing global >/dev/null 2>&1
 
 # ---- summary ----
 echo "===== summary: $pass passed, $fail failed"

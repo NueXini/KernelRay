@@ -101,10 +101,11 @@ var DICT_ZH = {
   portsSaving: "正在应用端口…", portsSaved: "端口已应用",
   portsSave: "保存",
   setProxy: "代理与路由", setRouteMode: "模式",
-  routeGlobal: "全局", routeCn: "大陆直连",
-  routeGlobalHint: "所有流量都走已应用的节点（默认）。",
+  routeGlobal: "全局", routeCn: "大陆直连", routeCnAdblock: "大陆直连去广告",
+  routeGlobalHint: "所有流量都走已应用的节点。",
   routeCnHint: "大陆的域名与 IP 直连，其余走节点；DNS 也随之分流。切换后立即重写配置并重启核心。",
   routeCnNoGeodata: "geo 数据缺失（bin/geosite.dat、geoip.dat）：大陆直连当前按全局渲染，补齐文件后才真正生效。",
+  routeGeoMissing: "geo 数据缺失",
   routeSwitching: "正在切换分流模式…",
   addTitle: "添加节点",
   addPlaceholder: "vless://…",
@@ -199,10 +200,11 @@ var DICT_EN = {
   portsSaving: "Applying ports…", portsSaved: "Ports applied",
   portsSave: "Save",
   setProxy: "Proxy & routing", setRouteMode: "Mode",
-  routeGlobal: "Global", routeCn: "Direct-CN",
-  routeGlobalHint: "Every destination goes through the applied node (the default).",
+  routeGlobal: "Global", routeCn: "Direct-CN", routeCnAdblock: "Direct-CN-Adblock",
+  routeGlobalHint: "Every destination goes through the applied node.",
   routeCnHint: "Mainland domains and addresses go direct and everything else goes through the node, with DNS split to match. Switching re-renders the config and restarts the core.",
   routeCnNoGeodata: "Geo data is missing (bin/geosite.dat, geoip.dat): Direct-CN renders as Global until the files are back.",
+  routeGeoMissing: "geo data missing",
   routeSwitching: "Switching routing mode…",
   addTitle: "Add node",
   addPlaceholder: "vless://…",
@@ -254,6 +256,7 @@ var els = {
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
   lSetProxy: $("l-set-proxy"), lSetRouteMode: $("l-set-route-mode"),
   selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
+  lRouteCnAdblock: $("l-route-cnadblock"),
   setRouteHint: $("set-route-hint"),
   tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
   lSetTp: $("l-set-tp"), setTpHint: $("set-tp-hint"), setTpSwitch: $("set-tp-switch")
@@ -353,6 +356,7 @@ function label(key) {
   els.lSetRouteMode.textContent = T.setRouteMode;
   els.lRouteGlobal.textContent = T.routeGlobal;
   els.lRouteCn.textContent = T.routeCn;
+  els.lRouteCnAdblock.textContent = T.routeCnAdblock;
   els.lSetTp.textContent = T.setTp;
   els.tpRetry.textContent = T.tpRetry;
   els.tabbar.setAttribute("aria-label", T.navLabel);
@@ -2156,14 +2160,21 @@ function renderStatus(kv) {
 
   // The 分流模式 follows the preference (kv.route). kv.routing is what the config may
   // actually use, and the two differ only while the geo data is missing (ADR 0014): that
-  // is the one case the hint under the select has to explain.
-  var routeMode = kv.route === "cn" ? "cn" : "global";
+  // is the one case the hint under the select has to explain. 大陆直连去广告 never degrades
+  // -- missing data means the core will not start (ADR 0021) -- so its hint is either the
+  // one short sentence or nothing at all, and an empty hint takes its row with it.
+  var routeMode = routeValue(kv.route);
   els.selRoute.value = routeMode;
+  var routeHint = "";
   if (routeMode === "cn") {
-    els.setRouteHint.textContent = kv.geodata === "missing" ? T.routeCnNoGeodata : T.routeCnHint;
-  } else {
-    els.setRouteHint.textContent = T.routeGlobalHint;
+    routeHint = kv.geodata === "missing" ? T.routeCnNoGeodata : T.routeCnHint;
+  } else if (routeMode === "global") {
+    routeHint = T.routeGlobalHint;
+  } else if (kv.geodata === "missing") {
+    routeHint = T.routeGeoMissing;
   }
+  els.setRouteHint.textContent = routeHint;
+  els.setRouteHint.hidden = !routeHint;
 
   // The 日志等级 comes from the shell, not localStorage: the select shows the saved
   // preference, and the hint appears only while a running core still carries the old level
@@ -2240,6 +2251,12 @@ function setLogSource(source) {
   if (lastKv) { size = source === "module" ? lastKv.mlogsize : lastKv.logsize; }
   refreshLog(size);
 }
+
+// The three 分流模式 values the shell can write (docs/adr/0021). A value this page does not
+// know reads as 全局, the absent-file mode, so a hand-edited runtime/route can never leave the
+// select blank. 全局 is no longer the default: the installer writes `cnadblock`.
+var ROUTE_MODES = ["global", "cn", "cnadblock"];
+function routeValue(v) { return ROUTE_MODES.indexOf(v) >= 0 ? v : "global"; }
 
 // The Settings page shows the effective ports (state.json's, defaults applied), so the
 // user sees what the shell would render even if the file was last written by hand.
@@ -2477,12 +2494,12 @@ els.setTpSwitch.addEventListener("click", function () {
   run("tproxy " + target, target === "on" ? T.tpOnMsg : T.tpOffMsg);
 });
 els.selRoute.addEventListener("change", function () {
-  var target = els.selRoute.value === "cn" ? "cn" : "global";
+  var target = routeValue(els.selRoute.value);
   if (lastKv && lastKv.route === target) { return; }
   // A change made while another action holds the page is not sent: put the select back where
   // the shell says it is, instead of leaving it lying until the next poll.
   if (busy) {
-    els.selRoute.value = lastKv && lastKv.route === "cn" ? "cn" : "global";
+    els.selRoute.value = routeValue(lastKv && lastKv.route);
     return;
   }
   run("routing " + target, T.routeSwitching);

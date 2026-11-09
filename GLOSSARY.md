@@ -93,14 +93,16 @@ _Avoid_: 绕过 (as a noun), split tunnel, 白名单模式 (that names a mode, n
 
 **分流模式 (Routing mode)**:
 The persisted user choice of how the core routes: 全局 sends every destination through the
-applied node, 大陆直连 sends mainland destinations out `direct`. It is a preference of its own
-and changing it re-derives the core config at once — unlike the tproxy switch, which waits for
-the next core start.
+applied node, 大陆直连 sends mainland destinations out `direct`, and 大陆直连去广告 does the same
+as 大陆直连 while also blocking ads. It is a preference of its own and changing it re-derives
+the core config at once — unlike the tproxy switch, which waits for the next core start.
 _Avoid_: 路由模式 (that is Xray's word for the mechanism), 分流开关, 黑白名单
 
 **全局 (Global)**:
-The default 分流模式: the applied node carries every destination, and only the module's own
-fixed policy (DNS, the node host's own lookup, 旁路) routes anything elsewhere.
+The 分流模式 where the applied node carries every destination and only the module's own fixed
+policy (DNS, the node host's own lookup, 旁路) routes anything elsewhere. It is the absent-file
+mode and the fallback when the 地理数据 is missing; since docs/adr/0021 it is a choice, not the
+default.
 _Avoid_: 全局代理, global mode, 直连模式 (that is 空转)
 
 **大陆直连 (Direct-CN)**:
@@ -108,6 +110,20 @@ The 分流模式 where a destination the 地理数据 names as mainland goes out
 everything else still goes through the applied node. It answers "mainland sites should not
 leave the country", not "these sites should be blocked".
 _Avoid_: 绕过大陆, 大陆白名单, 智能分流
+
+**大陆直连去广告 (Direct-CN-Adblock)**:
+The 分流模式 that routes exactly as 大陆直连 does and additionally blocks the destinations the
+地理数据 names as ads, so they never leave the device. It is the default the installer creates
+(the tproxy switch's install-time pattern), and it never degrades: without the 地理数据 it
+refuses to start rather than run as 大陆直连. The blocking belongs to this one mode, not to a
+switch any mode could carry: 全局 and 大陆直连 leave ads alone.
+_Avoid_: 去广告模式 (that names the behaviour, not the mode), adblock mode
+
+**去广告 (Ad blocking)**:
+The behaviour of a 分流模式 that refuses the destinations the 地理数据 names as ads: the app
+gets a failure instead of a working connection. It is not 分流 (nothing leaves by `direct`) and
+not 旁路 (that traffic did reach the module); in this version only 大陆直连去广告 carries it.
+_Avoid_: 广告过滤, 广告屏蔽, 去广告开关 (no mode-independent switch exists)
 
 **分流规则 (Routing rules)**:
 The core's ordered rules that decide 分流. The module authors them in this version; the user
@@ -184,9 +200,9 @@ v0.7, routing and DNS — from which the core config is generated.
 _Avoid_: default config, preset, profile
 
 **地理数据 (Geo data)**:
-The `geosite.dat` and `geoip.dat` files the 分流规则 name categories from. They ship inside the
-module, in the same directory as the 核心 rather than being fetched on the device, so a category
-a release does not carry is a config error, never an empty match.
+The `geosite.dat` and `geoip.dat` files the 分流规则 and 去广告 name categories from. They ship
+inside the module, in the same directory as the 核心 rather than being fetched on the device, so
+a category a release does not carry is a config error, never an empty match.
 _Avoid_: geo 文件, 规则库, 数据库, 订阅规则
 
 **核心配置 (Core config)**:

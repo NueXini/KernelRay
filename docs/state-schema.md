@@ -85,10 +85,13 @@ apply — and does neither when the config already carries the saved ports
 preserved verbatim and not interpreted yet.
 
 The 分流模式 is deliberately **not** in here: it is the shell's own preference, like the tproxy
-switch — `runtime/route`, written by `kernelray.sh routing global|cn`
-([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)) — because
+switch — `runtime/route`, written by `kernelray.sh routing global|cn|cnadblock`
+([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md),
+[ADR 0021](adr/0021-ad-blocking-is-a-third-routing-mode.md)) — because
 the shell must be able to change it without the UI, and because a `cn` render has to check the
-geo data before it can promise anything. `state.json` stays the UI's file.
+geo data before it can promise anything. The file holds the mode's own name (`cn`, `cnadblock`)
+rather than a presence flag; absent is `global`, and the installer writes `cnadblock` when the
+preference is unset (docs/adr/0021). `state.json` stays the UI's file.
 
 The WebUI's other Settings-page entries — the language and log buffer size in the General
 card — deliberately do **not** live here: those are UI preferences, not core intent, and they

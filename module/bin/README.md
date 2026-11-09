@@ -20,10 +20,15 @@ per-arch layout.
 At install time the module only checks that the binary executes (`xray -version`); there is
 no architecture guesswork, because `$ARCH` and `uname -m` lie on emulators.
 
+The core must be **≥ 25.7.23**: 大陆直连去广告's ad sink is a `dns.hosts` value of the form
+`#3` (answer an empty response with that rcode), which older cores read as an ordinary domain
+and would silently resolve instead — `xray -test` cannot catch that, so the floor is a pin, not
+a check.
+
 ## Geo data
 
 `module/bin/geosite.dat` and `geoip.dat` are the category files the 分流规则 name —
-`geosite:cn`, `geosite:private`, `geoip:cn`, `geoip:private`. They sit **beside the core**,
+`geosite:cn`, `geosite:private`, `geosite:category-ads-all`, `geoip:cn`, `geoip:private`. They sit **beside the core**,
 because that is where the core looks for them: with `XRAY_LOCATION_ASSET` unset it resolves
 them from its own executable's directory, not from the cwd (26.10.29). One unpack puts the core
 and its data in place together, and no path has to be configured or kept in sync.
@@ -66,8 +71,12 @@ pays the 4.1MB for.
 Both files are needed together: `xray -test` loads them, so a config naming `geosite:cn`
 without `geosite.dat` fails the test and the module refuses to switch to 大陆直连
 (`routing cn`). A start that finds the files missing degrades to 全局 and says so in
-`logs/kernelray.log` — it never leaves the core unable to start. `scripts/pack.sh` refuses to
-build a ZIP without them.
+`logs/kernelray.log` — it never leaves the core unable to start. 大陆直连去广告 is the one
+exception, on purpose: its ad parts name `geosite:category-ads-all`, so a missing file refuses
+the switch *and* the start (`geo data missing`, one `Routing` line) instead of rendering a mode
+whose name it does not honour — see
+[ADR 0021](../../docs/adr/0021-ad-blocking-is-a-third-routing-mode.md). `scripts/pack.sh`
+refuses to build a ZIP without them.
 
 The data's age is the release's age: a module update replaces the whole module directory
 (docs/adr/0002), so these files are refreshed exactly when the module is.

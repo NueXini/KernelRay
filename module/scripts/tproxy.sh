@@ -480,31 +480,61 @@ kr_geodata_ok() {
   [ -s "$KR_BINDIR/geosite.dat" ] && [ -s "$KR_BINDIR/geoip.dat" ]
 }
 
-# The persisted 分流模式: presence of the file is 大陆直连, absence is 全局 (the default, and
-# what every earlier version did). Written by `kernelray.sh routing`.
-kr_route_mode() { [ -s "$KR_ROUTE" ] && printf 'cn\n' || printf 'global\n'; }
+# The persisted 分流模式, read from the file's content: `cn` or `cnadblock`, anything else (an
+# absent file included) is 全局. 全局 is the absent-file mode, not the default any more: the
+# installer writes 大陆直连去广告 once (kr_route_default, docs/adr/0021). Written by
+# `kernelray.sh routing`.
+kr_route_mode() {
+  _m=""
+  [ -s "$KR_ROUTE" ] && { IFS= read -r _m <"$KR_ROUTE" || :; }
+  case "$_m" in
+    cn | cnadblock) printf '%s\n' "$_m" ;;
+    *) printf 'global\n' ;;
+  esac
+}
 
-kr_route_write() { # <global|cn>
+kr_route_write() { # <global|cn|cnadblock>
   kr_dirs
-  if [ "$1" = cn ]; then
-    printf 'cn\n' >"$KR_ROUTE" 2>/dev/null || {
-      echo "could not write $KR_ROUTE" >&2
-      return 1
-    }
-    chmod 600 "$KR_ROUTE" 2>/dev/null
-  else
-    rm -f "$KR_ROUTE"
-  fi
+  case "$1" in
+    cn | cnadblock)
+      printf '%s\n' "$1" >"$KR_ROUTE" 2>/dev/null || {
+        echo "could not write $KR_ROUTE" >&2
+        return 1
+      }
+      chmod 600 "$KR_ROUTE" 2>/dev/null
+      ;;
+    *) rm -f "$KR_ROUTE" ;;
+  esac
   return 0
 }
 
-# What the render may use: KR_ROUTE_EFFECTIVE (cn|global), plus KR_ROUTE_DEGRADED when the
-# preference asked for cn and the geo data is gone. Sets variables instead of printing -- a
+# Install-time default: 大陆直连去广告, so a fresh install splits mainland traffic out and blocks
+# ads without the user picking anything. The tproxy switch's pattern (ADR 0011): only the
+# installer creates it, and only when the preference is still unset, so a later choice survives
+# until the next install or update. Skipped while the geo data is missing -- a default the core
+# cannot start with is worse than a default that does less (docs/adr/0021, docs/adr/0014).
+kr_route_default() {
+  [ -s "$KR_ROUTE" ] && return 0
+  if ! kr_geodata_ok; then
+    kr_log Routing "geo data missing; the 分流模式 default stays global"
+    return 0
+  fi
+  kr_route_write cnadblock || return 0
+  kr_log Routing "分流模式 defaults to cnadblock"
+}
+
+# What the render may use: KR_ROUTE_EFFECTIVE (global|cn|cnadblock), the flags KR_ROUTE_CN and
+# KR_ROUTE_BLOCK_ADS the builders read instead of comparing strings, and KR_ROUTE_DEGRADED when
+# the preference asked for cn and the geo data is gone. Sets variables instead of printing -- a
 # render's stdout is the config, so a degradation must not be able to corrupt it -- and never
-# touches the preference: the preference is intent, the render is fact. The degradation
-# direction is deliberate: everything through the node is slow, not broken. The optional
-# argument is the caller's "render this mode, not the saved one" (routing's switch renders the
-# candidate before it writes the preference).
+# touches the preference: the preference is intent, the render is fact. The optional argument is
+# the caller's "render this mode, not the saved one" (routing's switch renders the candidate
+# before it writes the preference).
+#
+# 大陆直连 degrades to 全局 when the geo data is gone: everything through the node is slow, not
+# broken. 大陆直连去广告 does not -- its name promises blocking, so it renders the ad parts and
+# lets `xray -test` refuse the start (docs/adr/0021). A mode that lies is worse than a mode that
+# will not start.
 kr_route_effective() { # [mode override]
   _m=${1:-}
   [ -n "$_m" ] || _m=$(kr_route_mode)
@@ -514,6 +544,12 @@ kr_route_effective() { # [mode override]
     KR_ROUTE_DEGRADED=1
   fi
   KR_ROUTE_EFFECTIVE=$_m
+  KR_ROUTE_CN=0
+  KR_ROUTE_BLOCK_ADS=0
+  case "$_m" in
+    cn) KR_ROUTE_CN=1 ;;
+    cnadblock) KR_ROUTE_CN=1 KR_ROUTE_BLOCK_ADS=1 ;;
+  esac
   return 0
 }
 
@@ -523,18 +559,25 @@ kr_route_effective() { # [mode override]
 # leaves through the node. <host> <escaped host> are the applied node's own name.
 kr_tp_dns_block() { # <host> <escaped host> -> KR_DNS_BLOCK
   _servers='"https://1.1.1.1/dns-query"'
-  if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+  if [ "$KR_ROUTE_CN" = 1 ]; then
     _servers='{"address":"'$KR_CN_DNS1'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
     _servers=$_servers'{"address":"'$KR_CN_DNS2'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
     _servers=$_servers'"https://1.1.1.1/dns-query"'
   fi
   # A pinned node address removes the bootstrap dependence on any upstream resolver: the DNS
-  # module answers the node domain from hosts without asking anyone.
+  # module answers the node domain from hosts without asking anyone. 大陆直连去广告 adds the ad
+  # sink to the same map: `#3` makes the module answer an empty response with rcode 3 (NXDOMAIN)
+  # instead of resolving, so an ad domain never gets an address at all (config/dns.html; the
+  # `#<n>` form needs core >= 25.7.23, and bin/README names that floor).
   _hosts=""
   _nodeip=$(cat "$KR_NODEIP" 2>/dev/null)
   if [ -n "$1" ] && [ -n "$_nodeip" ]; then
-    _hosts=',"hosts":{"full:'$2'":"'$_nodeip'"}'
+    _hosts='"full:'$2'":"'$_nodeip'"'
   fi
+  if [ "$KR_ROUTE_BLOCK_ADS" = 1 ]; then
+    _hosts=$_hosts${_hosts:+,}'"geosite:category-ads-all":"#3"'
+  fi
+  [ -n "$_hosts" ] && _hosts=',"hosts":{'"$_hosts"'}'
   # The "dns" tag is what makes the routing block's inboundTag:["dns"] rules reach these
   # upstream queries at all: without it the core tags them xray.system.<uuid> and they fall
   # through to the port-53 -> dns-out rule, i.e. straight back into this module (ADR 0006).
@@ -556,13 +599,20 @@ kr_tp_routing_block() { # <1|0> <host> <escaped host>
     fi
     # Domestic resolver queries leave direct; everything else the DNS module asks goes
     # through the proxy.
-    if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+    if [ "$KR_ROUTE_CN" = 1 ]; then
       _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"ip":["'$KR_CN_DNS1'","'$KR_CN_DNS2'"],"outboundTag":"direct"}'
     fi
     _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"outboundTag":"proxy"}'
     _rules=$_rules',{"network":"tcp,udp","port":53,"outboundTag":"dns-out"}'
   fi
-  if [ "$KR_ROUTE_EFFECTIVE" = cn ]; then
+  # Ads are refused before any 分流 rule -- first match wins, so a mainland ad domain must not
+  # fall into geosite:cn -> direct -- and after the dns/port-53 group above, so a resolver
+  # query is not swallowed by it. The 空转 form has no dns group, so there the rule comes first
+  # (docs/adr/0021).
+  if [ "$KR_ROUTE_BLOCK_ADS" = 1 ]; then
+    _rules=$_rules${_rules:+,}'{"domain":["geosite:category-ads-all"],"outboundTag":"block"}'
+  fi
+  if [ "$KR_ROUTE_CN" = 1 ]; then
     # Private destinations stay local. Takeover's iptables bypass already keeps them out of
     # the core, but the 空转 form has no bypass, and a router's admin page is not a proxy
     # target.
@@ -571,10 +621,10 @@ kr_tp_routing_block() { # <1|0> <host> <escaped host>
     _rules=$_rules',{"domain":["geosite:cn"],"outboundTag":"direct"}'
     _rules=$_rules',{"ip":["geoip:cn"],"outboundTag":"direct"}'
   fi
-  # AsIs in 全局 keeps the pre-0014 block byte for byte. IPIfNonMatch in 大陆直连 is what lets
-  # a domain no geosite category knows still match geoip:cn after resolution.
+  # AsIs in 全局 keeps the pre-0014 block byte for byte. IPIfNonMatch in the two geo modes is
+  # what lets a domain no geosite category knows still match geoip:cn after resolution.
   _strategy=AsIs
-  [ "$KR_ROUTE_EFFECTIVE" = cn ] && _strategy=IPIfNonMatch
+  [ "$KR_ROUTE_CN" = 1 ] && _strategy=IPIfNonMatch
   KR_ROUTING='{"domainStrategy":"'$_strategy'","rules":['$_rules']}'
   return 0
 }
@@ -597,16 +647,16 @@ kr_tp_render_blocks() { # [route override]; sets KR_TP_INBOUND, KR_DNS_OUTBOUND,
   return 0
 }
 
-# routing <global|cn>: the 分流模式 preference. Unlike the tproxy switch it re-derives the
-# config at once (docs/adr/0014): render the new form, test it, write the preference, then
+# routing <global|cn|cnadblock>: the 分流模式 preference. Unlike the tproxy switch it re-derives
+# the config at once (docs/adr/0014): render the new form, test it, write the preference, then
 # swap. A swap that fails restores the preference, so it never claims a form the core does
 # not run. With no applied node there is nothing to re-render: the preference is saved and
 # the next apply renders it.
-kr_route_set() { # <global|cn>
+kr_route_set() { # <global|cn|cnadblock>
   case "$1" in
-    global|cn) ;;
+    global | cn | cnadblock) ;;
     *)
-      echo "usage: kernelray.sh routing {global|cn|status}" >&2
+      echo "usage: kernelray.sh routing {global|cn|cnadblock|status}" >&2
       return 2
       ;;
   esac
@@ -616,9 +666,20 @@ kr_route_set() { # <global|cn>
     kr_log Routing "already $1"
     return 0
   fi
-  if [ "$1" = cn ] && ! kr_geodata_ok; then
-    kr_log Routing "cn needs $KR_BINDIR/{geosite,geoip}.dat"
-    echo "geo data is missing ($KR_BINDIR); the routing mode stays $_cur" >&2
+  # Both geo modes need the files. 大陆直连 keeps its longer message; 大陆直连去广告 says the one
+  # short thing its hint, its toast and its log line all say, because it never degrades
+  # (docs/adr/0021).
+  if [ "$1" != global ] && ! kr_geodata_ok; then
+    case "$1" in
+      cn)
+        kr_log Routing "cn needs $KR_BINDIR/{geosite,geoip}.dat"
+        echo "geo data is missing ($KR_BINDIR); the routing mode stays $_cur" >&2
+        ;;
+      *)
+        kr_log Routing "geo data missing; cnadblock cannot start"
+        echo "geo data missing" >&2
+        ;;
+    esac
     return 1
   fi
   _n=$(kr_applied_id) || _n=""

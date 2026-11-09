@@ -28,3 +28,4 @@ jobs:
           node tests/link.test.js
           node tests/config.test.js
           node tests/routing.test.js
+          node tests/adblock.test.js

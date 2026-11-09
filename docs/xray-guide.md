@@ -32,7 +32,7 @@ Xray 配置由 `log` / `inbounds` / `outbounds` / `dns` / `routing` 五大块组
 | `inbounds` | [总览](https://xtls.github.io/config/inbound.html) | 三个入站：socks / http 本地入站 + tproxy 接管入站（见下） |
 | `outbounds` | [总览](https://xtls.github.io/config/outbound.html) | 节点出站（由 WebUI 渲染）+ `direct`（freedom）+ `block`（blackhole）+ `dns-out` |
 | `dns` | [dns.md](https://xtls.github.io/config/dns.html) | DNS 模块，大陆直连模式里做国内外分流解析（[ADR 0006](adr/0006-dns-goes-through-the-core.md)） |
-| `routing` | [routing.md](https://xtls.github.io/config/routing.html) | 全局 vs 大陆直连的规则块，也是模块固定布局（[ADR 0005](adr/0005-core-config-is-derived.md)） |
+| `routing` | [routing.md](https://xtls.github.io/config/routing.html) | 三种分流模式（全局 / 大陆直连 / 大陆直连去广告）的规则块，也是模块固定布局（[ADR 0005](adr/0005-core-config-is-derived.md)） |
 
 ## 本模块用到的每个组件 → 官方文档
 
@@ -50,7 +50,7 @@ Xray 配置由 `log` / `inbounds` / `outbounds` / `dns` / `routing` 五大块组
 | --- | --- | --- |
 | 节点出站（WebUI 渲染） | [vless](https://xtls.github.io/config/outbounds/vless.html) / [vmess](https://xtls.github.io/config/outbounds/vmess.html) / [trojan](https://xtls.github.io/config/outbounds/trojan.html) / [shadowsocks](https://xtls.github.io/config/outbounds/shadowsocks.html) / [socks](https://xtls.github.io/config/outbounds/socks.html) / [http](https://xtls.github.io/config/outbounds/http.html) | 分享链接解析后渲染成哪个协议，出站就是哪个 |
 | `direct` | [freedom.md](https://xtls.github.io/config/outbounds/freedom.html) | 直连出站；带 `sockopt.mark: 19282` 打旁路标记，避免核心自己的连接被 TPROXY 规则再次捕获 |
-| `block` | [blackhole.md](https://xtls.github.io/config/outbounds/blackhole.html) | 黑洞，拦截不想放行的目标 |
+| `block` | [blackhole.md](https://xtls.github.io/config/outbounds/blackhole.html) | 黑洞；大陆直连去广告用它拦 `geosite:category-ads-all`（空 settings = 收到数据就关连接，`response: http` 会先回一个 403） |
 | `dns-out` | [dns 出站](https://xtls.github.io/config/outbounds/dns.html) | 把被路由规则指过来的 DNS 流量交给 DNS 模块处理 |
 
 节点出站的 `streamSettings`（TLS / REALITY / WebSocket / gRPC / XHTTP 等传输层）官方文档在
@@ -71,6 +71,11 @@ Xray 配置由 `log` / `inbounds` / `outbounds` / `dns` / `routing` 五大块组
   里有哪些类别、`geoip` 怎么写。本模块发布版固定
   [Loyalsoldier](https://github.com/Loyalsoldier/v2ray-rules-dat) 的数据，因为它额外带
   更多类别。
+- **`hosts` 与 `#rcode`**：[dns.md](https://xtls.github.io/config/dns.html) 的 `hosts` 字段。
+  大陆直连去广告用它把 `geosite:category-ads-all` 的域名直接拒答：值写 `#3`，核心回一个
+  空响应加 rcode 3（NXDOMAIN），不发起任何查询。同页还写了 `hosts` 的键支持 `geosite:`
+  前缀；`#<数字>` 这种写法需要核心 ≥ 25.7.23。v2fly 文档给广告屏蔽的写法是
+  `hosts: {"geosite:category-ads-all": "127.0.0.1"}`——同一个机制，返回一个连不上的 IP。
 
 ## 命令行
 
