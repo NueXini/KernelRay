@@ -1,6 +1,9 @@
 # 0010 — The core only runs an applied node's config
 
-Status: accepted
+Status: accepted (the gate and the "no config, no core" rule are unchanged. The
+"no-takeover form still exists" paragraph in the rejected alternatives no longer holds: the
+second form and the switch that chose it are gone, see
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
 
 ## Context
 

@@ -2,12 +2,13 @@
 
 Status: accepted (implements the rule-level details left open by
 [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md); refines the DNS
-bypass of [ADR 0006](0006-dns-goes-through-the-core.md)). The switch semantics — default
+bypass of [ADR 0006](0006-dns-goes-through-the-core.md)). The toggle semantics below — default
 off, immediate toggle, boot-time rules without a node — are superseded by
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the switch is
-default-on, start-coupled, and only ever a preference write. Its boot semantics — the
-boot-time start, the boot-time conflict verdict and the pin that rode on it — are superseded
-by [ADR 0018](0018-no-action-button-and-no-boot-start.md): nothing starts at boot, so the
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): there is no switch
+left to toggle, every start takes over, and the rule namespace it defines is otherwise
+unchanged. Its boot semantics — the boot-time start, the boot-time conflict verdict and the
+pin that rode on it — are superseded by
+[ADR 0018](0018-no-action-button-and-no-boot-start.md): nothing starts at boot, so the
 start that pins, engages and installs is the user's.
 
 ## Context

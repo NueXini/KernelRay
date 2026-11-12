@@ -30,10 +30,9 @@ KR_OUTBOUND=$KR_MODDIR/outbound.json
 KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
 KR_LOGLEVEL=$KR_RUNDIR/loglevel
-# The exact bytes on disk that last passed `xray -test`, and the form they were rendered in:
-# what lets a start skip a test it would repeat verbatim (docs/adr/0017).
+# The exact bytes on disk that last passed `xray -test`: what lets a start skip a test it
+# would repeat verbatim (docs/adr/0017).
 KR_CONF_TESTED=$KR_RUNDIR/config.tested
-KR_CONF_FORM=$KR_RUNDIR/config.form
 
 # A freshly forked core gets this long to start listening before a start counts as "running
 # anyway" -- a slow core is not a failed one. It used to be a flat `sleep 1` on every start;
@@ -133,7 +132,6 @@ kr_dirs() {
   chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" \
     "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" "$KR_LOGLEVEL" \
     "$KR_CONF_TESTED" 2>/dev/null
-  [ -n "${KR_TP_SWITCH:-}" ] && chmod 600 "$KR_TP_SWITCH" 2>/dev/null
   [ -n "${KR_ROUTE:-}" ] && chmod 600 "$KR_ROUTE" 2>/dev/null
   [ -n "${KR_TP_RULES:-}" ] && chmod 600 "$KR_TP_RULES" 2>/dev/null
   return 0
@@ -324,8 +322,13 @@ kr_lock() {
 }
 
 kr_cleanup_legacy() {
-  # leftovers from earlier layouts; nothing reads them anymore
-  rm -f "$KR_RUNDIR/arch" "$KR_RUNDIR/watch.lock" 2>/dev/null
+  # leftovers from earlier layouts; nothing reads them anymore. runtime/tproxy was the
+  # tproxy switch and runtime/config.form recorded which of the two config forms the bytes on
+  # disk were rendered in -- both abolished by 启动即接管 (docs/adr/0011). A file left by an
+  # older version must not be able to influence anything, so they are deleted rather than
+  # ignored.
+  rm -f "$KR_RUNDIR/arch" "$KR_RUNDIR/watch.lock" "$KR_RUNDIR/tproxy" \
+    "$KR_RUNDIR/config.form" "$KR_RUNDIR/config.form.prev" 2>/dev/null
 }
 
 # Applied node id: the node the current config was built from. Empty when nothing has
@@ -415,8 +418,8 @@ kr_setting_port() { # <key> <default>
   esac
 }
 
-# The 日志等级 (docs/adr/0015): the shell's preference, like the tproxy switch and the
-# 分流模式. An absent file is the default 警告, so a module update (which replaces runtime/)
+# The 日志等级 (docs/adr/0015): the shell's preference, like the 分流模式. An absent file is the
+# default 警告, so a module update (which replaces runtime/)
 # resets it, and an unknown value falls back to 警告 rather than baking a bad level into a
 # config the core would reject.
 KR_LOGLEVEL_DEFAULT=warning
@@ -506,13 +509,11 @@ kr_status_write() { # <state> <phase>
   case "$_s" in '' | *[!0-9]*) _s=0 ;; esac
   _n=""
   kr_applied_read && _n=$KR_APPLIED_VAL
-  _tp=off
-  command -v kr_tp_switch_on >/dev/null 2>&1 && kr_tp_switch_on && _tp=on
   _rt=global
   command -v kr_route_mode >/dev/null 2>&1 && _rt=$(kr_route_mode)
   kr_dirs
-  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","tproxy":"%s","route":"%s","boot":"%s"}\n' \
-    "$1" "$2" "$_s" "$_n" "$_tp" "$_rt" "$(kr_boot_id)" >"$KR_STATUS" 2>/dev/null
+  printf '{"state":"%s","phase":"%s","started":%s,"revision":0,"node":"%s","route":"%s","boot":"%s"}\n' \
+    "$1" "$2" "$_s" "$_n" "$_rt" "$(kr_boot_id)" >"$KR_STATUS" 2>/dev/null
 }
 
 # Render the template with one outbound. The outbound is passed through the
@@ -552,36 +553,18 @@ kr_render_config() { # <outbound-file> [route-mode override]
   _line=$(cat "$_ob") || return 1
   _route=${2:-}
 
-  # The form is an input, never inferred here: the renderer is a pure function of the
-  # template, the outbound and the intent the caller states. kr_config_candidate decides the
-  # intent from the live rules (kr_tp_form); a caller that renders on its own states it with
-  # KR_TAKEOVER=1|0. The idle form is the default because it is the one that cannot loop: a
-  # marked outbound with no ip rule loses routing (docs/adr/0008).
-  _takeover=${KR_TAKEOVER:-0}
-  _tp_in=""
-  _dns_out=""
-  _dns=""
-  _routing=""
-  _mark=0
-  if [ "$_takeover" = 1 ]; then
-    if ! kr_tp_render_blocks "$_route"; then
-      kr_log TProxy "could not build the takeover blocks"
-      return 1
-    fi
-    _tp_in=$KR_TP_INBOUND
-    _dns_out=$KR_DNS_OUTBOUND
-    _dns=$KR_DNS_BLOCK
-    _routing=$KR_ROUTING
-    _mark=$KR_BYPASS
-  elif command -v kr_route_effective >/dev/null 2>&1; then
-    # The 空转 form keeps the 分流 -- a local socks client gets it too -- but has no dns
-    # inbound, so only the geo rules are authored (docs/adr/0014). 全局 renders no routing.
-    kr_route_effective "$_route"
-    if [ "$KR_ROUTE_CN" = 1 ]; then
-      kr_tp_routing_block 0 "" ""
-      _routing=$KR_ROUTING
-    fi
+  # There is one form (docs/adr/0011): every start takes over, so every render carries the
+  # tproxy inbound, the DNS module, the routing block and the bypass mark. There is no second
+  # form left to choose between -- which is why nothing here asks the live rules a question.
+  if ! kr_tp_render_blocks "$_route"; then
+    kr_log TProxy "could not build the takeover blocks"
+    return 1
   fi
+  _tp_in=$KR_TP_INBOUND
+  _dns_out=$KR_DNS_OUTBOUND
+  _dns=$KR_DNS_BLOCK
+  _routing=$KR_ROUTING
+  _mark=$KR_BYPASS
   if [ "${KR_ROUTE_DEGRADED:-0}" = 1 ]; then
     # The preference asked for cn and the geo data is gone: the safe direction is everything
     # through the node, never a dead core. Log file only -- this function's stdout is the
@@ -599,7 +582,7 @@ kr_render_config() { # <outbound-file> [route-mode override]
   # outbound without the placeholder (a stale renderer) is refused, not shipped.
   kr_settings_ports
   kr_loglevel_read
-  KR_OUT_LINE=$_line KR_TP_TAKEOVER=$_takeover KR_TP_MARK=$_mark \
+  KR_OUT_LINE=$_line KR_TP_MARK=$_mark \
     KR_SOCKS_PORT=$KR_SOCKS_PORT \
     KR_HTTP_PORT=$KR_HTTP_PORT \
     KR_LOGLEVEL_VAL=$KR_LOGLEVEL_VAL \
@@ -608,8 +591,11 @@ kr_render_config() { # <outbound-file> [route-mode override]
     BEGIN {
       out = ENVIRON["KR_OUT_LINE"]
       gsub(/"__KERNELRAY_MARK__"/, ENVIRON["KR_TP_MARK"], out)
-      tp = ENVIRON["KR_TP_TAKEOVER"]
-      if (tp == 1 && index(out, "\"mark\":" ENVIRON["KR_TP_MARK"]) == 0) {
+      # Whitespace-tolerant: outbound.json is normally compact, but a pretty-printed file
+      # is legal input and must not be refused as "unmarked". q is the quote character, so
+      # the pattern needs no backslashes of its own.
+      q = sprintf("%c", 34)
+      if (match(out, q "mark" q "[ \t]*:[ \t]*" ENVIRON["KR_TP_MARK"] "([^0-9]|$)") == 0) {
         print "kernelray: the node outbound carries no bypass mark; refusing a takeover config" > "/dev/stderr"
         exit 3
       }
@@ -628,19 +614,12 @@ kr_render_config() { # <outbound-file> [route-mode override]
       ph = "\"__KERNELRAY_LOGLEVEL__\""
       p = index(line, ph)
       if (p > 0) line = substr(line, 1, p - 1) "\"" ENVIRON["KR_LOGLEVEL_VAL"] "\"" substr(line, p + length(ph))
-      # The routing block exists in both forms since ADR 0014: spliced when the mode authored
-      # one, dropped when it did not.
+      # The routing block is always authored: every form takes over, and even 全局 has the
+      # dns/port-53 rules (docs/adr/0011, docs/adr/0014).
       ph = "\"__KERNELRAY_ROUTING__\""
       p = index(line, ph)
       if (p > 0) {
-        if (ENVIRON["KR_ROUTING_BLOCK"] == "") next
         print substr(line, 1, p - 1) ENVIRON["KR_ROUTING_BLOCK"] substr(line, p + length(ph))
-        next
-      }
-      if (!tp) {
-        if (line ~ /^[ \t]*,"__(KERNELRAY_TPROXY_INBOUND|KERNELRAY_DNS_OUTBOUND)__"[ \t]*$/) next
-        if (line ~ /^[ \t]*,"dns": "__KERNELRAY_DNS__"[ \t]*$/) next
-        print line
         next
       }
       ph = "\"__KERNELRAY_TPROXY_INBOUND__\""
@@ -657,50 +636,23 @@ kr_render_config() { # <outbound-file> [route-mode override]
   ' "$KR_TMPL"
 }
 
-# The form config.json must have to agree with the live rules: takeover only while the
-# switch says so *and* the rules are up. A marked outbound with no ip rule loses routing,
-# and a tproxy inbound with no rules captures nothing (docs/adr/0011). Absent tproxy.sh (an
-# older layout) there is no takeover at all, so the idle form is the answer.
-kr_config_form() { # 1 = takeover form, 0 = idle form
-  if command -v kr_tp_form >/dev/null 2>&1; then
-    kr_tp_form
-  else
-    printf '0\n'
-  fi
-}
-
 # config.tested records the exact bytes on disk that passed `xray -test`. The render is a
 # pure function of the intent and the test is a pure function of the rendered bytes, so a
 # config byte-identical to a tested one does not need testing again -- which is what keeps a
 # switch to one test instead of three (docs/adr/0017).
-#
-# config.form is the one derived fact the config cannot be asked about without re-rendering
-# it: which form (1 = takeover, 0 = idle) those bytes were rendered in. Written here, at the
-# moment a config is installed, so the one place that has to read it back -- the start that
-# finds outbound.json describing another node -- reads a fact instead of grepping JSON.
-kr_conf_install() { # <0|1 form>
+kr_conf_install() {
   cp -f "$KR_CONF" "$KR_CONF_TESTED" 2>/dev/null || rm -f "$KR_CONF_TESTED"
-  printf '%s\n' "${1:-0}" >"$KR_CONF_FORM" 2>/dev/null || rm -f "$KR_CONF_FORM"
 }
 
 # The config on disk is the only description of the applied node (a failed switch left
 # outbound.json describing the node the user tried, and the rollback restored this node's
 # config -- ADR 0007 keeps the old node running until the user retries). Nothing can be
 # re-rendered, so the bytes are taken as they are -- through the same test gate, which only
-# bites when they are unknown -- but only while their form still agrees with the live rules:
-# a marked outbound with no ip rule loses routing and an idle config under installed rules
-# blackholes traffic (docs/adr/0008, 0011). Anything else is refused with the remedy.
+# bites when they are unknown.
 kr_conf_accept_ondisk() {
   if [ ! -s "$KR_CONF" ]; then
     kr_log Config "no config on disk to fall back to"
     echo "no config for the applied node; re-tap the node in the WebUI" >&2
-    return 1
-  fi
-  _want_form=$(kr_config_form)
-  _have_form=$(sed -n '1p' "$KR_CONF_FORM" 2>/dev/null)
-  if [ "$_have_form" != "$_want_form" ]; then
-    kr_log Config "config on disk is form ${_have_form:-unknown} but this start needs form $_want_form"
-    echo "the config on disk does not match the switch; re-tap the node in the WebUI" >&2
     return 1
   fi
   if cmp -s "$KR_CONF" "$KR_CONF_TESTED"; then return 0; fi
@@ -709,7 +661,7 @@ kr_conf_accept_ondisk() {
     echo "config test failed (see $KR_LOG)" >&2
     return 2
   fi
-  kr_conf_install "$_have_form"
+  kr_conf_install
   return 0
 }
 
@@ -736,19 +688,16 @@ kr_config_test_failed() { # <on disk|generated>
   return 0
 }
 
-# The config this start would run: rendered from <applied-id> in the form the live rules
-# demand, and known to pass `xray -test`. Sets KR_CANDIDATE to the tested candidate's path,
-# or to "" when config.json already holds exactly those bytes -- the caller then has nothing
-# to test, nothing to write and nothing to restart.
-#
-# The renderer never infers the form; the decision lives here, once (kr_config_form). Nothing
-# is touched before the test passes, so a bad node never stops the running core (ADR 0007).
+# The config this start would run: rendered from <applied-id> and known to pass `xray -test`.
+# Sets KR_CANDIDATE to the tested candidate's path, or to "" when config.json already holds
+# exactly those bytes -- the caller then has nothing to test, nothing to write and nothing to
+# restart. Nothing is touched before the test passes, so a bad node never stops the running
+# core (ADR 0007).
 #
 # Returns 0 with KR_CANDIDATE set, 1 on a refusal (message on stderr, nothing touched), and 2
 # when the candidate does not pass `xray -test` (nothing touched).
 kr_config_candidate() { # <applied-id> [route-mode override]
   KR_CANDIDATE=""
-  KR_CANDIDATE_FORM=""
   _id=${1:-}
   _route=${2:-}
   kr_dirs
@@ -775,8 +724,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
   fi
   # Keep the .json suffix: xray -test picks the format from the file name.
   _cand=$KR_RUNDIR/config.new.json
-  _form=$(kr_config_form)
-  if ! KR_TAKEOVER=$_form kr_render_config "$KR_OUTBOUND" "$_route" >"$_cand"; then
+  if ! kr_render_config "$KR_OUTBOUND" "$_route" >"$_cand"; then
     rm -f "$_cand"
     echo "could not render config" >&2
     return 1
@@ -805,7 +753,7 @@ kr_config_candidate() { # <applied-id> [route-mode override]
       kr_config_test_failed "on disk"
       return 2
     fi
-    kr_conf_install "$_form"
+    kr_conf_install
     rm -f "$_cand"
     return 0
   fi
@@ -815,19 +763,21 @@ kr_config_candidate() { # <applied-id> [route-mode override]
     return 2
   fi
   KR_CANDIDATE=$_cand
-  KR_CANDIDATE_FORM=$_form
   return 0
 }
 
 # Make config.json the config this start would run. Idempotent: when the bytes on disk are
 # already the tested ones, nothing is rendered, tested, written or restarted. This is the
-# single place the module turns intent (applied node, preferences, live rules) into a config.
+# single place the module turns intent (applied node, preferences) into a config.
 kr_ensure_config() {
   _n=$(kr_applied_id) || _n=""
   _meta=$(kr_meta_get id) || _meta=""
-  if [ -n "$_n" ] && [ "$_meta" != "$_n" ]; then
+  if [ -n "$_n" ] && [ -n "$_meta" ] && [ -s "$KR_OUTBOUND" ] && [ "$_meta" != "$_n" ]; then
     # A failed switch: outbound.json already describes the node the user tried, so this
-    # node's config cannot be re-derived -- the one on disk is it (ADR 0007).
+    # node's config cannot be re-derived -- the one on disk is it (ADR 0007). The three
+    # non-empty conditions are what make this the failed-switch case and not the no-outbound
+    # one: without a rendered outbound there is nothing the config on disk could describe, and
+    # falling through to kr_config_candidate refuses the start instead (ADR 0010).
     kr_log Node "ensure: applied id $_n, outbound.meta belongs to '$_meta'; keeping the config on disk"
     kr_conf_accept_ondisk
     return $?
@@ -838,23 +788,25 @@ kr_ensure_config() {
   return 0
 }
 
-# Install an already-tested candidate into config.json: back up the current config (and the
-# form it was rendered in), stop a running core, move the candidate in, record the applied id
-# and the tested marker. Nothing is started here -- kr_swap_start does that -- so a caller
-# whose own intent (the 分流模式, say) has to be restored first can do it in between.
+# Install an already-tested candidate into config.json: back up the current config, stop a
+# running core, move the candidate in, record the applied id and the tested marker. Nothing is
+# started here -- kr_swap_start does that -- so a caller whose own intent (the 分流模式, say) has
+# to be restored first can do it in between.
 # Pass the applied id to record (the apply path), or "" to leave runtime/applied alone (the
-# ports and routing paths re-render the same node). Sets KR_SWAP_WAS=1 when a core was
-# running. Returns 1 with a message on every failure; the core is left running the old
-# config whenever one could be restored.
+# ports and routing paths re-render the same node). Sets KR_SWAP_WAS=1 when a core was running,
+# and KR_SWAP_TP_WAS to whether the takeover rules were already up -- the rollback uses it to
+# remove only rules this swap brought up (docs/adr/0011). Returns 1 with a message on every
+# failure; the core is left running the old config whenever one could be restored.
 kr_swap_install() { # <candidate> <applied-id|"">
   _cand=$1
   _newid=$2
   KR_SWAP_WAS=0
   kr_running && KR_SWAP_WAS=1
+  KR_SWAP_TP_WAS=0
+  command -v kr_tp_rules_present >/dev/null 2>&1 && kr_tp_rules_present && KR_SWAP_TP_WAS=1
   _old=$(kr_applied_id) || _old=""
   KR_SWAP_OLD=$_old
   _prev=$KR_RUNDIR/config.json.prev
-  _formprev=$KR_RUNDIR/config.form.prev
   if [ -f "$KR_CONF" ]; then
     if ! cp -f "$KR_CONF" "$_prev" 2>/dev/null; then
       rm -f "$_prev" "$_cand"
@@ -862,9 +814,8 @@ kr_swap_install() { # <candidate> <applied-id|"">
       echo "could not back up the current config" >&2
       return 1
     fi
-    cp -f "$KR_CONF_FORM" "$_formprev" 2>/dev/null || rm -f "$_formprev"
   else
-    rm -f "$_prev" "$_formprev"
+    rm -f "$_prev"
   fi
   if [ "$KR_SWAP_WAS" = 1 ]; then
     kr_stop
@@ -882,7 +833,7 @@ kr_swap_install() { # <candidate> <applied-id|"">
     return 1
   fi
   chmod 600 "$KR_CONF" 2>/dev/null
-  kr_conf_install "${KR_CANDIDATE_FORM:-0}"
+  kr_conf_install
   if [ -n "$_newid" ]; then
     kr_applied_write "$_newid"
   fi
@@ -900,20 +851,23 @@ kr_swap_start() {
   return 0
 }
 
-# Undo kr_swap_install: restore the previous config, form and applied id, then start again.
-# The caller must have restored any intent of its own *before* this, because the start
-# re-derives the config from it (docs/adr/0017): a routing switch whose mode was rolled back
-# re-renders the old mode, and an apply whose outbound now names another node keeps the
-# restored bytes (kr_conf_accept_ondisk).
+# Undo kr_swap_install: restore the previous config and applied id, then start again. The
+# caller must have restored any intent of its own *before* this, because the start re-derives
+# the config from it (docs/adr/0017): a routing switch whose mode was rolled back re-renders the
+# old mode, and an apply whose outbound now names another node keeps the restored bytes
+# (kr_conf_accept_ondisk).
+#
+# A rollback whose restart does not come back is a device with no core, and a device with no
+# core must not keep a capture (docs/adr/0011): the rules this swap brought up are removed, so
+# the device goes direct instead of dark. Rules that were already up before the swap are left
+# alone -- they belong to the core that was running, and that is the state to return to.
 kr_swap_rollback() {
   _prev=$KR_RUNDIR/config.json.prev
-  _formprev=$KR_RUNDIR/config.form.prev
   kr_log Config "new config did not start; restoring previous config"
   if [ -f "$_prev" ]; then
-    _restored_form=$(sed -n '1p' "$_formprev" 2>/dev/null)
     mv -f "$_prev" "$KR_CONF"
     chmod 600 "$KR_CONF" 2>/dev/null
-    kr_conf_install "${_restored_form:-0}"
+    kr_conf_install
     if [ -n "${KR_SWAP_OLD:-}" ]; then
       kr_applied_write "$KR_SWAP_OLD"
     else
@@ -922,16 +876,28 @@ kr_swap_rollback() {
     if kr_start; then
       echo "new config failed to start; previous config restored" >&2
     else
+      kr_swap_tp_rollback
       echo "new config failed to start; previous config restored but the core did not start" >&2
     fi
   else
     # Nothing to restore: without a config the applied id is void, and the core
     # stays down rather than running anything not derived from an applied node.
-    rm -f "$KR_CONF" "$KR_APPLIED" "$KR_CONF_TESTED" "$KR_CONF_FORM"
+    rm -f "$KR_CONF" "$KR_APPLIED" "$KR_CONF_TESTED"
+    kr_swap_tp_rollback
     kr_status_write stopped no-node
     echo "new config failed to start; no previous config, the core stays stopped" >&2
   fi
-  rm -f "$_prev" "$_formprev"
+  rm -f "$_prev"
+  return 0
+}
+
+# Take down the capture a failed swap brought up, and only that one.
+kr_swap_tp_rollback() {
+  [ "${KR_SWAP_TP_WAS:-0}" = 1 ] && return 0
+  command -v kr_tp_rules_present >/dev/null 2>&1 || return 0
+  kr_tp_rules_present || return 0
+  kr_log TProxy "the swap brought the rules up and no core is running; removing them"
+  kr_tp_remove
   return 0
 }
 
@@ -940,7 +906,7 @@ kr_swap_rollback() {
 kr_swap_config() { # <candidate> <applied-id|"">
   kr_swap_install "$1" "$2" || return 1
   if kr_swap_start; then
-    rm -f "$KR_RUNDIR/config.json.prev" "$KR_RUNDIR/config.form.prev"
+    rm -f "$KR_RUNDIR/config.json.prev"
     return 0
   fi
   kr_swap_rollback
@@ -968,7 +934,7 @@ kr_apply() { # <node id>
   # Pin the node's address before anything is stopped or captured: the resolve needs a
   # working network, and the render needs its answer (docs/adr/0008). Memoized, so the start
   # that follows does not resolve again.
-  [ "$(kr_config_form)" = 1 ] && kr_tp_pin_node
+  command -v kr_tp_pin_node >/dev/null 2>&1 && kr_tp_pin_node
 
   kr_config_candidate "$_id" || return 1
   if [ -z "$KR_CANDIDATE" ]; then
@@ -1009,7 +975,7 @@ kr_apply_ports() {
 # goes: the takeover rules (they capture into a core that no longer has a node to run),
 # config.json, runtime/applied, the rendered outbound and the pinned node address, and the
 # status says stopped/no-node so the start gate (ADR 0010) keeps the core down until a node
-# is applied again. state.json and the tproxy switch belong to the caller and are left alone
+# is applied again. state.json belongs to the caller and is left alone
 # (ADR 0013). Idempotent: with nothing applied it still lands on stopped/no-node.
 kr_unapply() {
   kr_dirs
@@ -1023,7 +989,7 @@ kr_unapply() {
   if command -v kr_tp_remove >/dev/null 2>&1; then
     kr_tp_remove
   fi
-  rm -f "$KR_CONF" "$KR_APPLIED" "$KR_CONF_TESTED" "$KR_CONF_FORM" \
+  rm -f "$KR_CONF" "$KR_APPLIED" "$KR_CONF_TESTED" \
     "$KR_OUTBOUND" "$KR_OUTBOUND_META" \
     "$KR_PIDFILE" "$KR_STARTED" "$KR_RUNDIR/nodeip"
   kr_log Node "unapplied: config, applied id, rendered outbound and takeover rules removed"
@@ -1071,31 +1037,26 @@ kr_start_locked() {
     kr_status_write stopped no-node
     return 1
   fi
-  # The switch couples takeover to the core's start (ADR 0011): on, the rules go in before
-  # the core runs (fail-closed) and the config follows from them; off, any stale rules from a
-  # crash under the old switch state come down and the core starts idle. The gate above
-  # already refused a start without an applied node, so a default-on switch can never take a
-  # nodeless device over.
-  if command -v kr_tp_engage >/dev/null 2>&1; then
-    if kr_tp_switch_on; then
-      kr_tp_engage
-    elif kr_tp_rules_present; then
-      kr_tp_log Tproxy "start: the tproxy switch is off; removing stale rules"
-      kr_tp_remove
-    else
-      # No rules and the switch off: the cache must say so even when it was left stale
-      # by an external flush. The start already asked the kernel.
-      command -v kr_tp_rules_cache_write >/dev/null 2>&1 && kr_tp_rules_cache_write 0
+  # 启动即接管 (ADR 0011): there is no switch. A start has two takeover halves, and the config
+  # sits between them. First the conflict check and the node pin, while the network is still
+  # direct -- the pin must not ask under a capture, and the render needs its answer. Then the
+  # config, rendered in its one form and known to pass `xray -test`. Only then the rules, still
+  # before the core runs (fail-closed, ADR 0004) -- so a config the core rejects leaves the
+  # device direct instead of offline. Any half that fails refuses the start: there is no core
+  # without takeover.
+  if command -v kr_tp_prepare >/dev/null 2>&1; then
+    if ! kr_tp_prepare; then
+      kr_log Core "takeover cannot be enforced (${KR_TP_PHASE}); the core stays stopped"
+      kr_status_write stopped "${KR_TP_PHASE}"
+      return 1
     fi
   fi
-  # The config on disk must be the config this start will run: derived from the applied
-  # node, in the form the live rules demand (kr_config_form), carrying the current ports,
-  # log level and 分流模式 -- and known to pass `xray -test`. kr_ensure_config renders and
-  # tests only when the bytes differ, so the switch repair (the switch moved, the geo data
-  # went missing, the level changed) is not a special case here any more: it is what
-  # "different bytes" means. It runs after the rules are up, so the form it renders is the
-  # one those rules need; a failed test leaves the previous config in place and the rules up
-  # (fail-closed, docs/adr/0011).
+  # The config on disk must be the config this start will run: derived from the applied node,
+  # carrying the current ports, log level and 分流模式 -- and known to pass `xray -test`.
+  # kr_ensure_config renders and tests only when the bytes differ, so the repair of a config
+  # written under an older preference (the geo data went missing, the level changed) is not a
+  # special case here: it is what "different bytes" means. Nothing is touched before the test
+  # passes, so a rejection here leaves no rules and no core (docs/adr/0011).
   kr_ensure_config
   _rc=$?
   if [ "$_rc" != 0 ]; then
@@ -1106,6 +1067,13 @@ kr_start_locked() {
       kr_status_write failed no-config
     fi
     return 1
+  fi
+  if command -v kr_tp_engage >/dev/null 2>&1; then
+    if ! kr_tp_engage; then
+      kr_log Core "takeover rules failed (${KR_TP_PHASE}); the core stays stopped"
+      kr_status_write stopped "${KR_TP_PHASE}"
+      return 1
+    fi
   fi
 
   kr_status_write starting starting
@@ -1231,16 +1199,12 @@ EOF
   fi
   _node=""
   kr_applied_read && _node=$KR_APPLIED_VAL
-  _tp=off
   _rules=absent
-  if command -v kr_tp_switch_on >/dev/null 2>&1; then
-    kr_tp_switch_on && _tp=on
-    if command -v kr_tp_rules_status >/dev/null 2>&1; then
-      kr_tp_rules_status "$_boot"
-      _rules=$KR_TP_RULES_STATE
-    elif command -v kr_tp_rules_present >/dev/null 2>&1; then
-      kr_tp_rules_present && _rules=present
-    fi
+  if command -v kr_tp_rules_status >/dev/null 2>&1; then
+    kr_tp_rules_status "$_boot"
+    _rules=$KR_TP_RULES_STATE
+  elif command -v kr_tp_rules_present >/dev/null 2>&1; then
+    kr_tp_rules_present && _rules=present
   fi
   # route is the preference, routing what the config may actually use (they differ only while
   # the geo data is missing, docs/adr/0014), geodata says which of the two it is.
@@ -1271,7 +1235,6 @@ EOF
   echo "log=$KR_LOG"
   echo "node=$_node"
   echo "revision=$KR_STATE_REVISION"
-  echo "tproxy=$_tp"
   echo "rules=$_rules"
   echo "route=$_rt"
   echo "routing=$_rte"
@@ -1359,17 +1322,16 @@ kr_cli() {
       esac
       ;;
     tproxy)
-      case "${1:-}" in
-        on|off) kr_tproxy_set "$1" ;;
+      case "${1:-status}" in
         status) kr_tproxy_status ;;
         *)
-          echo "usage: kernelray.sh tproxy {on|off|status}" >&2
+          echo "usage: kernelray.sh tproxy status" >&2
           return 2
           ;;
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy {on|off|status}|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]|mlog append <tag> <message...>}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac

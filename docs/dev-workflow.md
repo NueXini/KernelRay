@@ -27,18 +27,18 @@ node tests/nodelist.test.js            # 45 node list + delete-gate + import-swi
 node tests/link.test.js                # 18 node-link + subscription-Base64 tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
-node tests/config.test.js              # 67 config tests passing（需要 bash 和 /proc）
-node tests/tproxy.test.js              # 14 tproxy tests passing（需要假 iptables/ip）
-node tests/routing.test.js             # 21 routing tests passing（分流模式渲染矩阵 + routing CLI）
-node tests/adblock.test.js             # 15 ad-blocking tests passing（大陆直连去广告渲染 + 失败关闭）
+node tests/config.test.js              # 74 config tests passing（需要 bash 和 /proc）
+node tests/tproxy.test.js              # 17 tproxy tests passing（需要假 iptables/ip）
+node tests/routing.test.js             # 20 routing tests passing（分流模式渲染矩阵 + routing CLI）
+node tests/adblock.test.js             # 17 ad-blocking tests passing（大陆直连去广告渲染 + 失败关闭）
 ```
 
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
 `theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份），测的都是要发布的文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
-特殊字符转义、apply/unapply 的失败路径和启动回滚；假核心只在回滚和 unapply 拒绝用例里
-运行，用 `/proc` 识别进程，不碰 iptables。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、
-冲突检测和启动时接管。
+特殊字符转义、单一渲染形态、apply/unapply 的失败路径和启动回滚；假核心只在回滚和 unapply 拒绝用例里
+运行，用 `/proc` 识别进程。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、
+冲突检测和启动顺序（先 `-test` 再装规则；接管装不上就不起核心）。
 
 ## 2. 打包
 
@@ -165,22 +165,23 @@ adb -s $D shell 'sed -n "1,20p" /data/adb/modules/KernelRay/config.json'   # 第
 `runtime/applied`。切换失败时列表会把刚应用的行标成“未应用”、原节点仍显示“已应用”。
 重新导入保留 id 时该行会显示“有改动”，打开弹窗点「重新应用」即可。
 
-**tproxy（v0.7，开关默认开）**：开关是纯偏好（`tproxy on|off` 只写 `runtime/tproxy`），随核心启动
-生效——应用节点后 Stop→Start 即接管（重启不再算一次启动：开机不启动核心）。状态页 Start / `kr_start` 均会先装规则再起核心：
+**tproxy（v0.7，启动即接管）**：没有开关。每次启动核心都接管——冲突检测 → pin 节点 → 渲染并
+`-test` → 装规则 → 起核心；任何一步失败都不起核心，设备保持直连（`failed/conflict`、
+`failed/rules`、`failed/config-invalid`、`failed/no-config`）。重启不算一次启动：开机不启动核心。
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh start'
 adb -s $D shell 'su -c "iptables -t mangle -S"' | grep KR_TP_        # 规则应存在
 adb -s $D shell 'su -c "cat /data/adb/modules/KernelRay/logs/kernelray.log"'   # 装/拆/冲突判定
-adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status'
+adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status'   # rules=present|absent
 ```
 
 模拟器（x86_64 + ARM 翻译）能装规则但别当真机结论：内核要有 `xt_TPROXY`/`nf_tproxy_core`。
-验证接管真的生效要用普通（非 socks）请求看出口 IP，见 README 的 Verify 一节。关掉：设置页的
-tproxy透明代理开关，或 `tproxy off`，**下次启动核心时生效**。**规则在而核心死 = 断网**
-（fail-closed，设计行为）：再启动核心即恢复接管；想直连就关掉开关再启动。
+验证接管真的生效要用普通（非 socks）请求看出口 IP，见 README 的 Verify 一节。**规则在而核心死 = 断网**
+（fail-closed，设计行为）：再启动核心即恢复接管；想直连就 `unapply`（同时忘掉已应用节点）、
+重启或卸载——已经没有“关掉开关”这条路了。
 
-**分流模式**：和 tproxy 开关不同，它**立即生效**——写偏好 → 重渲染 → `-test` →
+**分流模式**：**立即生效**——写偏好 → 重渲染 → `-test` →
 重启核心，启动失败会把偏好一起退回。偏好是 `runtime/route`，内容是模式名（`cn` / `cnadblock`，
 不存在 = `global`）；安装时若还没设过，安装器会写成 `cnadblock`（缺 geo 数据时跳过，留 `全局`）：
 

@@ -92,6 +92,35 @@ function shPath(p) {
   return "/" + p[0].toLowerCase() + p.slice(2).replace(/\\/g, "/");
 }
 
+// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+function posixPathEnv(extraDir) {
+  return process.platform === "win32"
+    ? extraDir + ";" + process.env.PATH
+    : extraDir + ":" + process.env.PATH;
+}
+
+// A stubs dir whose iptables refuses to create a chain: the rule install fails and the start
+// must be refused (there is no core without takeover, docs/adr/0011).
+function makeFailingIptables(m) {
+  const dir = path.join(m.dir, "fail-bin");
+  fs.mkdirSync(dir, { recursive: true });
+  const body = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *-nL*) exit 1 ;;',
+    '  *-C*) exit 1 ;;',
+    '  *"-N KR_TP_OUTPUT"*) exit 1 ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  ["iptables", "ip6tables"].forEach(function (name) {
+    fs.writeFileSync(path.join(dir, name), body, "utf8");
+    fs.chmodSync(path.join(dir, name), 0o755);
+  });
+  return posixPathEnv(dir) + (process.platform === "win32" ? ";" : ":") + posixPathEnv(m.stubs);
+}
+
 function makeModule(core) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kernelray-route-"));
   dirs.push(dir);
@@ -106,8 +135,40 @@ function makeModule(core) {
   // empty .dat is as good as a missing one.
   fs.writeFileSync(path.join(dir, "bin", "geosite.dat"), "geosite\n");
   fs.writeFileSync(path.join(dir, "bin", "geoip.dat"), "geoip\n");
+  // Every start takes over (docs/adr/0011), so a start needs a kernel that says yes. The
+  // stubs are on PATH for every run; a test that wants a failure brings its own (see
+  // makeFailingIptables).
+  const stubs = path.join(dir, "stubs");
+  fs.mkdirSync(stubs, { recursive: true });
+  const chainless = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *-nL*) exit 1 ;;',
+    '  *-C*) exit 1 ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  const plainIp = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *"route show"*) echo "default via 10.0.2.2 dev wlan0" ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  for (const [name, body] of [
+    ["iptables", chainless], ["ip6tables", chainless], ["ip", plainIp],
+    ["settings", "#!/bin/sh\nexit 0\n"],
+    ["busybox", "#!/bin/sh\nexit 1\n"],
+    ["ping", "#!/bin/sh\nexit 1\n"]
+  ]) {
+    fs.writeFileSync(path.join(stubs, name), body, "utf8");
+    fs.chmodSync(path.join(stubs, name), 0o755);
+  }
   return {
     dir: dir,
+    stubs: stubs,
     config: path.join(dir, "config.json"),
     outbound: path.join(dir, "outbound.json"),
     meta: path.join(dir, "outbound.meta"),
@@ -121,11 +182,14 @@ function makeModule(core) {
 }
 
 function runShell(dir, body, args, extraEnv) {
+  const stubs = path.join(dir, "stubs");
   return execFileSync("bash", ["-c", body, "bash"].concat(args || []), {
     cwd: root,
     env: Object.assign({}, process.env, {
       KR_MODDIR: shPath(dir),
       KR_TEST_SCRIPT: shPath(script),
+      KR_BUSYBOX: shPath(path.join(stubs, "busybox")),
+      PATH: fs.existsSync(stubs) ? posixPathEnv(stubs) : process.env.PATH,
       // The fake cores never bind the socks port, so a start waits for its deadline: shorten
       // it instead of paying 1.5 s per start. A core that exits is still caught on the first
       // poll, which is what the rollback tests rely on.
@@ -156,7 +220,6 @@ function readJson(p) {
 }
 
 const BODY_RENDER = '. "$KR_TEST_SCRIPT"; kr_render_config "$1"';
-const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$1"';
 const BODY_SET = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_route_set "$1"';
 const BODY_PREF = '. "$KR_TEST_SCRIPT"; kr_route_write "$1"';
 const BODY_MODE = '. "$KR_TEST_SCRIPT"; kr_route_mode';
@@ -175,7 +238,12 @@ const CN_RULES_TAKEOVER = [
   { domain: ["geosite:cn"], outboundTag: "direct" },
   { ip: ["geoip:cn"], outboundTag: "direct" }
 ];
-const CN_RULES_IDLE = CN_RULES_TAKEOVER.slice(4);
+// 全局's rule set: the takeover form always owns the DNS module and the port-53 capture.
+const GLOBAL_RULES = [
+  { inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct" },
+  { inboundTag: ["dns"], outboundTag: "proxy" },
+  { network: "tcp,udp", port: 53, outboundTag: "dns-out" }
+];
 
 // ---- rendering --------------------------------------------------------------------------
 
@@ -183,7 +251,7 @@ check("render: 大陆直连 splits DNS and sends mainland destinations direct", 
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
 
   eq(cfg.dns.servers.length, 3, "two domestic resolvers and the DoH fallback");
   eq(cfg.dns.servers[0], {
@@ -207,40 +275,28 @@ check("render: 大陆直连 splits DNS and sends mainland destinations direct", 
 check("render: 全局 keeps the pre-0014 takeover blocks byte for byte", () => {
   const m = makeModule();
   writeOutbound(m);
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns, { tag: "dns", servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns");
   eq(cfg.routing.domainStrategy, "AsIs", "strategy");
-  eq(cfg.routing.rules, [
-    { inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct" },
-    { inboundTag: ["dns"], outboundTag: "proxy" },
-    { network: "tcp,udp", port: 53, outboundTag: "dns-out" }
-  ], "rules");
+  eq(cfg.routing.rules, GLOBAL_RULES, "rules");
 });
 
-check("render: 大陆直连 in the idle form keeps the geo rules and drops the DNS module", () => {
+check("render: there is no idle form left to render", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { KR_TAKEOVER: "0" }));
-  eq(cfg.dns, undefined, "no dns module without takeover");
-  eq(cfg.inbounds.length, 2, "no tproxy inbound");
-  eq(cfg.routing.rules, CN_RULES_IDLE, "geo rules only: no dns inbound exists to route");
-  eq(cfg.routing.domainStrategy, "IPIfNonMatch", "strategy");
-});
-
-check("render: 全局 in the idle form has no routing at all", () => {
-  const m = makeModule();
-  writeOutbound(m);
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { KR_TAKEOVER: "0" }));
-  eq(cfg.routing, undefined, "no routing");
-  eq(cfg.dns, undefined, "no dns");
+  // KR_TAKEOVER is not an input any more: a render is the takeover form, always.
+  eq(cfg.inbounds.length, 3, "tproxy inbound present");
+  eq(cfg.dns.tag, "dns", "the dns module is present");
+  eq(cfg.routing.rules, CN_RULES_TAKEOVER, "the full cn rule set, dns group included");
 });
 
 check("render: an IP node keeps the resolver rule and loses the bootstrap rule", () => {
   const m = makeModule();
   writeOutbound(m, "203.0.113.9");
   runShell(m.dir, BODY_PREF, ["cn"]);
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.routing.rules, CN_RULES_TAKEOVER.slice(1), "no full:host rule for a literal");
   eq(cfg.dns.servers.length, 3, "the split is not tied to the node's hostname");
 });
@@ -250,7 +306,7 @@ check("render: a pinned node address lands in the hosts of the split DNS too", (
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
   fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "203.0.113.9\n");
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns.servers.length, 3, "the split survives the pin");
   eq(cfg.dns.hosts, { "full:n.example.com": "203.0.113.9" }, "hosts pin");
   eq(cfg.routing.rules, CN_RULES_TAKEOVER, "the rules are unchanged by the pin");
@@ -263,7 +319,7 @@ check("degrade: a cn render without geo data falls back to 全局 and says so", 
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
   fs.unlinkSync(m.geosite);
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns, { tag: "dns", servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" },
     "the global dns block, not a dead config");
   eq(cfg.routing.domainStrategy, "AsIs", "the global strategy");
@@ -280,7 +336,7 @@ check("degrade: the preference survives a degraded render (intent is not rewritt
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
   fs.unlinkSync(m.geoip);
-  runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   eq(runShell(m.dir, BODY_MODE).trim(), "cn", "the mode is still cn");
 });
 
@@ -332,7 +388,7 @@ check("cli: routing cn renders, tests and swaps the config, then records the pre
   eq(fs.readFileSync(m.route, "utf8").trim(), "cn", "preference written");
   const cfg = readJson(m.config);
   eq(cfg.routing.domainStrategy, "IPIfNonMatch", "the running config is the cn form");
-  eq(cfg.routing.rules, CN_RULES_IDLE, "idle form: the core is stopped");
+  eq(cfg.routing.rules, CN_RULES_TAKEOVER, "the takeover rule set: there is no other");
 });
 
 check("cli: routing global removes the preference and renders the global form again", () => {
@@ -342,7 +398,9 @@ check("cli: routing global removes the preference and renders the global form ag
   runShell(m.dir, BODY_SET, ["cn"]);
   runShell(m.dir, BODY_SET, ["global"]);
   if (fs.existsSync(m.route)) { throw new Error("global is the absent-file mode"); }
-  eq(readJson(m.config).routing, undefined, "no routing in the global idle form");
+  const cfg = readJson(m.config);
+  eq(cfg.routing.domainStrategy, "AsIs", "the global strategy");
+  eq(cfg.routing.rules, GLOBAL_RULES, "the global rule set");
 });
 
 check("cli: routing cn refuses without geo data and leaves the mode alone", () => {
@@ -419,7 +477,7 @@ check("cli: an unknown mode is a usage error", () => {
 
 // ---- a boot that finds the data gone ------------------------------------------------
 
-check("start: a stale cn config degrades to 全局 when the geo data is gone (switch off)", () => {
+check("start: a stale cn config degrades to 全局 when the geo data is gone", () => {
   const m = makeModule(modeAwareCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
@@ -440,24 +498,27 @@ check("start: a stale cn config degrades to 全局 when the geo data is gone (sw
   runShell(m.dir, BODY_STOP);
 });
 
-check("start: with the switch on, missing geo data still starts and reports the takeover failure", () => {
+check("start: with no rules available, a start is refused instead of falling back", () => {
   const m = makeModule(modeAwareCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_SET, ["cn"]);
   fs.unlinkSync(m.geosite);
-  // No iptables in this harness: the engage path fails and falls back to the idle form, which
-  // must still be a config the core can load.
-  fs.writeFileSync(path.join(m.dir, "runtime", "tproxy"), "on\n");
-  runShell(m.dir, BODY_START);
+  // The rule install fails here. 启动即接管 (docs/adr/0011): there is no core without takeover,
+  // so the start is refused -- and the device stays direct instead of offline.
+  const r = runFail(m.dir, BODY_START, [], { PATH: makeFailingIptables(m) });
+  if (!/takeover rules failed/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the takeover refusal, got: " + r.stdout + r.stderr);
+  }
+  // The config was rendered and tested before the rules were attempted: it is the degraded
+  // global form, because a cn config cannot pass -test without the geo data.
   if (/geosite:cn/.test(fs.readFileSync(m.config, "utf8"))) {
-    throw new Error("the fallback config must be the degraded global form");
+    throw new Error("the config must be the degraded global form");
   }
   const st = readJson(m.status);
-  eq(st.state, "running", "the core starts");
-  eq(st.phase, "failed/rules", "the takeover failure is reported, not hidden");
-  eq(fs.readFileSync(m.route, "utf8").trim(), "cn", "the switch is a preference");
-  runShell(m.dir, BODY_STOP);
+  eq(st.state, "stopped", "state");
+  eq(st.phase, "failed/rules", "phase");
+  eq(fs.readFileSync(m.route, "utf8").trim(), "cn", "the mode is a preference, never rewritten");
 });
 
 // ---- done -------------------------------------------------------------------------------

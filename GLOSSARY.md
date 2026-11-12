@@ -20,12 +20,6 @@ write to, so removing the module leaves nothing behind. Replaced wholesale on up
 resets the user data inside it; that cost is deliberate (see `docs/adr/0002`).
 _Avoid_: install dir, app dir, data dir, storage, work dir
 
-**空转 (Idle run)**:
-The core is running the applied node's config with the tproxy switch off: it listens on its
-local inbounds and no device traffic is redirected into it. Requires an applied node — the
-core never runs a config that was not derived from one.
-_Avoid_: running, normal mode, passive mode, direct run (that is the abolished no-node state)
-
 **直连运行 (Direct run)**:
 The core running the freedom (direct) outbound because no node was ever applied. A state the
 module has abolished: without an applied node the core does not start. The word survives only
@@ -33,20 +27,22 @@ in old logs and issues.
 _Avoid_: idle run, direct mode, freedom mode
 
 **失败规则 (failed/rules)**:
-The status phase meaning 接管规则 installation failed and was rolled back — the one takeover
-failure that can leak traffic. It is written, never inferred by callers, and it never refers to
-the 分流规则, which are refused before the core ever runs them.
+The status phase meaning 接管规则 installation failed and was rolled back. The core does not
+start, so the device goes direct and no traffic is captured into a core that would have to
+proxy it. It is written, never inferred by callers, and it never refers to the 分流规则, which
+are refused before the core ever runs them.
 _Avoid_: rules error, install failed, 分流规则失败
 
 **失败冲突 (failed/conflict)**:
 The status phase meaning takeover was refused because a foreign VPN/TUN or TPROXY setup owns
-the traffic (see 冲突). The device keeps its network; only the takeover is not enforced.
+the traffic (see 冲突). The core does not start, so the device keeps its network and goes
+direct.
 _Avoid_: blocked, busy
 
 **透明代理 (Transparent proxy)**:
 Device traffic entering the core without any app being configured with a proxy address. It is a
-behaviour the user can observe, not a mechanism. The settings-page switch combines the two on
-purpose — its title is tproxy透明代理 — but alone, the behaviour is still not called tproxy.
+behaviour the user can observe, not a mechanism; the mechanism is TPROXY and the act is 接管.
+It is never called tproxy on its own.
 _Avoid_: tproxy (alone, for the behaviour), hijack, redirection
 
 **旁路标记 (Bypass mark)**:
@@ -70,9 +66,9 @@ kept distinct. Defaults to 10808 (socks) and 10809 (http).
 _Avoid_: proxy port, local port
 
 **接管 (Takeover)**:
-The module's act of making device traffic enter the core instead of going out directly. An idle
-run is the absence of takeover.
-_Avoid_: hijack, capture, redirect
+The module's act of making device traffic enter the core instead of going out directly. Every
+core start is a 接管: there is no state in which the core runs without one.
+_Avoid_: hijack, capture, redirect, 开关 (no switch exists, see `docs/adr/0011`)
 
 **接管规则 (Takeover rules)**:
 The module's own iptables chains, marks and policy routing that put device traffic into the
@@ -95,7 +91,7 @@ _Avoid_: 绕过 (as a noun), split tunnel, 白名单模式 (that names a mode, n
 The persisted user choice of how the core routes: 全局 sends every destination through the
 applied node, 大陆直连 sends mainland destinations out `direct`, and 大陆直连去广告 does the same
 as 大陆直连 while also blocking ads. It is a preference of its own and changing it re-derives
-the core config at once — unlike the tproxy switch, which waits for the next core start.
+the core config at once, restarting a running core.
 _Avoid_: 路由模式 (that is Xray's word for the mechanism), 分流开关, 黑白名单
 
 **全局 (Global)**:
@@ -103,7 +99,7 @@ The 分流模式 where the applied node carries every destination and only the m
 policy (DNS, the node host's own lookup, 旁路) routes anything elsewhere. It is the absent-file
 mode and the fallback when the 地理数据 is missing; since docs/adr/0021 it is a choice, not the
 default.
-_Avoid_: 全局代理, global mode, 直连模式 (that is 空转)
+_Avoid_: 全局代理, global mode, 直连模式 (that is 直连运行)
 
 **大陆直连 (Direct-CN)**:
 The 分流模式 where a destination the 地理数据 names as mainland goes out `direct` and
@@ -113,8 +109,8 @@ _Avoid_: 绕过大陆, 大陆白名单, 智能分流
 
 **大陆直连去广告 (Direct-CN-Adblock)**:
 The 分流模式 that routes exactly as 大陆直连 does and additionally blocks the destinations the
-地理数据 names as ads, so they never leave the device. It is the default the installer creates
-(the tproxy switch's install-time pattern), and it never degrades: without the 地理数据 it
+地理数据 names as ads, so they never leave the device. It is the default the installer creates,
+and it never degrades: without the 地理数据 it
 refuses to start rather than run as 大陆直连. The blocking belongs to this one mode, not to a
 switch any mode could carry: 全局 and 大陆直连 leave ads alone.
 _Avoid_: 去广告模式 (that names the behaviour, not the mode), adblock mode
@@ -142,19 +138,10 @@ proxy, instead of letting the network's resolver answer them.
 _Avoid_: DNS hijack, fake DNS (that is a technique the module does not use)
 
 **失败关闭 (Fail-closed)**:
-While takeover is on, a core that dies leaves the rules in place, so traffic is dropped rather
-than going out directly.
+A core that dies leaves the rules in place, so traffic is dropped rather than going out
+directly. The rules exist independently of the core's health, and only an explicit 取消应用,
+a rollback that could not restart a core, a reboot or an uninstall takes them down.
 _Avoid_: kill switch, safe mode
-
-**tproxy透明代理开关 (tproxy switch)**:
-The persisted user choice that device traffic be taken over when the core starts: on, every
-core start (the status page's 启动 — boot does not start the core, see `docs/adr/0018`)
-installs the rules and runs the takeover config;
-off, every start is an idle run. It is created at install and defaults to on, and it is a pure
-preference — changing it never touches a running core, only the next start (see
-`docs/adr/0011`). An update resets it to on with the rest of the module dir.
-_Avoid_: 接管开关 (the name before the settings-page move), enabled flag, mode, tproxy on/off
-(that is the command)
 
 **应用节点 (Apply a node)**:
 Deriving the core's configuration from the selected node and, if the core is running, restarting
@@ -174,7 +161,7 @@ _Avoid_: active node, running node
 Forgetting the applied node: the core config, `runtime/applied`, the rendered outbound and the
 takeover rules are all removed, so the module is back to the never-applied state and the core
 cannot start until a node is applied again. The one trigger is a delete that empties the node
-list while the core is stopped; the tproxy switch is a preference and stays as it is.
+list while the core is stopped.
 _Avoid_: reset, clear, wipe, uninstall
 
 **切换节点 (Switch node)**:
@@ -206,8 +193,9 @@ a category a release does not carry is a config error, never an empty match.
 _Avoid_: geo 文件, 规则库, 数据库, 订阅规则
 
 **核心配置 (Core config)**:
-`config.json`, the config the core actually runs, generated from the template, the applied node
-and (from v0.7) the takeover switch. Never hand-edited.
+`config.json`, the config the core actually runs, generated from the template and the applied
+node. It has one form: the 接管 blocks (tproxy inbound, DNS module, 分流规则, 旁路标记) are
+always present. Never hand-edited.
 _Avoid_: user config, settings
 
 **运行状态 (Runtime status)**:

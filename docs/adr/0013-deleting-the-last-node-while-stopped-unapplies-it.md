@@ -1,8 +1,10 @@
 # 0013 — Deleting the last node while the core is stopped unapplies it
 
 Status: accepted (amends ADR 0007's "deleting the applied node is refused"; adds the `unapply`
-CLI verb and the 取消应用 vocabulary; leaves ADR 0010's start gate and ADR 0011's switch
-untouched)
+CLI verb and the 取消应用 vocabulary; leaves ADR 0010's start gate untouched). The "tproxy
+switch is left alone" in the decision below no longer applies: there is no switch, and
+`unapply` is now the gesture that both forgets the node and takes the capture down — see
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md).
 
 ## Context
 

@@ -2,7 +2,9 @@
 
 Status: accepted (extends ADR 0003; `config.json` is no longer user-owned; the UI's "select
 then Apply" rule is amended by [ADR 0007](0007-one-tap-switches-the-node.md); the render/test/swap
-mechanics below are amended by [ADR 0017](0017-one-render-one-test-per-switch.md))
+mechanics below are amended by [ADR 0017](0017-one-render-one-test-per-switch.md)). The
+`runtime/tproxy` line in the file table is gone, and the render has one form rather than two —
+see [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md).
 
 ## Context
 

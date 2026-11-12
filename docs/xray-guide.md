@@ -42,7 +42,7 @@ Xray 配置由 `log` / `inbounds` / `outbounds` / `dns` / `routing` 五大块组
 | --- | --- | --- |
 | `socks-in`（127.0.0.1:10808） | [socks.md](https://xtls.github.io/config/inbounds/socks.html) | 本地 socks5 入站，`udp: true`；无认证 |
 | `http-in`（127.0.0.1:10809） | [http.md](https://xtls.github.io/config/inbounds/http.html) | 本地 http 代理入站 |
-| `tp-in`（:10810，仅接管时） | [dokodemo-door.md](https://xtls.github.io/config/inbounds/dokodemo-door.html) | 透明代理入站：`followRedirect: true` 接收 iptables TPROXY 转来的流量，`sockopt.tproxy: "tproxy"` 是接收端套接字选项（见 [sockopt.md](https://xtls.github.io/config/transports/sockopt.html)） |
+| `tp-in`（:10810，核心运行时） | [dokodemo-door.md](https://xtls.github.io/config/inbounds/dokodemo-door.html) | 透明代理入站：`followRedirect: true` 接收 iptables TPROXY 转来的流量，`sockopt.tproxy: "tproxy"` 是接收端套接字选项（见 [sockopt.md](https://xtls.github.io/config/transports/sockopt.html)）。只有一个形态：每次启动核心都接管（[ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)） |
 
 ### 出站（outbounds）
 

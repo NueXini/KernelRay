@@ -4,6 +4,10 @@ Routing needs `geosite.dat` and `geoip.dat`: `geosite:cn` / `geoip:cn` only reso
 files sit next to the core. They ship inside the release ZIP in `bin/`, the directory the core
 itself lives in, because a device-side download would make a start depend on the network and
 because the WebUI has no TLS-validating fetcher: ADR 0001's reasoning, one file class further.
+
+Status: accepted (the preference-file pattern it borrows from `runtime/tproxy` is now
+`runtime/route`'s alone, and the 空转 form it mentions no longer exists — see
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
 No asset path is configured: with `XRAY_LOCATION_ASSET` unset the core resolves the files from
 its own executable's directory — 26.10.29 searches there, not the cwd — so the location inside
 the ZIP is the only thing that has to be right.

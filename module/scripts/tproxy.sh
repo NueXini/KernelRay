@@ -5,7 +5,7 @@
 #
 # Implements docs/adr/0004 (module-owned, fail-closed takeover), docs/adr/0006
 # (DNS through the core's DNS module), docs/adr/0008 (namespace values) and
-# docs/adr/0011 (the switch is a default-on preference coupled to the core's start) and
+# docs/adr/0011 (启动即接管: every core start takes over, there is no switch) and
 # docs/adr/0014 (geo data ships in the module; the 分流模式 is a shell-owned preference applied
 # at once). The namespace — capture fwmark 19283, bypass fwmark 19282, routing
 # tables 19283/19282, ip rule preferences 9500/9400, the KR_TP_* chains and tproxy port
@@ -19,14 +19,13 @@ KR_RULE_PREF=9500
 KR_BYPASS=19282
 KR_BYPASS_TABLE=19282
 KR_BYPASS_PREF=9400
-KR_TP_SWITCH=$KR_RUNDIR/tproxy
 KR_NODEIP=$KR_RUNDIR/nodeip
 # The last real kernel answer to "are the takeover rules installed", stamped with the boot
 # that produced it. The 2s status poll reads it instead of calling iptables twice; the
 # safety-critical form readers still ask the kernel (docs/adr/0019).
 KR_TP_RULES=$KR_RUNDIR/rules
 KR_TPLOG=$KR_LOGDIR/kernelray.log
-# 分流模式 (docs/adr/0014): the shell's preference, like the tproxy switch but applied at
+# 分流模式 (docs/adr/0014): the shell's preference, and unlike the 日志等级 it applies at
 # once. Presence of the file means 大陆直连; absence means 全局, which is what every earlier
 # version did. The two domestic resolvers are what the cn mode resolves mainland domains
 # with.
@@ -44,48 +43,6 @@ KR_BUSYBOX=${KR_BUSYBOX:-/data/adb/ksu/bin/busybox}
 # kr_log directly with their own tag.
 kr_tp_log() { kr_log "$@"; }
 
-# The persisted tproxy switch (tproxy透明代理开关): presence of the file is the user's
-# choice that takeover engages when the core starts. It is on from install (ADR 0011)
-# and is a pure preference: writing it never touches a running core or the rules.
-kr_tp_switch_on() { [ -s "$KR_TP_SWITCH" ]; }
-
-# Install-time default (ADR 0011): the switch starts on, so the first core start after
-# a node is applied takes the device over. A user's off is an absent file; only the
-# installer (fresh install or update) recreates it.
-kr_tp_default_on() {
-  [ -s "$KR_TP_SWITCH" ] && return 0
-  kr_dirs
-  printf 'on\n' >"$KR_TP_SWITCH" 2>/dev/null || return 0
-  chmod 600 "$KR_TP_SWITCH" 2>/dev/null
-  kr_tp_log TProxy "tproxy switch defaults to on"
-}
-
-# The switch write since ADR 0011: on|off only persists the preference. It is applied
-# by the next core start (kr_start_locked), never immediately -- a running core is
-# left exactly as it is.
-kr_tproxy_set() { # <on|off>
-  kr_dirs
-  case "$1" in
-    on)
-      printf 'on\n' >"$KR_TP_SWITCH" 2>/dev/null || {
-        echo "could not write $KR_TP_SWITCH" >&2
-        return 1
-      }
-      chmod 600 "$KR_TP_SWITCH" 2>/dev/null
-      kr_tp_log TProxy "tproxy switch: on (takes effect at the next core start)"
-      ;;
-    off)
-      rm -f "$KR_TP_SWITCH"
-      kr_tp_log TProxy "tproxy switch: off (takes effect at the next core start)"
-      ;;
-    *)
-      echo "usage: kr_tproxy_set {on|off}" >&2
-      return 2
-      ;;
-  esac
-  return 0
-}
-
 kr_tp_rules_present() {
   iptables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
   ip6tables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
@@ -94,7 +51,7 @@ kr_tp_rules_present() {
 
 # Rule-presence cache (docs/adr/0019): the last real kernel answer, stamped with the boot
 # that produced it, so the status poll does not ask iptables twice every 2s. Advisory only:
-# kr_tp_form, kr_conf_accept_ondisk and the start path still call kr_tp_rules_present. A
+# kr_conf_accept_ondisk and the start path still call kr_tp_rules_present. A
 # missing or stale cache is repaired by one real check and written back; after a reboot the
 # boot id differs and the first poll checks again.
 kr_tp_rules_cache_write() { # <0|1> [boot-id]
@@ -509,10 +466,10 @@ kr_route_write() { # <global|cn|cnadblock>
 }
 
 # Install-time default: 大陆直连去广告, so a fresh install splits mainland traffic out and blocks
-# ads without the user picking anything. The tproxy switch's pattern (ADR 0011): only the
-# installer creates it, and only when the preference is still unset, so a later choice survives
-# until the next install or update. Skipped while the geo data is missing -- a default the core
-# cannot start with is worse than a default that does less (docs/adr/0021, docs/adr/0014).
+# ads without the user picking anything. Only the installer creates it, and only when the
+# preference is still unset, so a later choice survives until the next install or update.
+# Skipped while the geo data is missing -- a default the core cannot start with is worse than a
+# default that does less (docs/adr/0021, docs/adr/0014).
 kr_route_default() {
   [ -s "$KR_ROUTE" ] && return 0
   if ! kr_geodata_ok; then
@@ -607,15 +564,14 @@ kr_tp_routing_block() { # <1|0> <host> <escaped host>
   fi
   # Ads are refused before any 分流 rule -- first match wins, so a mainland ad domain must not
   # fall into geosite:cn -> direct -- and after the dns/port-53 group above, so a resolver
-  # query is not swallowed by it. The 空转 form has no dns group, so there the rule comes first
-  # (docs/adr/0021).
+  # query is not swallowed by it (docs/adr/0021).
   if [ "$KR_ROUTE_BLOCK_ADS" = 1 ]; then
     _rules=$_rules${_rules:+,}'{"domain":["geosite:category-ads-all"],"outboundTag":"block"}'
   fi
   if [ "$KR_ROUTE_CN" = 1 ]; then
     # Private destinations stay local. Takeover's iptables bypass already keeps them out of
-    # the core, but the 空转 form has no bypass, and a router's admin page is not a proxy
-    # target.
+    # the core, but a local socks client has no bypass, and a router's admin page is not a
+    # proxy target.
     _rules=$_rules${_rules:+,}'{"ip":["geoip:private"],"outboundTag":"direct"}'
     _rules=$_rules',{"domain":["geosite:private"],"outboundTag":"direct"}'
     _rules=$_rules',{"domain":["geosite:cn"],"outboundTag":"direct"}'
@@ -647,7 +603,7 @@ kr_tp_render_blocks() { # [route override]; sets KR_TP_INBOUND, KR_DNS_OUTBOUND,
   return 0
 }
 
-# routing <global|cn|cnadblock>: the 分流模式 preference. Unlike the tproxy switch it re-derives
+# routing <global|cn|cnadblock>: the 分流模式 preference. It re-derives
 # the config at once (docs/adr/0014): render the new form, test it, write the preference, then
 # swap. A swap that fails restores the preference, so it never claims a form the core does
 # not run. With no applied node there is nothing to re-render: the preference is saved and
@@ -712,7 +668,7 @@ kr_route_set() { # <global|cn|cnadblock>
     kr_log Routing "the $1 config did not start; the mode is back to $_cur"
     return 1
   fi
-  rm -f "$KR_RUNDIR/config.json.prev" "$KR_RUNDIR/config.form.prev"
+  rm -f "$KR_RUNDIR/config.json.prev"
   kr_log Routing "$_cur -> $1"
   return 0
 }
@@ -725,57 +681,49 @@ kr_route_status() {
   return 0
 }
 
-# The form config.json must have to agree with the live rules: takeover only while the
-# switch says so *and* the rules are up. A marked outbound with no ip rule loses routing
-# (docs/adr/0008), and a tproxy inbound with no rules captures nothing (docs/adr/0011).
-kr_tp_form() { # 1 = the takeover form, 0 = the idle form
-  if kr_tp_switch_on && kr_tp_rules_present; then
-    printf '1\n'
-  else
-    printf '0\n'
-  fi
-}
-
-# Engage takeover for a core start with the switch on (called from kr_start_locked after the
-# applied-node gate; ADR 0011 couples takeover to the core's start). It owns the *rules*,
-# never the config: the form follows from whether they end up installed (kr_tp_form), and
-# kr_ensure_config -- which runs right after this -- renders that form. Never fails: a
-# conflict or a rule failure leaves the rules down and a failed/* phase, and the caller still
-# starts the core (idle form).
-kr_tp_engage() {
+# The first half of a start (docs/adr/0011): the conflict check and the node pin, both before
+# the config is rendered. The pin must ask while the network is still direct -- a DoH query
+# under the rules would enter a capture that leads into a core that is not up yet -- and the
+# render needs its answer (the DNS module's hosts entry). Called from kr_start_locked right
+# after the applied-node gate. Returns 1 with KR_TP_PHASE set when takeover cannot happen:
+# the caller then refuses the start, because there is no core without takeover (docs/adr/0011).
+kr_tp_prepare() {
   _applied=$(kr_applied_id) || _applied=""
   if [ -z "$_applied" ] || [ "$(kr_meta_get id 2>/dev/null)" != "$_applied" ] || [ ! -s "$KR_OUTBOUND" ]; then
-    # No usable outbound: nothing to capture into, so the rules must not go up.
-    # ADR 0011 supersedes the boot-time rules-without-node install of ADR 0004/0008:
-    # with the switch defaulting on, that path would take a freshly installed
-    # device's traffic hostage until a node is applied. The start gate (ADR 0010)
-    # keeps the core down; the rules wait with it.
-    kr_tp_log TProxy "engage: no usable outbound for the applied node; takeover skipped"
+    # No usable outbound: nothing to capture into, so the rules must not go up. The start
+    # gate (ADR 0010) refuses this start anyway; this keeps the rules from outliving it.
+    kr_tp_log TProxy "prepare: no usable outbound for the applied node; takeover skipped"
     return 0
   fi
   _why=$(kr_tp_conflict) || _why=""
   if [ -n "$_why" ]; then
-    kr_tp_log TProxy "engage: conflict, takeover not enforced: $_why"
+    kr_tp_log TProxy "prepare: conflict, takeover not enforced: $_why"
     KR_TP_PHASE=failed/conflict
-    kr_status_write stopped failed/conflict
-    return 0
+    return 1
   fi
-  # Resolve while the network is still direct; the rules are not up yet. Memoized, so an
-  # apply that already pinned for this render does not ask twice.
+  # Memoized, so an apply that already pinned for this render does not ask twice.
   kr_tp_pin_node
+  return 0
+}
+
+# The second half of a start (docs/adr/0011): the rules go in, still before the core runs
+# (fail-closed, docs/adr/0004), but only once `xray -test` accepted the config -- so a config
+# the core rejects leaves the device direct instead of offline. Returns 1 with KR_TP_PHASE
+# set; the caller then refuses the start. It owns the rules and nothing else.
+kr_tp_engage() {
   if ! kr_tp_install; then
     kr_tp_log TProxy "engage: rule install failed, takeover not enforced"
     KR_TP_PHASE=failed/rules
-    kr_status_write stopped failed/rules
-    return 0
+    return 1
   fi
   KR_TP_PHASE=idle
   kr_tp_log TProxy "engage: takeover rules installed before the core starts"
   return 0
 }
 
+# Read-only diagnosis. There is no switch to report any more (docs/adr/0011); the rules are
+# the fact worth asking about.
 kr_tproxy_status() {
-  kr_tp_switch_on && echo "switch=on" || echo "switch=off"
   kr_tp_rules_present && echo "rules=present" || echo "rules=absent"
   return 0
 }

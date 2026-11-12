@@ -1,6 +1,11 @@
 # 0017 — One render and one test per switch
 
-Status: accepted
+Status: accepted (the start path it describes is amended by
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the config is
+rendered and tested *before* the rules go in, `kr_config_form` and `runtime/config.form` are
+gone with the second form, and `kr_tp_engage` installs rules only. The one-render-one-test
+accounting, `runtime/config.tested` and the split between "a switch renders" and "a start does
+not test" are unchanged)
 
 ## Context
 

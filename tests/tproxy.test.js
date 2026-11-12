@@ -1,6 +1,6 @@
 // TPROXY takeover tests.
 //
-// The rule installer, conflict detection and boot path in module/scripts/tproxy.sh run
+// The rule installer, conflict detection and start path in module/scripts/tproxy.sh run
 // against fake iptables/ip6tables/ip/settings binaries that log their arguments, so the
 // install/remove/conflict/fail-closed semantics are tested without an Android device.
 //
@@ -93,9 +93,11 @@ const fakePing = [
   ""
 ].join("\n");
 
-// -version prints, -test passes, `run -c` stays up so a start can reach "running".
+// -version prints, -test passes, `run -c` stays up so a start can reach "running". Every
+// invocation lands in $FAKE_LOG, so a test can assert what ran before what.
 const fakeCore = [
   "#!/bin/sh",
+  'printf "core %s\\n" "$*" >>"$FAKE_LOG"',
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
   'if [ "$1" = "run" ] && [ "$2" = "-test" ]; then exit 0; fi',
   'if [ "$1" = "run" ] && [ "$2" = "-c" ]; then',
@@ -164,7 +166,6 @@ function makeModule() {
     meta: path.join(dir, "outbound.meta"),
     applied: path.join(dir, "runtime", "applied"),
     status: path.join(dir, "runtime", "status.json"),
-    tproxy: path.join(dir, "runtime", "tproxy"),
     log: path.join(dir, "logs", "kernelray.log")
   };
 }
@@ -198,7 +199,6 @@ function writeApplied(m) {
   fs.writeFileSync(m.outbound, JSON.stringify(fixture));
   fs.writeFileSync(m.meta, "id=" + ID + "\nhost=n.example.com\n");
   fs.writeFileSync(m.applied, ID + "\n");
-  fs.writeFileSync(m.tproxy, "on\n");
 }
 
 function fakeLog(m) {
@@ -365,12 +365,13 @@ check("conflict: a foreign TPROXY rule refuses takeover, our own do not", () => 
   }
 });
 
-// ---- engage (start-coupled takeover, ADR 0011) ------------------------------------------
+// ---- the start path (启动即接管, ADR 0011) ------------------------------------------------
 //
-// These run the whole start path (gate -> engage -> ensure -> fork), because that is where
-// the rules and the config have to agree: engage owns the rules, kr_ensure_config renders
-// the form they demand (docs/adr/0017). The assertions run before the core is stopped, so
-// status.json still describes the start.
+// These run the whole start path (gate -> prepare -> config -> rules -> fork), because that is
+// where the ordering is the contract: the conflict check and the pin come first (while the
+// network is still direct), then the config and its `xray -test`, and only then the rules -- so
+// a config the core rejects leaves the device direct instead of offline. The assertions run
+// before the core is stopped, so status.json still describes the start.
 
 function withBoot(m, env, fn) {
   try {
@@ -384,32 +385,28 @@ function status(m) {
   return JSON.parse(fs.readFileSync(m.status, "utf8"));
 }
 
-check("engage: no usable outbound installs no rules and keeps the switch", () => {
+check("start: no usable outbound installs no rules and refuses the start", () => {
   const m = makeModule();
-  fs.writeFileSync(m.tproxy, "on\n");
-  // A stale takeover-form config from the previous session: it must be left alone --
-  // nothing starts it, because the start gate refuses without a usable outbound.
+  // A stale config from the previous session: with no rendered outbound there is nothing it
+  // could describe, so it must not be run (ADR 0010) -- and nothing may install rules.
   fs.writeFileSync(m.config, JSON.stringify({ sentinel: true }));
   fs.writeFileSync(m.applied, ID + "\n");
   fs.rmSync(m.outbound, { force: true });
   withBoot(m, { FAKE_IPT_NOCHAIN: "1" }, () => {
-    if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
     eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is not silently cleared");
     eq(JSON.parse(fs.readFileSync(m.config, "utf8")), { sentinel: true }, "config untouched");
     const log = fakeLog(m);
     if (log.includes("iptables -t mangle -N KR_TP_OUTPUT")) {
-      throw new Error("no usable outbound means no rules, even with the switch on (ADR 0011)");
+      throw new Error("no usable outbound means no rules (ADR 0011)");
     }
     eq(status(m).state, "failed", "state");
     eq(status(m).phase, "no-config", "phase");
   });
 });
 
-check("engage: nothing applied at all keeps the network direct", () => {
+check("start: nothing applied at all keeps the network direct", () => {
   const m = makeModule();
-  fs.writeFileSync(m.tproxy, "on\n");
   withBoot(m, { FAKE_IP_LINK: TUN_UP }, () => {
-    if (!fs.existsSync(m.tproxy)) { throw new Error("the switch is intent and must survive"); }
     const log = fakeLog(m);
     if (log.includes("-N KR_TP_OUTPUT")) {
       throw new Error("a start without an applied node never installs the rules (ADR 0011)");
@@ -419,49 +416,118 @@ check("engage: nothing applied at all keeps the network direct", () => {
   });
 });
 
-check("engage: a conflict renders the no-takeover config and reports failed/conflict", () => {
+check("start: a conflict refuses the start before the config is rendered", () => {
   const m = makeModule();
   writeApplied(m);
   withBoot(m, { FAKE_IPT_NOCHAIN: "1", FAKE_IP_LINK: TUN_UP }, () => {
-    const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
-    eq(cfg.inbounds.length, 2, "no tproxy inbound after a conflict");
-    eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped");
-    eq(cfg.routing, undefined, "no routing after a conflict");
+    if (fs.existsSync(m.config)) {
+      throw new Error("the conflict is checked before the render; no config may be written");
+    }
+    if (fakeLog(m).includes("-N KR_TP_OUTPUT")) { throw new Error("no rules after a conflict"); }
+    eq(status(m).state, "stopped", "state");
     eq(status(m).phase, "failed/conflict", "phase");
-    eq(status(m).tproxy, "on", "the switch stays on: intent is not silently rewritten");
-    if (fs.existsSync(m.tproxy) === false) { throw new Error("switch file must survive"); }
   });
 });
 
-check("engage: a failed rule install reports failed/rules and stays no-takeover", () => {
+check("start: a failed rule install leaves the tested config on disk and the device direct", () => {
   const m = makeModule();
   writeApplied(m);
   withBoot(m, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_FAIL_N: "1" }, () => {
+    // The config was rendered and passed -test before the rules were attempted: it is the
+    // one form there is, and a core that never starts cannot loop on it.
     const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
-    eq(cfg.inbounds.length, 2, "no tproxy inbound after a rule failure");
-    eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped");
+    eq(cfg.inbounds.length, 3, "the takeover config is already on disk");
+    eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
+    if (!fakeLog(m).includes("core run -test")) {
+      throw new Error("the config must be tested before the rules go in");
+    }
+    eq(status(m).state, "stopped", "state");
     eq(status(m).phase, "failed/rules", "phase");
   });
 });
 
-check("engage: with no conflict the takeover config is on disk before the core starts", () => {
+check("start: xray -test runs before the rules go in, and a good config takes over", () => {
   const m = makeModule();
   writeApplied(m);
-  withBoot(m, {}, () => {
+  withBoot(m, { FAKE_IPT_NOCHAIN: "1" }, () => {
+    const log = fakeLog(m).split("\n");
+    const tested = log.findIndex((l) => l.startsWith("core run -test"));
+    const installed = log.findIndex((l) => l === "iptables -t mangle -N KR_TP_OUTPUT");
+    if (tested < 0) { throw new Error("the config was never tested"); }
+    if (installed < 0) { throw new Error("the rules were never installed"); }
+    if (tested > installed) {
+      throw new Error("the test must precede the rule install (docs/adr/0011)");
+    }
     const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
     eq(cfg.inbounds.length, 3, "tproxy inbound present");
     eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
     eq(cfg.routing.rules.some((r) => r.outboundTag === "dns-out"), true, "dns rule present");
-    eq(fs.readFileSync(path.join(m.dir, "runtime", "config.form"), "utf8").trim(), "1",
-      "the installed config records the form it was rendered in");
+    if (fs.existsSync(path.join(m.dir, "runtime", "config.form"))) {
+      throw new Error("there is no form to record any more");
+    }
     eq(status(m).state, "running", "state");
     eq(status(m).phase, "idle", "phase");
-    if (!fs.existsSync(m.tproxy)) { throw new Error("switch file must survive a successful engage"); }
+  });
+});
+
+check("start: a rejected config installs no rules at all", () => {
+  const m = makeModule();
+  writeApplied(m);
+  const rejecting = [
+    "#!/bin/sh",
+    'printf "core %s\\n" "$*" >>"$FAKE_LOG"',
+    'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
+    'if [ "$1" = "run" ] && [ "$2" = "-test" ]; then exit 1; fi',
+    "exit 0",
+    ""
+  ].join("\n");
+  fs.writeFileSync(path.join(m.dir, "bin", "xray"), rejecting, "utf8");
+  fs.chmodSync(path.join(m.dir, "bin", "xray"), 0o755);
+  withBoot(m, { FAKE_IPT_NOCHAIN: "1" }, () => {
+    if (fakeLog(m).includes("-N KR_TP_OUTPUT")) {
+      throw new Error("a config the core rejects must leave the device direct, not offline");
+    }
+    eq(status(m).state, "failed", "state");
+    eq(status(m).phase, "config-invalid", "phase");
+  });
+});
+
+// ---- there is no switch (ADR 0011) --------------------------------------------------------
+
+check("switch: no switch API survives, and a leftover file is removed by a start", () => {
+  const m = makeModule();
+  writeApplied(m);
+  fs.writeFileSync(path.join(m.dir, "runtime", "tproxy"), "off\n");
+  fs.writeFileSync(path.join(m.dir, "runtime", "config.form"), "0\n");
+  const gone = runAllow(m,
+    '. "$KR_TEST_SCRIPT"; for f in kr_tp_switch_on kr_tproxy_set kr_tp_default_on kr_tp_form; do' +
+    ' command -v "$f" >/dev/null 2>&1 && echo STILL-THERE $f; done');
+  if (gone.stdout.includes("STILL-THERE")) {
+    throw new Error("the switch API is gone: " + gone.stdout);
+  }
+  // kr_cleanup_legacy deletes what an older version left behind, so no stale preference or
+  // form can influence a start it no longer has a reader for (docs/adr/0011).
+  withBoot(m, {}, () => {
+    for (const leftover of ["tproxy", "config.form"]) {
+      if (fs.existsSync(path.join(m.dir, "runtime", leftover))) {
+        throw new Error("a leftover " + leftover + " must be removed");
+      }
+    }
+  });
+});
+
+check("switch: tproxy status reports the rules only, and status.json has no tproxy key", () => {
+  const m = makeModule();
+  writeApplied(m);
+  const out = runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tproxy_status',
+    { FAKE_IPT_NOCHAIN: "1" });
+  eq(out.trim(), "rules=absent", "the diagnosis is the rules, not a preference");
+  withBoot(m, {}, () => {
+    if ("tproxy" in status(m)) { throw new Error("status.json must not carry a switch any more"); }
   });
 });
 
 // ---- the node pin (ADR 0008) -------------------------------------------------------------
-
 check("pin: the DoH answer via wget lands in runtime/nodeip, with the ask on record", () => {
   const m = makeModule();
   writeApplied(m);
@@ -498,37 +564,6 @@ check("pin: a failed DoH ask logs the fallback and answers nothing", () => {
   const log = fs.readFileSync(m.log, "utf8");
   if (!log.includes("the DoH ask failed; falling back to the system resolver")) {
     throw new Error("the fallback is not logged: " + log);
-  }
-});
-
-// ---- the switch is a pure preference (ADR 0011) ------------------------------------------
-
-check("switch: on/off only writes the preference, never the core or the rules", () => {
-  const m = makeModule();
-  const tp = m.tproxy.split("\\").join("/");
-  const body = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tproxy_set off; [ -e "' + tp + '" ] && echo STILL-THERE;' +
-    ' kr_tproxy_set on; grep -q on "' + tp + '" && echo ON';
-  const out = runShell(m, body, { FAKE_IPT_NOCHAIN: "1" });
-  if (out.includes("STILL-THERE")) { throw new Error("off must remove the switch file"); }
-  if (!out.includes("ON")) { throw new Error("on must write the switch file"); }
-  const log = fakeLog(m);
-  if (log.includes("iptables") || log.includes("ip6tables") || log.includes("ip rule")) {
-    throw new Error("the switch write must not install or remove rules");
-  }
-});
-
-check("switch: install defaults it to on, an update resets an off back to on", () => {
-  const m = makeModule();
-  runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_default_on; kr_tp_default_on', {});
-  if (!fs.existsSync(m.tproxy)) { throw new Error("install must create the switch (default on)"); }
-
-  // ADR 0002 + ADR 0011: an update replaces the module dir and re-runs the installer,
-  // so an explicit off does not survive it -- the accepted cost of default-on.
-  const m2 = makeModule();
-  fs.writeFileSync(m2.tproxy, "on\n");
-  runShell(m2, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tproxy_set off; kr_tp_default_on', {});
-  if (fs.readFileSync(m2.tproxy, "utf8").trim() !== "on") {
-    throw new Error("the installer must reset the switch to on");
   }
 });
 

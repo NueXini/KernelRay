@@ -1,7 +1,9 @@
 # 0015 — The 日志等级 is a shell preference applied at the next core start
 
 Status: accepted (the "or reboot" in the next-start rule below no longer applies: nothing
-starts at boot — see [ADR 0018](0018-no-action-button-and-no-boot-start.md))
+starts at boot — see [ADR 0018](0018-no-action-button-and-no-boot-start.md). The 日志等级 is
+now the only deferred preference: the tproxy switch it was compared to is gone, see
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
 
 ## Context
 

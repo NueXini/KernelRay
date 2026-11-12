@@ -21,9 +21,7 @@ its Apply button is the switch gesture).
 | `state.json` → render | WebUI writes, shell reads | the inbound ports (`settings.socksPort` / `settings.httpPort`), extracted at render time (ADR 0009) |
 | `runtime/applied` | shell | id of the node `config.json` was built from |
 | `runtime/config.tested` | shell | a copy of the exact bytes that passed `xray -test` (ADR 0017) |
-| `runtime/config.form` | shell | the form those bytes were rendered in: `1` takeover, `0` 空转 (ADR 0017) |
-| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `tproxy`, `route`, `boot` (the boot that wrote it; a reader treats another boot's file as `idle`, docs/adr/0018) |
-| `runtime/tproxy` | shell | the persisted tproxy switch, a preference written at start (docs/adr/0011) |
+| `runtime/status.json` | shell | `state`, `phase`, `started`, `revision`, `node`, `route`, `boot` (the boot that wrote it; a reader treats another boot's file as `idle`, docs/adr/0018) |
 | `runtime/route` | shell | the persisted 分流模式, read from the file's content: `cn` or `cnadblock`, absent = 全局; the installer writes `cnadblock` when it is unset (docs/adr/0014, docs/adr/0021) |
 | `runtime/rules` | shell | the boot-scoped cache of the last real rule-presence check: the status poll reads it; install/remove and a cache miss write it; the start path still asks iptables (docs/adr/0019) |
 | `runtime/loglevel` | shell | the persisted 日志等级; absent = 警告 (docs/adr/0015) |
@@ -68,11 +66,10 @@ and four outbounds —
 - The takeover placeholders follow the same trick, one per line, each carrying its own
   leading comma: `,"__KERNELRAY_TPROXY_INBOUND__"` in `inbounds` and
   `,"__KERNELRAY_DNS_OUTBOUND__"` in `outbounds`, plus the top-level `"dns"` and `"routing"`
-  keys whose values are quoted placeholders. With takeover on the line is replaced by the
-  real block (authored in `tproxy.sh`); with takeover off the line disappears — except
-  `routing`, which exists in both forms since ADR 0014 (spliced in the two geo modes, dropped
-  in 全局) and is handled by the renderer before the form branch. Both results are valid JSON, and so
-  is the template itself — every placeholder is a quoted string.
+  keys whose values are quoted placeholders. Every one of them is always replaced — there is
+  only one form ([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
+  — and the result is valid JSON, as is the template itself, because every placeholder is a
+  quoted string.
 - `config.json` never contains a placeholder. `kr_render_config` refuses a template without
   the outbound one.
 
@@ -80,18 +77,15 @@ The shell does not parse the outbound. It reads `outbound.json` as an opaque JSO
 UI writes one line; newlines are only whitespace if a human pretty-prints it), so protocol
 knowledge stays in the tested JS renderer (`tests/outbound.test.js`).
 
-## The no-takeover form
+## The one form
 
-Every render decides between the no-takeover form (the 空转 form: the applied node's config
-without takeover) and the takeover form ([ADR 0008](adr/0008-takeover-namespace-boot-and-toggle-semantics.md)):
+Every render is the takeover form ([ADR 0008](adr/0008-takeover-namespace-boot-and-toggle-semantics.md));
+there is no second one, because every core start takes over
+([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)). The renderer is
+a pure function of the template, the applied outbound and the preferences: it asks the kernel
+nothing.
 
-takeover is rendered when the persisted switch (`runtime/tproxy`) is on **and** the rules are
-actually present (`kr_tp_rules_present`, checked against iptables — switch on without rules is
-the failed-start state, and a mark without its ip rule loses routing). Callers can force
-either form with `KR_TAKEOVER=1|0`; the start-time engagement forces the form it is about to
-enforce.
-
-The takeover form adds: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
+The takeover blocks are: the dokodemo-door tproxy inbound on wildcard `::`, port 10810; the
 `dns-out` outbound; the `dns` module (upstream depends on the 分流模式, and 大陆直连去广告 adds
 its `hosts` sink, below) carrying
 `tag: "dns"` — the name every DNS routing rule below matches on, so the core stamps the
@@ -99,40 +93,38 @@ module's own upstream queries with it instead of its internal `xray.system.<uuid
 routing rules — the applied node's hostname resolves through `direct` (skipped when the host is an IP
 literal), the DNS module's upstream queries go through `proxy`, and port 53 tcp/udp goes to
 `dns-out`. The node outbound's `"__KERNELRAY_MARK__"` placeholder becomes the bypass mark
-19283; in the no-takeover form it becomes `0` (no mark). The placeholder itself is written by
-the UI renderer, which cannot know the switch state.
+19282. The placeholder itself is written by the UI renderer; a rendered outbound that lost it
+is refused, because under the rules its packets would be captured back into the core.
 
-The 空转 form keeps the 分流 rules when the mode is 大陆直连 or 大陆直连去广告 (there is no `dns`
-inbound, so only the routing rules are authored — the ad sink is the takeover form's alone); in
-全局 it has no `routing` key at all.
+The 分流 rules are always authored too. 全局 carries the DNS group and the port-53 capture;
+大陆直连 and 大陆直连去广告 add the geo rules, and 大陆直连去广告 adds the ad sink to the DNS
+module.
 
-Applying a node while the rules are up renders the takeover form — a no-takeover config
-would lose routing for the node outbound. Since ADR 0011 the switch (`kernelray.sh tproxy
-on|off`) only writes the preference; the render → `-test` → swap machinery runs at the core
-start: `kr_start_locked` engages takeover (conflict check → rules → takeover config, the
-fail-closed order) when the switch is on, and tears stale rules down when it is off.
+Applying a node renders and tests the candidate before the running core is touched, so a bad
+node never stops it (ADR 0007). The start re-renders only when the bytes differ — that is how a
+config written under an older preference (the geo data went missing, the level changed) is
+repaired, and how a config from a version that still had the second form is replaced.
 
-## Start and the switch
+## The start path
 
-`kr_start_locked` consults the switch first ([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
-with the switch on it runs `kr_tp_engage`, which pins the node host while the network is still
-direct, installs the rules before the core starts (fail-closed), and on a conflict or a rule
-failure leaves the rules down and records the `failed/conflict` / `failed/rules` phase while
-leaving the switch file untouched — the switch is a preference and is never silently
-rewritten; the WebUI offers a retry. With no applied node the start gate refuses first: the
-core stays down and the rules go nowhere, so a default-on switch cannot take a nodeless device
-over. With the switch off, any stale rules come down and the start is an idle run.
+`kr_start_locked` runs the gate, then the two takeover halves with the config between them
+([ADR 0011](adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
 
-Engage owns the rules and nothing else; the config follows from them. `kr_config_form` is the
-one place that answers "which form do these rules need" — takeover while the switch says so
-*and* the rules are up, the idle form otherwise — and `kr_ensure_config`, which runs right after
-engage, renders that form and compares bytes. So the directions that used to need their own
-detector are repaired by the same comparison: a config that is *more* takeover-y than the
-switch allows (the documented "turn it off and start again" recovery, which would otherwise
-leave the node's outbound carrying a bypass mark with no ip rule), one that is *less*
-takeover-y than the rules that are up (a capture into a core with no tproxy inbound blackholes
-traffic), a 大陆直连 config whose geo data has gone (ADR 0014), and a log level that changed
-while the core was down (ADR 0015).
+1. `kr_tp_prepare` — the conflict check and the node pin, while the network is still direct
+   (the pin's DoH ask must not enter a capture that leads into a core that is not up).
+2. `kr_ensure_config` — render and `xray -test`; the bytes on disk are swapped in only when
+   they differ from the tested ones.
+3. `kr_tp_engage` — install the rules, still before the core runs (fail-closed, ADR 0004).
+4. fork the core and wait for its inbound.
+
+Any step that fails refuses the start: the core stays down, the device goes direct, and the
+status records `failed/conflict`, `failed/rules`, `failed/config-invalid` or `failed/no-config`.
+The ordering is the point: a config the core rejects leaves no live capture behind, so the
+failure direction is "direct", never "offline".
+
+`kr_tp_install` is idempotent — rules already present are left alone — which is what makes a
+restart cheap and what repairs a swap whose core never came back (`kr_swap_tp_rollback` removes
+the rules the swap brought up).
 
 ## When a start counts as done
 
@@ -152,7 +144,7 @@ processes.
 
 ## The 日志等级
 
-The log level is a render input and a deferred preference, like the tproxy switch (ADR 0015). The UI
+The log level is a render input and a deferred preference (ADR 0015). The UI
 saves it through `kernelray.sh loglevel` (警告 is the default and removes the preference file),
 and the next core start notices that `config.json` carries a different level, re-renders it and
 only then runs `-test` and starts. Nothing else re-renders on a level change. Because
@@ -183,17 +175,18 @@ The shell:
    the resolve needs a working network and the render needs its answer;
 2. asks `kr_config_candidate <id>` for the config this switch would run. It checks the id and
    that `outbound.meta`'s `id` equals it, renders the template + outbound into
-   `runtime/config.new.json` in the form the live rules demand, and runs
+   `runtime/config.new.json`, and runs
    `xray run -test -c` on it into `logs/xray.log` — **only when those bytes differ from
    `config.json`**. When they do not (re-applying the same node), the whole step costs nothing
    and the gesture ends here: no test, no stop, no restart;
 3. `kr_swap_install` remembers whether the core is running, saves the old config to
-   `runtime/config.json.prev` (and its form to `runtime/config.form.prev`), stops the core if it
+   `runtime/config.json.prev`, stops the core if it
    was running, atomically `mv`s the candidate to `config.json`, chmods it `0600`, records the
-   tested marker + form and writes `runtime/applied`;
+   tested marker and writes `runtime/applied`;
 4. `kr_swap_start` starts the core if it was running before. If the new config does not start,
-   `kr_swap_rollback` restores `config.json.prev`, its form and the old applied id, then starts
-   the old config again;
+   `kr_swap_rollback` restores `config.json.prev` and the old applied id, then starts
+   the old config again — and if that start does not come back either, it removes the rules the
+   swap brought up, so a failed swap never leaves a device with no core and a live capture;
 5. if the core was stopped, writes `status.json` as `stopped/idle` with the new node id.
 
 Failure semantics:
@@ -231,7 +224,7 @@ shell one flat outbound. The one exception is the inbound ports
 extracts exactly two flat integer keys from the `settings` object with `sed` and falls back
 per field to 10808/10809 when anything is off. The 分流模式 did not grow that exception: it is
 the shell's own preference file ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)),
-like the tproxy switch, so the `sed` still reads two integers. The 日志等级 is the same kind of
+so the `sed` still reads two integers. The 日志等级 is the same kind of
 shell preference ([ADR 0015](adr/0015-log-level-waits-for-the-next-core-start.md)).
 
 ## Applying the inbound ports
@@ -264,16 +257,16 @@ demands an applied node: without one, nothing starts and status.json records `st
 the module turns intent into a config
 ([ADR 0017](adr/0017-one-render-one-test-per-switch.md)):
 
-- it renders from `outbound.json` in the form the live rules demand and compares the bytes with
+- it renders from `outbound.json` and compares the bytes with
   `config.json`. Identical bytes are left alone (no test, no write); different bytes are tested
-  and swapped in. That is the whole drift repair: the switch moving, the log level changing and
-  the geo data disappearing all change the rendered bytes, so none of them needs its own
+  and swapped in. That is the whole drift repair: the log level changing and
+  the geo data disappearing both change the rendered bytes, so neither needs its own
   detector;
 - when `outbound.meta` names a different node than `runtime/applied` — a switch that failed,
   where the UI has already written the *next* node — the config on disk is the only description
-  of the applied node, so it is taken as it is. Its recorded form must still agree with the live
-  rules; otherwise the start refuses with "re-tap the node in the WebUI" instead of running a
-  marked outbound with no ip rule or an idle config under installed rules;
+  of the applied node, so it is taken as it is, through the same `xray -test` gate. With no
+  rendered outbound at all there is nothing the config on disk could describe, so the start is
+  refused instead ("re-tap the node in the WebUI");
 - a refusal (no applied node, no outbound, no config to fall back to) fails the start with
   `failed/no-config`, a rejected `-test` with `failed/config-invalid`: claiming a node is
   applied while the core ran something else would be worse than staying down.
@@ -301,7 +294,7 @@ once ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mo
 - **No applied node.** There is nothing to re-render: the preference is written and the next
   apply renders it.
 - **Default.** The installer writes `cnadblock` when `runtime/route` is still unset
-  (`kr_route_default`, the `kr_tp_default_on` pattern), and skips it while the geo data is
+  (`kr_route_default`), and skips it while the geo data is
   missing — then 全局 stays the mode, because a default the core refuses to start with is worse
   than one that does less (docs/adr/0021). A user's 全局 is an absent file, so the next install
   or update recreates the default.
@@ -312,7 +305,7 @@ once ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mo
   never degrades**: a mode whose name promises blocking must not render as 大陆直连, so the
   missing file is left to `xray -test` and the start is refused instead — `failed
   config-invalid`, one `Routing` line in `kernelray.log`, `geo data missing` on stderr for the
-  WebUI's toast, and the switch refuses the same way up front. That is the one deliberate
+  WebUI's toast, and the routing CLI refuses the same way up front. That is the one deliberate
   departure from 0014's "never a dead core" (ADR 0021). The same function sets `KR_ROUTE_CN`
   and `KR_ROUTE_BLOCK_ADS`, which the DNS and routing builders read instead of comparing mode
   strings.
@@ -320,14 +313,14 @@ once ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mo
   (`223.5.5.5`, `119.29.29.29`) filtered by `expectIPs: ["geoip:cn"]` for `domains:
   ["geosite:cn"]`, with the DoH kept as the fallback for everything else; a routing rule that
   sends those resolvers' own queries `direct`; `domainStrategy: IPIfNonMatch`; and
-  `geoip:private`, `geosite:private`, `geosite:cn`, `geoip:cn` → `direct`. The 空转 form gets
-  the last four only. 大陆直连去广告 adds two more to that render: `dns.hosts["geosite:category-ads-all"]
+  `geoip:private`, `geosite:private`, `geosite:cn`, `geoip:cn` → `direct`. 全局 renders none
+  of those four. 大陆直连去广告 adds two more to that render: `dns.hosts["geosite:category-ads-all"]
   = "#3"` — the DNS module answers an empty response with rcode 3 (NXDOMAIN) instead of
   resolving, so an ad domain never gets an address (`#<n>` needs core ≥ 25.7.23) — and
   `{"domain": ["geosite:category-ads-all"], "outboundTag": "block"}`, placed after the
   dns/port-53 group and before the geo rules: first match wins, so a mainland ad domain must not
   fall into `geosite:cn` → `direct`, and a resolver query must not be swallowed by the block.
-  The 空转 form gets the routing rule alone (no dns module, no sink). 全局 keeps the pre-0014
+  全局 keeps the pre-0014
   blocks byte for byte (`AsIs`, one DoH, three rules).
 - **The asset path.** Nothing is exported. `bin/` holds the core and its data, and with
   `XRAY_LOCATION_ASSET` unset the core resolves `geosite.dat`/`geoip.dat` from its own

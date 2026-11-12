@@ -5,13 +5,14 @@ on an Android device.
 
 **v0.7 — transparent proxy (TPROXY takeover).** The core exposes local
 `socks` / `http` inbounds on `127.0.0.1`. The WebUI keeps a node list; tapping a node opens a
-detail dialog and its **Apply** button switches the core to it. The tproxy switch in the WebUI
-settings (tproxy透明代理) decides whether
-device traffic is taken over at each core start: **on by default**, so once a node is applied
-every start installs iptables TPROXY rules and policy routing and all device traffic
+detail dialog and its **Apply** button switches the core to it. Takeover is not optional:
+**every core start** installs iptables TPROXY rules and policy routing, so all device traffic
 (TCP/UDP, IPv4/IPv6, every UID) enters the core, with DNS answered by the core's DNS module
-through the node. It is start-coupled — flipping it never touches a running core — and
-fail-closed: while the rules are up, a dead core means no traffic instead of leaked traffic.
+through the node. A start whose takeover cannot be enforced — another VPN owns the traffic, a
+rule install fails, the core rejects the config — is **refused**: no rules and no core, so the
+device stays direct instead of offline. It is fail-closed the other way too: while the rules
+are up, a core that dies means no traffic instead of leaked traffic
+([ADR 0011](docs/adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)).
 
 **v0.9 — 分流模式 (routing modes).** Settings gains a routing mode: **全局** (the applied node
 carries every destination — the default, and what every earlier version did) or **大陆直连**
@@ -27,15 +28,15 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | --- | --- |
 | starts | only when the user asks: the WebUI's 启动 button (or `kernelray.sh start`). Nothing starts at boot, and a start without an applied node stays refused |
 | keeps state in | `/data/adb/modules/KernelRay/` — the module dir, and the *only* place we write |
-| listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, only while takeover is on) |
+| listens on | `127.0.0.1:10808` (socks5+socks5h), `127.0.0.1:10809` (http) — ports configurable on the WebUI settings page (state.json `settings`); wildcard `:10810` (tproxy, whenever the core runs) |
 | outbound | the applied node, or `direct` for a destination the 分流规则 match; nothing starts until a node is applied |
 | switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core — one render and one test, and no restart at all when the bytes do not change ([ADR 0017](docs/adr/0017-one-render-one-test-per-switch.md)) |
-| takes over device traffic | the tproxy switch (WebUI settings, on by default) makes every core start install the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules |
+| takes over device traffic | every core start installs the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules, and a start that cannot install them is refused |
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
 | routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `bin/`, beside the core |
-| WebUI | the only manual surface: start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the tproxy switch, the 分流模式 and the 日志等级 live in Settings. The module ships no `action.sh`, so the manager's module card has no ▶ button ([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)) |
+| WebUI | the only manual surface: start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the 分流模式 and the 日志等级 live in Settings. The module ships no `action.sh`, so the manager's module card has no ▶ button ([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)) |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
-| log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings; rotated to `xray.log.1` at 1MB on a start) and `logs/kernelray.log` (module: rules, conflicts, toggle) |
+| log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings; rotated to `xray.log.1` at 1MB on a start) and `logs/kernelray.log` (module: rules, conflicts, starts) |
 
 > **Everything lives in the module dir.** Nothing is written outside it, so uninstalling leaves no
 > residue. The flip side: a module update replaces that directory wholesale, so `config.json`,
@@ -44,56 +45,58 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 
 Point any app, Termux command or adb-forwarded client at the socks port to check that the
 core really is forwarding traffic — a live pid alone proves nothing. Without an applied node
-the core forwards direct; after applying a node in the WebUI the same request exits through it.
+the core does not start, so a working socks request always exits through the applied node.
 
 ## Transparent proxy (takeover)
 
-The tproxy switch in Settings is the whole UI for the feature, and it is deliberately boring
-([ADR 0011](docs/adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)):
+There is no switch: takeover is what a core start *is*
+([ADR 0011](docs/adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)).
 
-- **On by default.** Install creates the switch and every update resets it (the module dir is
-  replaced wholesale). It only bites together with an applied node: without one, starts stay
-  idle and no rules go up.
-- **It applies at the next start.** Flipping it never touches a running core; stop → start
-  applies it. Start-coupled means the rules are installed before the core runs.
-- **Fail-closed.** While the switch is on, the rules exist independently of the core's health:
-  they are installed before the core starts, and a core that crashes later leaves them in
-  place, so traffic is dropped instead of going out direct. Recovery is starting the core
-  again (tproxy comes back), or switching the switch off and starting (direct) — both work
-  without network.
+- **Every start takes over.** A start without an applied node is refused by the gate (nothing
+  to proxy), and every other start installs the rules and runs the one takeover config. There
+  is no local-only mode: this module is a transparent proxy.
+- **No core without takeover.** The start is ordered: conflict check and node pin first (while
+  the network is still direct), then the config and its `xray -test`, then the rules, then the
+  core. If any step fails the core is not started, the device goes direct, and the status
+  reports `failed/conflict`, `failed/rules`, `failed/config-invalid` or `failed/no-config`; the
+  WebUI offers a Retry that runs the same start. A config the core rejects therefore never
+  leaves a live capture behind.
+- **Fail-closed.** Once the rules are up they exist independently of the core's health: a core
+  that crashes later leaves them in place, so traffic is dropped instead of going out direct.
 - **What is captured.** Device-local TCP and UDP, IPv4 and IPv6, all UIDs — including DNS,
   even queries aimed at a LAN resolver. Bypassed: loopback, private/link-local/multicast
   ranges, DHCP, and the core's own connections (via the bypass mark). ICMP stays direct:
   `ping` is not proxied, that is documented behaviour, not a bug.
 - **Conflicts refuse to fight.** A UP `tun*`/`wg*` interface, an always-on VPN setting or a
   foreign `-j TPROXY` rule blocks the takeover at start with `failed/conflict`. Detection is
-  heuristic; the rule of thumb stands: only one transparent proxy may be active. After a
-  conflict the module stays idle and the WebUI offers a retry; the switch itself is not
-  silently reset.
+  heuristic; the rule of thumb stands: only one transparent proxy may be active. The core does
+  not start in that state — the conflict is the honest report, and resolving it or uninstalling
+  are the two ways out.
 - **The listener is not an open proxy.** The tproxy inbound binds a wildcard address; a filter
   rule drops direct access to port 10810 from anything but loopback.
 
-Recovery cheat sheet: device offline with the switch on means the core died — start it again
-(tproxy comes back with it), or switch tproxy off in Settings and start to go direct (the config
-is re-rendered to match, so the node's outbound loses its bypass mark);
-`kernelray.sh tproxy off` writes the same preference, and a reboot clears the rules too — they
-live in netfilter, which does not survive one
-([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)). A core that died on its own
-shows up as **failed · core exited** on the Status page — the pidfile outlived the process — so
-a dead core is not mistaken for a stopped one. `failed/rules` means an install failed
-and was rolled back (see `logs/kernelray.log`); `failed/conflict` means another VPN owns the
-traffic. The bypass routing copies the current default route at start time; if the network
-changes while takeover is on, restart the core (stop, then start) to rebuild it.
+Recovery cheat sheet. A device with no network and a running-status core that is dead means the
+rules outlived it (fail-closed). Four ways out, all of them work without network: press
+**Start** again (the rules are already up, so the start reuses them and re-runs the core);
+`kernelray.sh unapply` (forgets the node and takes the capture down); reboot (netfilter does
+not survive one, see [ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)); or
+uninstall. There is no "switch it off" any more.
+A core that died on its own shows up as **failed · core exited** on the Status page — the
+pidfile outlived the process — so a dead core is not mistaken for a stopped one.
+`failed/rules` means an install failed and was rolled back (see `logs/kernelray.log`);
+`failed/conflict` means another VPN owns the traffic. The bypass routing copies the current
+default route at start time; if the network changes while takeover is on, restart the core
+(stop, then start) to rebuild it.
 
-The mechanism details — namespace values and toggle semantics — are pinned down in
+The mechanism details — namespace values and the rule set — are pinned down in
 [`docs/adr/0008`](docs/adr/0008-takeover-namespace-boot-and-toggle-semantics.md),
 built on [`docs/adr/0004`](docs/adr/0004-tproxy-takeover-is-module-owned-and-fail-closed.md)
 and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 
 ## 分流模式 (routing mode)
 
-Settings has a second switch, and it is not a tproxy switch: it decides *where* traffic goes,
-not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)).
+Settings has a routing mode, and it decides *where* traffic goes, not whether it is captured
+([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)).
 
 - **全局 (the default).** The applied node carries everything; only the module's fixed policy
   (DNS, the node's own lookup, bypass) routes anything elsewhere. This is what every earlier
@@ -107,12 +110,12 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
   `223.5.5.5` and `119.29.29.29` (filtered by `expectIPs: ["geoip:cn"]`, so an overseas CDN
   answer falls through), and only those queries go direct; everything else keeps the DoH
   through the node.
-- **It applies at once.** Unlike the tproxy switch, changing the mode re-renders the config,
-  tests it and restarts a running core — and rolls the mode back if the new config does not
-  start. Nothing about routing needs the start-time ordering takeover does.
-- **It works without takeover too.** The 空转 form keeps the same geo rules (there is no `dns`
-  inbound there, so only the geo rules are authored), so a local socks client gets the same
-  分流.
+- **It applies at once.** Changing the mode re-renders the config, tests it and restarts a
+  running core — and rolls the mode back if the new config does not start. Nothing about
+  routing needs the start-time ordering takeover does.
+- **It reaches the local inbounds too.** The geo rules are authored whether or not a client is
+  a taken-over app or a local socks client, so an app pointed at `127.0.0.1:10808` gets the
+  same 分流.
 - **The geo data ships with the module.** `bin/geosite.dat` + `geoip.dat` sit beside the core
   in the ZIP, so nothing is fetched at install or at start, and the data's age is the release's
   age. Which set is pinned is a per-release call recorded in the release notes: the release
@@ -132,7 +135,7 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `module/` | The module itself; its **contents** become the root of the release ZIP |
 | `module/module.prop` | id, version and **versionCode** — the only source of version information |
 | `module/scripts/kernelray.sh` | shared helpers: paths, core probing, start/stop, apply, status; also the CLI used by the WebUI |
-| `module/scripts/tproxy.sh` | takeover: rule install/remove, conflict detection, the start-time engagement, the switch preference; also the 分流 blocks (DNS and routing) and the `tproxy` / `routing` CLIs; sourced by `kernelray.sh` |
+| `module/scripts/tproxy.sh` | takeover: rule install/remove, conflict detection, the start-time prepare/engage pair; also the 分流 blocks (DNS and routing) and the `tproxy status` / `routing` CLIs; sourced by `kernelray.sh` |
 | `module/webroot/index.html` | the WebUI markup: plain HTML, no build step, no dependencies |
 | `module/webroot/app.css` | WebUI styles; both palettes live here, keyed on the `data-theme` attribute |
 | `module/webroot/theme.js` | the theme preference: valid values, `auto` resolution, and the `data-theme` stamp `<head>` runs before the first paint |
@@ -147,15 +150,15 @@ not whether it is captured ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module
 | `tests/link.test.js` | node → share-link and subscription-Base64 tests, round-tripped through the shipped parser |
 | `tests/prefs.test.js` | Settings-page preference (theme, language, log buffer) normalise/load/save tests, run against the shipped block |
 | `tests/theme.test.js` | theme pref → `data-theme` resolution, the system-following subscription and the head-time stamp, run against the shipped `theme.js` |
-| `tests/config.test.js` | template assembly, takeover/idle render forms, apply failure paths, start rollback and the 日志等级's start-time repair, run against the shipped shell + a fake core |
-| `tests/tproxy.test.js` | rule install/remove, conflict detection, the start-time engagement and the switch preference, run against fake iptables/ip binaries |
-| `tests/routing.test.js` | 分流模式 render matrix (全局/大陆直连 × takeover/idle), the geo-data degradation and the `routing` CLI's failure paths, run against the shipped shell |
+| `tests/config.test.js` | template assembly, the one render form, apply failure paths, start rollback and the 日志等级's start-time repair, run against the shipped shell + a fake core |
+| `tests/tproxy.test.js` | rule install/remove, conflict detection, the start order (test before rules, no core without takeover) and the absence of any switch, run against fake iptables/ip binaries |
+| `tests/routing.test.js` | 分流模式 render matrix (全局/大陆直连), the geo-data degradation and the `routing` CLI's failure paths, run against the shipped shell |
 | `docs/webui.png` | screenshot of the WebUI |
 | `module/config.example.json` | config template (placeholder, not runnable) used to generate `config.json` |
 | `module/bin/` | the arm64 core and the geo data it loads (`geosite.dat`, `geoip.dat`), **not committed** — see `module/bin/README.md` |
 | `module.yaml` | KernelSU Modules display metadata (name, summary, icon, tags, …) |
 | `scripts/pack.sh` | builds `build/KernelRay-<versionCode>-<version>.zip` from `module/` |
-| `GLOSSARY.md` | what we mean by node / subscription / selected node / module dir / idle run |
+| `GLOSSARY.md` | what we mean by node / subscription / selected node / module dir / takeover |
 | `docs/adr/` | decisions worth remembering |
 
 ## Install
@@ -198,15 +201,15 @@ adb forward tcp:11080 tcp:10808
 curl -sS -o /dev/null -w '%{http_code}\n' --socks5-hostname 127.0.0.1:11080 https://www.gstatic.com/generate_204
 ```
 
-After switching to a node in the WebUI, the same `curl` exits through that node; before that it
-is a direct freedom connection. The socks request proves the core works either way, so check
-`runtime/applied` when the question is which path it took.
+After applying a node in the WebUI, the same `curl` exits through that node. Without an applied
+node the core does not start at all, so a successful socks request always means the applied
+node carried it; check `runtime/applied` when the question is which node that was.
 
-With takeover on, verify that device traffic — not just the socks client — goes through:
+To verify that device traffic — not just the socks client — goes through:
 
 ```sh
 adb shell su -c 'iptables -t mangle -S KR_TP_OUTPUT | head'   # the module's own rules
-adb shell su -c 'cat /data/adb/modules/KernelRay/runtime/status.json'   # "tproxy":"on"
+adb shell su -c '/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status'   # rules=present
 adb shell su -c 'cat /data/adb/modules/KernelRay/logs/kernelray.log'
 # a plain (non-socks) request from the device must exit through the node:
 adb shell su -c 'curl -sS -o /dev/null -w "%{http_code} %{remote_ip}\n" https://www.gstatic.com/generate_204'
@@ -244,13 +247,12 @@ them:
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
 - **Settings** — a **General** card with the theme (auto / 日间 / 夜间), the UI language
   (auto / 中文 / English), the log buffer size and the 日志等级 (关闭 / 错误 / 警告 / 信息 /
-  调试), the inbound ports, the tproxy switch (tproxy透明代理), and the 分流模式 (全局 /
-  大陆直连) with the pinned geo-data version under it. Theme, language and log buffer are
-  WebView preferences; the ports live in `state.json`, the tproxy switch in `runtime/tproxy`,
+  调试), the inbound ports, and the 分流模式 (全局 / 大陆直连) with the pinned geo-data
+  version under it. Theme, language and log buffer are
+  WebView preferences; the ports live in `state.json`,
   the routing mode in `runtime/route` and the log level in `runtime/loglevel`, so none of
-  them survives an update or uninstall. The log level applies at the next core start (like
-  the tproxy switch), not immediately; 调试 writes a lot, so switch back to 警告 when the
-  diagnosis is done.
+  them survives an update or uninstall. The log level applies at the next core start, not
+  immediately; 调试 writes a lot, so switch back to 警告 when the diagnosis is done.
 
 Tabs are hash routes (`#/status`, `#/nodes`, `#/log`, `#/settings`): a reload or a deep link
 lands on the same tab, and anything else falls back to `#/status`. Only the visible tab is
@@ -317,10 +319,10 @@ preferences are tested without a browser: `node tests/parse.test.js`, `node test
 the marked blocks from the shipped `app.js`; `node tests/theme.test.js` evaluates the shipped
 `theme.js` with `window`/`document` stubbed, the way `<head>` runs it.
 `node tests/config.test.js` sources the shipped shell against a fake core and checks template
-assembly, escaping, the idle/takeover render forms, apply's failure paths and the
+assembly, escaping, the one render form, apply's failure paths and the
 start-rollback path. `node tests/tproxy.test.js` runs the rule installer, conflict detection,
-the start-time engagement and the switch preference against fake `iptables`/`ip` binaries
-that log their arguments.
+the start order (the config is tested before the rules go in, and a start that cannot take
+over is refused) against fake `iptables`/`ip` binaries that log their arguments.
 
 The page is a dumb client: every core action runs the same CLI the shell uses, so behaviour
 cannot diverge between the two entry points.
@@ -332,9 +334,7 @@ cannot diverge between the two entry points.
 /data/adb/modules/KernelRay/scripts/kernelray.sh stop
 /data/adb/modules/KernelRay/scripts/kernelray.sh apply <node-id>
 /data/adb/modules/KernelRay/scripts/kernelray.sh unapply    # forget the applied node: rules, config, applied id, outbound
-/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy on     # the switch: engages at the next core start
-/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy off    # the switch: idle starts until turned on again
-/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status
+/data/adb/modules/KernelRay/scripts/kernelray.sh tproxy status   # read-only: rules=present|absent
 ```
 
 `apply` is the last step of the WebUI flow: it expects `outbound.json` and `outbound.meta` to

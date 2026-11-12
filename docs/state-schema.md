@@ -84,8 +84,8 @@ apply — and does neither when the config already carries the saved ports
 ([ADR 0017](adr/0017-one-render-one-test-per-switch.md)). Every other field in `settings` is
 preserved verbatim and not interpreted yet.
 
-The 分流模式 is deliberately **not** in here: it is the shell's own preference, like the tproxy
-switch — `runtime/route`, written by `kernelray.sh routing global|cn|cnadblock`
+The 分流模式 is deliberately **not** in here: it is the shell's own preference —
+`runtime/route`, written by `kernelray.sh routing global|cn|cnadblock`
 ([ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md),
 [ADR 0021](adr/0021-ad-blocking-is-a-third-routing-mode.md)) — because
 the shell must be able to change it without the UI, and because a `cn` render has to check the

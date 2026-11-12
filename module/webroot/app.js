@@ -29,20 +29,12 @@ var DICT_ZH = {
   startingMsg: "正在启动…", stoppingMsg: "正在停止…",
   actionFailed: "操作失败", noLog: "（还没有日志）",
   logTabCore: "核心", logTabModule: "模块",
-  stoppedHint: "核心未运行；已应用的节点会在下次启动时生效。",
   stoppedHintTp: "核心未运行；开机不会自动启动，设备当前直连；点「启动」才接管。",
   stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表打开一个节点并应用，核心才会启动。",
-  runningHint: "核心还没接管系统流量；把客户端指向 127.0.0.1:{port} 就会走已应用的节点。",
   tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
-  setTp: "tproxy透明代理",
-  setTpOn: "已开启：核心下次启动时（点「启动」），设备流量（TCP/UDP、IPv4/IPv6）经已应用的节点转发；ping 等 ICMP 仍直连。",
-  setTpOff: "已关闭：核心启动后设备流量直连；本地 socks/http 入站仍按需使用。",
-  setTpPending: "核心运行中，但 tproxy 尚未生效；停止再启动后生效。",
-  setTpNoNode: "还没有已应用的节点；应用节点后，核心启动时 tproxy 会自动开启。",
-  tpConflict: "tproxy 被冲突阻止：设备上有别的 VPN 或透明代理在运行。处理后点「重试」；关闭开关并重启核心可恢复直连。",
-  tpRules: "tproxy 规则安装失败，已回滚（可能漏流量）。详情见 kernelray.log；点「重试」再试一次。",
+  tpConflict: "接管被冲突阻止：设备上有别的 VPN 或透明代理在运行。核心没有启动，设备保持直连；处理后点「重试」。",
+  tpRules: "接管规则安装失败，核心没有启动，设备保持直连。详情见 kernelray.log；点「重试」再试一次。",
   tpRetry: "重试",
-  tpOnMsg: "tproxy 已开启；下次启动核心时生效", tpOffMsg: "tproxy 已关闭；下次启动核心时生效",
   "failed/rules": "接管规则", "failed/conflict": "接管冲突",
   crashed: "核心已退出",
   applyingMsg: "正在应用节点…", appliedMsg: "节点已应用",
@@ -127,20 +119,12 @@ var DICT_EN = {
   startingMsg: "Starting…", stoppingMsg: "Stopping…",
   actionFailed: "Action failed", noLog: "(no log yet)",
   logTabCore: "Core", logTabModule: "Module",
-  stoppedHint: "The core is stopped; the applied node takes effect on the next start.",
   stoppedHintTp: "The core is stopped; boot does not start it, so the device goes direct — press Start to take over.",
   stoppedHintNone: "The core is stopped and no node is applied; open a node in the list and press Apply — the core only starts with an applied node.",
-  runningHint: "The core does not intercept system traffic yet; point clients at 127.0.0.1:{port} to use the applied node.",
   tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
-  setTp: "TPROXY transparent proxy",
-  setTpOn: "On: at the next core start (pressing Start), device traffic (TCP/UDP, IPv4/IPv6) goes through the applied node; ICMP such as ping stays direct.",
-  setTpOff: "Off: with the core started, device traffic goes out directly; the local socks/http inbounds remain available.",
-  setTpPending: "The core is running, but tproxy is not in effect yet; stop and start it to apply.",
-  setTpNoNode: "No applied node yet; once a node is applied, tproxy engages automatically when the core starts.",
-  tpConflict: "tproxy is blocked by a conflict: another VPN or transparent proxy is running. Resolve it and retry; switch tproxy off and restart the core to go direct.",
-  tpRules: "Installing the tproxy rules failed and was rolled back (traffic may leak). See kernelray.log; tap Retry to try again.",
+  tpConflict: "Takeover is blocked by a conflict: another VPN or transparent proxy is running. The core did not start and the device stays direct; resolve it and tap Retry.",
+  tpRules: "Installing the takeover rules failed. The core did not start and the device stays direct. See kernelray.log; tap Retry to try again.",
   tpRetry: "Retry",
-  tpOnMsg: "tproxy on; takes effect at the next core start", tpOffMsg: "tproxy off; takes effect at the next core start",
   "failed/rules": "rules", "failed/conflict": "conflict",
   crashed: "core exited",
   applyingMsg: "Applying node…", appliedMsg: "Node applied",
@@ -258,8 +242,7 @@ var els = {
   selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
   lRouteCnAdblock: $("l-route-cnadblock"),
   setRouteHint: $("set-route-hint"),
-  tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
-  lSetTp: $("l-set-tp"), setTpHint: $("set-tp-hint"), setTpSwitch: $("set-tp-switch")
+  tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry")
 };
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
 var pages = {
@@ -357,7 +340,6 @@ function label(key) {
   els.lRouteGlobal.textContent = T.routeGlobal;
   els.lRouteCn.textContent = T.routeCn;
   els.lRouteCnAdblock.textContent = T.routeCnAdblock;
-  els.lSetTp.textContent = T.setTp;
   els.tpRetry.textContent = T.tpRetry;
   els.tabbar.setAttribute("aria-label", T.navLabel);
 }
@@ -792,9 +774,9 @@ function parseInput(text) {
 // The node outbound carries the "__KERNELRAY_MARK__" sockopt placeholder, never a real
 // mark: on Android a SO_MARK with no matching ip rule loses routing (the node's Reality
 // handshake failed on v0.6 until the mark was removed). The shell replaces the
-// placeholder with the bypass mark only while takeover is on (docs/adr/0008), keeping
-// mark and rules together; the template's fixed direct outbound keeps its literal mark
-// because an unused outbound creates no socket.
+// placeholder with the bypass mark, which is what keeps mark and rules together
+// (docs/adr/0008); there is no other value it can become (docs/adr/0011). The template's
+// fixed direct outbound keeps its literal mark because an unused outbound creates no socket.
 
 function tlsSettingsOf(n) {
   var t = {};
@@ -845,8 +827,8 @@ function streamSettingsOf(n) {
     if (n.host) { hu.host = String(n.host); }
     if (Object.keys(hu).length) { s.httpupgradeSettings = hu; }
   }
-  // Replaced by the shell with the bypass mark (takeover on) or 0 (off); never a real
-  // mark here, because the renderer cannot know the switch state.
+  // Replaced by the shell with the bypass mark; never a real mark here, because the
+  // renderer is a pure function of the node and the mark belongs to the rules.
   s.sockopt = { mark: "__KERNELRAY_MARK__" };
   return s;
 }
@@ -1043,7 +1025,6 @@ function setButtons() {
   els.stop.disabled = busy || !running;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
-  els.setTpSwitch.disabled = busy;
   els.iSocks.disabled = !hasBridge;
   els.iHttp.disabled = !hasBridge;
   els.portsSave.disabled = busy || !hasBridge;
@@ -2124,39 +2105,25 @@ function renderStatus(kv) {
   els.port.textContent = kv.socks ? "socks " + kv.socks + " · http " + kv.http : "–";
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
-    // Rule presence, not the switch preference: a core started while the switch was
-    // off (or before the change could apply) is not capturing anything yet.
-    if (kv.rules === "present") { els.hint.textContent = hintText(T.tpRunningHint, kv); }
-    else { els.hint.textContent = hintText(T.runningHint, kv); }
+    // A running core always has the rules (启动即接管, docs/adr/0011): a start whose takeover
+    // could not be enforced is refused, so this is the only hint a running core can get.
+    els.hint.textContent = hintText(T.tpRunningHint, kv);
   } else {
-    // A stopped core with the switch on is the post-reboot state, and the one hint that has
-    // to name the consequence: no boot start means the device is going direct (ADR 0018).
-    els.hint.textContent = kv.node
-      ? (kv.tproxy === "on" ? T.stoppedHintTp : T.stoppedHint)
-      : T.stoppedHintNone;
+    // No boot start means a stopped core leaves the device direct, and that is the one thing
+    // the hint has to name (docs/adr/0018).
+    els.hint.textContent = kv.node ? T.stoppedHintTp : T.stoppedHintNone;
   }
 
-  // The status card is failure-only since ADR 0011: the switch itself lives in
-  // Settings. A conflict or rule failure leaves the switch on but unenforced; the
-  // hint says so and the retry runs the same start the button does.
+  // The status card is failure-only: the switch that used to live in Settings is gone
+  // (docs/adr/0011), so a failure is the only thing this card ever has to say. A conflict or
+  // a rule failure leaves the core down and the device direct; the retry runs the same start
+  // the button does.
   var tpFailed = phase === "failed/conflict" || phase === "failed/rules";
   els.tpCard.hidden = !tpFailed;
   if (tpFailed) {
     els.tpHint.textContent = phase === "failed/conflict" ? T.tpConflict : T.tpRules;
   }
   els.tpRetry.hidden = !tpFailed || busy;
-
-  // The Settings switch follows the persisted preference (kv.tproxy), with the
-  // next-start semantics spelled out while the running core does not match it yet.
-  var tpOn = kv.tproxy === "on";
-  els.setTpSwitch.classList.toggle("on", tpOn);
-  els.setTpSwitch.setAttribute("aria-checked", tpOn ? "true" : "false");
-  if (!kv.node) { els.setTpHint.textContent = T.setTpNoNode; }
-  else if (state === "running" && tpOn && kv.rules !== "present") {
-    els.setTpHint.textContent = T.setTpPending;
-  } else {
-    els.setTpHint.textContent = tpOn ? T.setTpOn : T.setTpOff;
-  }
 
   // The 分流模式 follows the preference (kv.route). kv.routing is what the config may
   // actually use, and the two differ only while the geo data is missing (ADR 0014): that
@@ -2489,10 +2456,7 @@ function run(command, pendingLabel) {
 
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
-els.setTpSwitch.addEventListener("click", function () {
-  var target = lastKv && lastKv.tproxy === "on" ? "off" : "on";
-  run("tproxy " + target, target === "on" ? T.tpOnMsg : T.tpOffMsg);
-});
+els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.selRoute.addEventListener("change", function () {
   var target = routeValue(els.selRoute.value);
   if (lastKv && lastKv.route === target) { return; }

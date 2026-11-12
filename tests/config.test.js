@@ -138,26 +138,61 @@ function makeModule(core) {
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
+  // Every start takes over (docs/adr/0011), so every start needs a kernel that says yes:
+  // the stubs below are on PATH for every run unless a test brings its own (the rule-cache
+  // tests do). Without them a start is refused with failed/rules, which is the point of the
+  // start path but not what most of these tests are about.
+  const stubs = path.join(dir, "stubs");
+  fs.mkdirSync(stubs, { recursive: true });
+  const chainless = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *-nL*) exit 1 ;;',
+    '  *-C*) exit 1 ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  const plainIp = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *"route show"*) echo "default via 10.0.2.2 dev wlan0" ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  for (const [name, body] of [
+    ["iptables", chainless], ["ip6tables", chainless], ["ip", plainIp],
+    ["settings", "#!/bin/sh\nexit 0\n"],
+    ["busybox", "#!/bin/sh\nexit 1\n"],
+    ["ping", "#!/bin/sh\nexit 1\n"]
+  ]) {
+    fs.writeFileSync(path.join(stubs, name), body, "utf8");
+    fs.chmodSync(path.join(stubs, name), 0o755);
+  }
   return {
     dir: dir,
+    stubs: stubs,
     config: path.join(dir, "config.json"),
     state: path.join(dir, "state.json"),
     outbound: path.join(dir, "outbound.json"),
     meta: path.join(dir, "outbound.meta"),
     applied: path.join(dir, "runtime", "applied"),
     status: path.join(dir, "runtime", "status.json"),
-    tproxy: path.join(dir, "runtime", "tproxy"),
     loglevel: path.join(dir, "runtime", "loglevel"),
     rules: path.join(dir, "runtime", "rules")
   };
 }
 
 function runShell(dir, body, args, extraEnv) {
+  const stubs = path.join(dir, "stubs");
   return execFileSync("bash", ["-c", body, "bash"].concat(args || []), {
     cwd: root,
     env: Object.assign({}, process.env, {
       KR_MODDIR: shPath(dir),
       KR_TEST_SCRIPT: shPath(script),
+      KR_BUSYBOX: shPath(path.join(stubs, "busybox")),
+      PATH: fs.existsSync(stubs) ? posixPathEnv(stubs) : process.env.PATH,
       // The fake cores never bind the socks port, so a start has to wait for its deadline:
       // shorten it instead of paying 1.5 s per start. A core that exits is still caught on
       // the first poll, which is what the rollback tests rely on.
@@ -243,9 +278,7 @@ function readJson(p) {
 }
 
 const BODY_RENDER = '. "$KR_TEST_SCRIPT"; kr_render_config "$1"';
-const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$1"';
 const BODY_ENSURE = '. "$KR_TEST_SCRIPT"; kr_ensure_config';
-const BODY_FORM = '. "$KR_TEST_SCRIPT"; kr_config_form';
 const BODY_STATUS = '. "$KR_TEST_SCRIPT"; kr_status_write "$1" "$2"';
 const BODY_APPLY = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply "$1"';
 const BODY_UNAPPLY = '. "$KR_TEST_SCRIPT"; kr_unapply';
@@ -280,7 +313,7 @@ check("render: no outbound is refused — the core only runs an applied node's c
   if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
 });
 
-check("node render: outbound.json is spliced verbatim, special characters included", () => {
+check("render: outbound.json is spliced verbatim, special characters included", () => {
   const m = makeModule();
   writeOutbound(m);
   const out = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
@@ -289,34 +322,34 @@ check("node render: outbound.json is spliced verbatim, special characters includ
   }
   const cfg = JSON.parse(out);
   eq(cfg.log.loglevel, "warning", "log settings preserved");
-  eq(cfg.inbounds.length, 2, "both local inbounds kept, no tproxy inbound");
+  eq(cfg.inbounds.length, 3, "socks + http + tproxy: there is one form (docs/adr/0011)");
   eq(cfg.inbounds[0].port, 10808, "default socks port without state.json");
   eq(cfg.inbounds[1].port, 10809, "default http port without state.json");
-  eq(cfg.outbounds.length, 3, "proxy + direct + block");
+  eq(cfg.outbounds.length, 4, "proxy + direct + block + dns-out");
   eq(cfg.outbounds[0], Object.assign({}, fixture,
     { streamSettings: Object.assign({}, fixture.streamSettings,
-      { sockopt: { mark: 0 } }) }), "the node outbound carries mark 0 without takeover");
+      { sockopt: { mark: 19282 } }) }), "the node outbound carries the bypass mark");
   eq(cfg.outbounds[1].tag, "direct", "direct tag");
   eq(cfg.outbounds[1].streamSettings.sockopt.mark, 19282, "direct bypass mark");
   eq(cfg.outbounds[2].tag, "block", "block tag");
-  eq(cfg.dns, undefined, "no dns block without takeover");
-  eq(cfg.routing, undefined, "no routing block without takeover");
+  eq(cfg.dns.tag, "dns", "the dns module is always authored");
+  eq(cfg.routing === undefined, false, "the routing block is always authored");
   eq(cfg.outbounds[0].settings.servers[0].password, fixture.settings.servers[0].password, "escaping round-trip");
 });
 
-check("node render: a pretty-printed outbound file also works", () => {
+check("render: a pretty-printed outbound file also works", () => {
   const m = makeModule();
   writeOutbound(m, { pretty: true, newline: true });
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.outbounds[0].settings.servers[0].password, fixture.settings.servers[0].password, "outbound");
 });
 
-// ---- takeover render -------------------------------------------------------------------
+// ---- the one form -----------------------------------------------------------------------
 
-check("takeover render: tproxy inbound, dns module and routing are spliced in", () => {
+check("render: tproxy inbound, dns module and routing are spliced in", () => {
   const m = makeModule();
   writeOutbound(m);
-  const out = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  const out = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   if (out.indexOf("__KERNELRAY") >= 0) {
     throw new Error("a placeholder survived rendering");
   }
@@ -343,79 +376,58 @@ check("takeover render: tproxy inbound, dns module and routing are spliced in", 
   eq(cfg.routing.rules.length, 3, "no other rules");
 });
 
-check("takeover render: a pinned node address lands in the dns hosts", () => {
+check("render: a pinned node address lands in the dns hosts", () => {
   const m = makeModule();
   writeOutbound(m);
   fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "203.0.113.9\n");
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns.hosts, { "full:n.example.com": "203.0.113.9" }, "hosts pin");
   eq(cfg.routing.rules[0].outboundTag, "direct", "bootstrap rule kept");
 });
 
-check("takeover render: an IP node produces no bootstrap domain rule", () => {
+check("render: an IP node produces no bootstrap domain rule", () => {
   const m = makeModule();
   writeOutbound(m);
   fs.writeFileSync(m.meta, "id=" + ID + "\nhost=203.0.113.10\n");
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.routing.rules.length, 2, "only the dns and port-53 rules");
   eq(cfg.routing.rules[0], { inboundTag: ["dns"], outboundTag: "proxy" }, "dns upstream first");
 });
 
-check("takeover render: an IPv6 node literal produces no bootstrap domain rule", () => {
+check("render: an IPv6 node literal produces no bootstrap domain rule", () => {
   const m = makeModule();
   writeOutbound(m);
   fs.writeFileSync(m.meta, "id=" + ID + "\nhost=2001:db8::1\n");
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.routing.rules.length, 2, "only the dns and port-53 rules");
 });
 
-check("takeover render: the mark is 0, never a live mark, when takeover is forced off", () => {
-  const m = makeModule();
-  writeOutbound(m);
-  fs.writeFileSync(m.tproxy, "on\n");
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "0" }));
-  eq(cfg.inbounds.length, 2, "no tproxy inbound");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark 0");
-  eq(cfg.routing, undefined, "no routing");
-});
-
-check("takeover render: an outbound without the mark placeholder is refused", () => {
+check("render: an outbound without the mark placeholder is refused", () => {
   const m = makeModule();
   // A stale renderer could write an unmarked outbound; under takeover its packets
   // would be captured back into the core: a routing loop. The render must fail.
   fs.writeFileSync(m.outbound, JSON.stringify(fixture).replace(
     /,"sockopt":\{"mark":"__KERNELRAY_MARK__"\}/, ""));
   fs.writeFileSync(m.meta, "id=" + ID + "\nhost=n.example.com\n");
-  const r = runFail(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  const r = runFail(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   if (!/no bypass mark/.test(r.stdout + r.stderr)) {
     throw new Error("expected the mark refusal, got: " + (r.stdout + r.stderr));
   }
 });
 
-check("the form is decided once, by the live rules, and the renderer only obeys it", () => {
+check("render: there is one form, so the form machinery is gone", () => {
   const m = makeModule();
   writeOutbound(m);
-  fs.writeFileSync(m.tproxy, "on\n");
-  // No stubs: iptables is missing or finds no rules here, so the form is the idle one.
-  eq(runShell(m.dir, BODY_FORM).trim(), "0", "switch on without rules");
-
-  // The renderer no longer guesses: it renders exactly the form it is given.
-  let cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
-  eq(cfg.inbounds.length, 3, "KR_TAKEOVER=1 renders the takeover form");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
-  cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "0" }));
-  eq(cfg.inbounds.length, 2, "KR_TAKEOVER=0 renders the idle form");
-
-  // Rules up and the switch on: the one place that decides answers the takeover form.
-  fs.mkdirSync(path.join(m.dir, "stubs"), { recursive: true });
-  fs.writeFileSync(path.join(m.dir, "stubs", "iptables"), "#!/bin/sh\nexit 0\n");
-  fs.writeFileSync(path.join(m.dir, "stubs", "ip6tables"), "#!/bin/sh\nexit 0\n");
-  fs.chmodSync(path.join(m.dir, "stubs", "iptables"), 0o755);
-  fs.chmodSync(path.join(m.dir, "stubs", "ip6tables"), 0o755);
-  const stubPath = process.platform === "win32"
-    ? shPath(path.join(m.dir, "stubs")) + ";" + process.env.PATH
-    : path.join(m.dir, "stubs") + ":" + process.env.PATH;
-  eq(runShell(m.dir, BODY_FORM, [], { PATH: stubPath }).trim(), "1", "switch plus rules");
+  const gone = runAllow(m.dir,
+    '. "$KR_TEST_SCRIPT"; for f in kr_config_form kr_tp_form kr_tp_switch_on; do' +
+    ' command -v "$f" >/dev/null 2>&1 && echo STILL-THERE $f; done');
+  if (gone.stdout.includes("STILL-THERE")) {
+    throw new Error("the form machinery is gone: " + gone.stdout);
+  }
+  // Every render carries the takeover blocks: there is no second form to ask for.
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.inbounds.length, 3, "the tproxy inbound is always there");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "the mark is always live");
 });
 
 check("a template without the placeholder is refused", () => {
@@ -607,18 +619,20 @@ check("ensure: a deleted config is rebuilt from the applied outbound", () => {
   runShell(m.dir, BODY_ENSURE);
   const cfg = readJson(m.config);
   eq(cfg.outbounds[0].settings, fixture.settings, "applied outbound");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped while the switch is off");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "the bypass mark is always live");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id kept");
 });
 
-check("ensure: a mismatched meta refuses and keeps the applied id", () => {
+check("ensure: an applied id whose outbound is gone is refused, not taken from disk", () => {
   const m = makeModule();
-  writeOutbound(m, { id: OTHER_ID });
+  // The guard that used to be the form comparison: a config on disk with no rendered
+  // outbound behind it describes nothing, so it must not be run (ADR 0010).
+  fs.writeFileSync(m.meta, "id=" + OTHER_ID + "\nhost=n.example.com\n");
   fs.writeFileSync(m.applied, ID + "\n");
   fs.writeFileSync(m.config, '{"sentinel":true}\n');
   const r = runFail(m.dir, BODY_ENSURE);
-  if (!/does not match the switch/.test(r.stderr)) {
-    throw new Error("expected the form refusal, got: " + r.stdout + r.stderr);
+  if (!/no rendered outbound/.test(r.stdout + r.stderr)) {
+    throw new Error("expected the no-outbound refusal, got: " + r.stdout + r.stderr);
   }
   eq(readJson(m.config), { sentinel: true }, "config untouched");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id is kept, never silently cleared");
@@ -628,10 +642,9 @@ check("ensure: a failed switch keeps the applied node's config, it does not rend
   const m = makeModule(aliveCore);
   writeOutbound(m, { id: OTHER_ID });   // the node the user tried
   fs.writeFileSync(m.applied, ID + "\n");
-  // What the rollback left behind: this node's config, with its form recorded.
-  const cfg = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "0" });
+  // What the rollback left behind: this node's config.
+  const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   fs.writeFileSync(m.config, cfg);
-  fs.writeFileSync(path.join(m.dir, "runtime", "config.form"), "0\n");
   runShell(m.dir, BODY_ENSURE);
   eq(fs.readFileSync(m.config, "utf8"), cfg, "the old node's config is kept, not re-rendered");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id untouched");
@@ -653,7 +666,7 @@ check("start: an applied id without its outbound fails with no-config", () => {
   const m = makeModule();
   fs.writeFileSync(m.applied, ID + "\n");
   const r = runFail(m.dir, BODY_START);
-  if (!/no config for the applied node/.test(r.stdout + r.stderr)) {
+  if (!/no rendered outbound/.test(r.stdout + r.stderr)) {
     throw new Error("expected the bookkeeping refusal, got: " + r.stdout + r.stderr);
   }
   const st = readJson(m.status);
@@ -670,7 +683,7 @@ check("apply: a stopped core gets the new config and the applied id", () => {
   runShell(m.dir, BODY_APPLY, [ID]);
   const cfg = readJson(m.config);
   eq(cfg.outbounds[0].settings, fixture.settings, "config carries the node outbound");
-  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 0, "mark dropped while the switch is off");
+  eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "the bypass mark is always live");
   eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id");
   const st = readJson(m.status);
   eq(st.state, "stopped", "state");
@@ -872,8 +885,10 @@ check("status: a stopped core is not reported as crashed", () => {
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_START);
   runShell(m.dir, BODY_STOP);
-  if (!/^present=0$/m.test(fs.readFileSync(m.rules, "utf8"))) {
-    throw new Error("a switch-off start with no rules must record absence");
+  // A stop leaves the rules up (fail-closed, docs/adr/0004): the cache still says present,
+  // because the capture really is still there.
+  if (!/^present=1$/m.test(fs.readFileSync(m.rules, "utf8"))) {
+    throw new Error("a stop leaves the capture up, so the cache must say present");
   }
   const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
   if (/^phase=crashed$/m.test(kv)) { throw new Error("a stop is not a crash: " + kv); }
@@ -1018,25 +1033,23 @@ check("status: the poll never runs the core", () => {
   }
 });
 
-// ---- start-path form drift ---------------------------------------------------------------
+// ---- start-path repair ------------------------------------------------------------------
 
-check("start: a takeover config left on disk is re-rendered when the switch is off", () => {
+check("start: a config written before 启动即接管 is re-rendered in the one form", () => {
   const m = makeModule(aliveCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
-  // What the previous start left behind: the takeover form, with the node outbound marked.
-  const cfg = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
-  fs.writeFileSync(m.config, cfg);
-  if (!/"tag":"tp-in"/.test(cfg)) { throw new Error("fixture: expected a takeover config"); }
-
-  // No runtime/tproxy file: the switch is off, so this start must be an idle run.
+  // What an older version left behind: an idle config with no tproxy inbound and mark 0.
+  // Running it under the rules would capture nothing; running it without them would leave
+  // a local-only core. The start re-renders instead (docs/adr/0011).
+  fs.writeFileSync(m.config, JSON.stringify({ sentinel: "stale" }));
   runShell(m.dir, BODY_START);
   const after = fs.readFileSync(m.config, "utf8");
-  if (/"tag":"tp-in"/.test(after)) {
-    throw new Error("the idle form has no tproxy inbound: " + after);
+  if (!/"tag":"tp-in"/.test(after)) {
+    throw new Error("the start must re-render the takeover form: " + after);
   }
-  if (!/"mark":0/.test(after)) {
-    throw new Error("a bypass mark with no ip rule loses routing (docs/adr/0008): " + after);
+  if (!/"mark":19282/.test(after)) {
+    throw new Error("the node outbound must carry the bypass mark: " + after);
   }
   runShell(m.dir, BODY_STOP);
 });
@@ -1045,7 +1058,7 @@ check("start: a config that already matches this start is left alone", () => {
   const m = makeModule(aliveCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
-  const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" });
+  const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   fs.writeFileSync(m.config, cfg);
   const before = fs.statSync(m.config).mtimeMs;
   runShell(m.dir, BODY_START);
@@ -1284,20 +1297,18 @@ check("ports: saving the ports that are already rendered restarts nothing", () =
   }
 });
 
-check("ensure: a failed switch whose config has the wrong form is refused, not run", () => {
-  const m = makeModule(aliveCore);
+check("ensure: a failed switch whose config fails xray -test is refused, not run", () => {
+  const m = makeModule();
   writeOutbound(m, { id: OTHER_ID });
   fs.writeFileSync(m.applied, ID + "\n");
-  // The rollback left a takeover-form config behind, and the switch is now off: running it
-  // would leave a bypass mark with no ip rule (docs/adr/0008), so the start refuses instead.
-  const cfg = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
-  fs.writeFileSync(m.config, cfg);
-  fs.writeFileSync(path.join(m.dir, "runtime", "config.form"), "1\n");
-  const r = runFail(m.dir, BODY_ENSURE);
-  if (!/does not match the switch/.test(r.stderr)) {
-    throw new Error("expected the form refusal, got: " + r.stdout + r.stderr);
+  // The rollback left bytes behind that nothing vouches for (no config.tested): they go
+  // through the same test gate, and a rejection refuses the start rather than running them.
+  fs.writeFileSync(m.config, '{"sentinel":true}\n');
+  const r = runFail(m.dir, BODY_ENSURE, [], { FAKE_XRAY_FAIL: "1" });
+  if (!/config test failed/.test(r.stderr)) {
+    throw new Error("expected the test refusal, got: " + r.stdout + r.stderr);
   }
-  eq(fs.readFileSync(m.config, "utf8"), cfg, "the config is not silently rewritten");
+  eq(readJson(m.config), { sentinel: true }, "the config is not silently rewritten");
 });
 
 // ---- poll and log hygiene ---------------------------------------------------------------

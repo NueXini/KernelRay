@@ -1,6 +1,8 @@
 # 0019 — The status poll reads a boot-scoped rule cache; the start path asks the kernel
 
-Status: accepted
+Status: accepted (the one detail it names that changed: `kr_tp_form` no longer exists, so
+`kr_tp_rules_present`'s callers are the start path and `kr_conf_accept_ondisk` only — see
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
 
 ## Context
 

@@ -1,6 +1,8 @@
 #!/system/bin/sh
 # Regression harness for an installed KernelRay module (run on-device as root).
-# Covers the P0/P1/P2 cases from the v0.10.0 switch rework (docs/adr/0017).
+# Covers the P0/P1/P2 cases from the v0.10.0 switch rework (docs/adr/0017) as amended by
+# 启动即接管 (docs/adr/0011): there is no tproxy switch, so every start takes over and a
+# start whose takeover cannot be enforced is refused.
 # Usage: adb push scripts/regress-device.sh /data/local/tmp/ && adb shell "su -c sh /data/local/tmp/regress.sh"
 # KernelRay regression harness (P0 + P1 + P2) for v0.10.0.
 # Usage: sh /data/local/tmp/regress.sh   (as root, via su)
@@ -45,18 +47,13 @@ rules() { # the kernel fact the start path uses, not the status cache
 }
 rules_cache() { $S status | sed -n 's/^rules=//p'; }
 pid()   { cat "$RUN/xray.pid" 2>/dev/null; }
-form()  { cat "$RUN/config.form" 2>/dev/null; }
 expect() { # <name> <got> <want>
   if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "got '$2' want '$3'"; fi
 }
 
-reset_all() { # clean state: stopped, no node, tproxy on, no rules, the install default mode
-  $S tproxy off >/dev/null 2>&1
+reset_all() { # clean state: stopped, no node, no rules, the install default mode
   $S stop >/dev/null 2>&1
-  $S start >/dev/null 2>&1     # switch off: takes stale rules down
-  $S stop >/dev/null 2>&1
-  $S unapply >/dev/null 2>&1
-  $S tproxy on >/dev/null 2>&1
+  $S unapply >/dev/null 2>&1   # also takes the rules down
   $S routing cnadblock >/dev/null 2>&1   # what the installer leaves on a fresh install
   : > "$L" 2>/dev/null
 }
@@ -92,19 +89,23 @@ grep -q "keeping the config on disk" "$KL" && ok "P0-4b logged" || bad "P0-4b lo
 grep -q 192.168.1.10 "$M/config.json" && ok "P0-4c config is node A" || bad "P0-4c config is node A" "no A in config"
 expect "P0-4d running" "$(state)" "running"
 
-# P0-5: same situation but the switch is now OFF -> refuse, never run a mismatched form
+# P0-5: same situation, but the config on disk no longer passes `-test` -> refuse it
 $S stop >/dev/null 2>&1
-$S tproxy off >/dev/null 2>&1
+printf '%s' '{"not":"a config"}' > "$M/config.json"
+chmod 600 "$M/config.json"
 r=$($S start 2>&1)
 rc=$?
 expect "P0-5a start refuses" "$rc" "1"
-echo "$r" | grep -q "does not match the switch" && ok "P0-5b message" || bad "P0-5b message" "$r"
+echo "$r" | grep -q "config test failed" && ok "P0-5b message" || bad "P0-5b message" "$r"
 # The refusal lands in kr_ensure_config, which returns before kr_start_locked writes a failed
-# status -- the core is simply not started and the last status (stopped/idle from the stop)
-# stands. The state that matters: not running, config untouched.
+# status -- the core is simply not started and the last status stands. The state that matters:
+# not running, and no rules installed for a core that will not run.
 expect "P0-5c not running" "$(state)" "stopped"
-expect "P0-5d config untouched" "$(grep -c 192.168.1.10 "$M/config.json")" "1"
-$S tproxy on >/dev/null 2>&1
+expect "P0-5d no rules" "$(rules)" "absent"
+# Put the applied node's config back for the rest of the run.
+$S unapply >/dev/null 2>&1
+ob 192.168.1.10 8401c5e7cf94ad2d
+$S apply 8401c5e7cf94ad2d >/dev/null 2>&1
 
 # P0-2: candidate that tests but does not start -> rollback
 # badnode0001's outbound now tests fine but the REAL failure needs a core that exits after
@@ -153,7 +154,7 @@ reset_all
 # =====================================================================
 echo "===== P1: start / stop"
 
-# P1-7: cold start, switch on, rules absent: exactly one test, rules up
+# P1-7: cold start, rules absent: exactly one test, rules up
 ob 192.168.1.10 8401c5e7cf94ad2d
 $S apply 8401c5e7cf94ad2d >/dev/null 2>&1
 before=$(mark)
@@ -162,18 +163,12 @@ $S start >/dev/null 2>&1
 expect "P1-7a running" "$(state)" "running"
 expect "P1-7b rules present" "$(rules)" "present"
 expect "P1-7h cache present" "$(rules_cache)" "present"
-# apply tested the idle form; the start must test exactly once more (the form change to
-# takeover after the rules went up) and then fork -- one test, one run. The apply ALSO pins
-# and engages nothing, but the log may carry a `-test` from the pin-triggered engage... no:
-# the apply renders ONE test; the form change at start is the second `Configuration OK` only
-# if the form differed. With the switch on and rules absent at apply time, the apply's config
-# is the IDLE form and the start renders the TAKEOVER form: both tests are legitimate.
-# Count what the START itself cost, from the first config.json load after the mark.
+# The apply rendered and tested the config; the start re-uses those bytes (nothing changed),
+# so the start itself costs no test. Count what the START itself cost, from the first
+# config.json load after the mark.
 # (see the final summary for the per-gesture accounting)
 expect "P1-7c one run" "$(runs_in "$before")" "1"
-expect "P1-7e form" "$(form)" "1"
-listening 10808 && ok "P1-7f socks listens" || bad "P1-7f socks listens" "not listening"
-listening 10809 && ok "P1-7g http listens" || bad "P1-7g http listens" "not listening"
+grep -q '"tag":"tp-in"' "$M/config.json" && ok "P1-7e tp-in present" || bad "P1-7e tp-in present" "no tp-in"
 
 # P1-8: start while running -> no-op
 pid1=$(pid)
@@ -194,24 +189,17 @@ n_after=$(ps -A -o ARGS | grep -c "^xray run")
 if [ "$n_after" = 1 ]; then ok "P1-13 stray killed"; else bad "P1-13 stray killed" "cores before=$n_before after=$n_after"; fi
 kill -0 "$stray" 2>/dev/null && bad "P1-13b stray gone" "still alive" || ok "P1-13b stray gone"
 
-# P1-9: switch off + start -> idle form, no rules
+# P1-9: stop leaves the capture up (fail-closed, docs/adr/0004)
 $S stop >/dev/null 2>&1
-$S tproxy off >/dev/null 2>&1
 before=$(mark)
+expect "P1-9a stopped" "$(state)" "stopped"
+expect "P1-9b rules still present" "$(rules)" "present"
+expect "P1-9f cache present" "$(rules_cache)" "present"
+# ...and the next start re-uses them instead of reinstalling.
 $S start >/dev/null 2>&1
-expect "P1-9a running" "$(state)" "running"
-expect "P1-9b rules absent" "$(rules)" "absent"
-expect "P1-9f cache absent" "$(rules_cache)" "absent"
-expect "P1-9c form" "$(form)" "0"
-grep -q '"tag":"tp-in"' "$M/config.json" && bad "P1-9d no tp-in" "found" || ok "P1-9d no tp-in"
-# The node outbound only drops its mark when it was rendered with the __KERNELRAY_MARK__
-# placeholder (what the WebUI writes). My fixture carried a literal 19282, which the render
-# leaves alone -- same behavior as the old code, verified against HEAD.
-if grep -q KERNELRAY_MARK "$M/outbound.json"; then
-  grep -q '"mark":0' "$M/config.json" && ok "P1-9e mark dropped" || bad "P1-9e mark dropped" "no \"mark\":0"
-else
-  info "P1-9e mark" "fixture has a literal mark; placeholder path covered by unit tests"
-fi
+expect "P1-9c running" "$(state)" "running"
+expect "P1-9d rules present" "$(rules)" "present"
+grep -q '"tag":"tp-in"' "$M/config.json" && ok "P1-9e tp-in present" || bad "P1-9e tp-in present" "no tp-in"
 
 # P1-10: log level applied at next start
 $S loglevel debug >/dev/null 2>&1
@@ -266,7 +254,6 @@ expect "P1-12d phase" "$(phase)" "no-node"
 # P1-14: core that cannot start -> failed/crashed quickly
 ob 192.168.1.10 8401c5e7cf94ad2d
 $S apply 8401c5e7cf94ad2d >/dev/null 2>&1
-$S tproxy off >/dev/null 2>&1
 $S start >/dev/null 2>&1
 $S stop >/dev/null 2>&1
 # occupy the socks port with a REAL listener (busybox nc stays in the foreground; the toybox
@@ -284,14 +271,14 @@ kill "$hog" 2>/dev/null
 pkill -f "nc -l -p 10808" 2>/dev/null
 
 # =====================================================================
-echo "===== P2: switch and idempotence"
+echo "===== P2: apply and idempotence"
 
 reset_all
 ob 192.168.1.10 8401c5e7cf94ad2d
 $S apply 8401c5e7cf94ad2d >/dev/null 2>&1
 $S start >/dev/null 2>&1
 
-# P2-15: the switch: one test, one restart
+# P2-15: switching the applied node: one test, one restart
 before=$(mark)
 t0=$(date +%s%N)
 ob 192.168.1.11 8401c5e7cf94ad2e

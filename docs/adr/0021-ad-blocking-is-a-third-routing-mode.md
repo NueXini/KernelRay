@@ -1,6 +1,9 @@
 # 0021 — Ad blocking is a third routing mode
 
-Status: accepted
+Status: accepted (the ad sink it places in the DNS module is now unconditional: the 空转 form
+it contrasts against no longer exists, and `kr_tp_default_on`, the install-time-default
+precedent it borrows, is gone with the switch — see
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
 
 ## Context
 

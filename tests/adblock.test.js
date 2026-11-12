@@ -111,6 +111,13 @@ function shPath(p) {
   return "/" + p[0].toLowerCase() + p.slice(2).replace(/\\/g, "/");
 }
 
+// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+function posixPathEnv(extraDir) {
+  return process.platform === "win32"
+    ? extraDir + ";" + process.env.PATH
+    : extraDir + ":" + process.env.PATH;
+}
+
 function makeModule(core) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kernelray-ad-"));
   dirs.push(dir);
@@ -123,8 +130,38 @@ function makeModule(core) {
     path.join(dir, "scripts", "tproxy.sh"));
   fs.writeFileSync(path.join(dir, "bin", "geosite.dat"), "geosite\n");
   fs.writeFileSync(path.join(dir, "bin", "geoip.dat"), "geoip\n");
+  // Every start takes over (docs/adr/0011), so a start needs a kernel that says yes.
+  const stubs = path.join(dir, "stubs");
+  fs.mkdirSync(stubs, { recursive: true });
+  const chainless = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *-nL*) exit 1 ;;',
+    '  *-C*) exit 1 ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  const plainIp = [
+    "#!/bin/sh",
+    'case "$*" in',
+    '  *"route show"*) echo "default via 10.0.2.2 dev wlan0" ;;',
+    "esac",
+    "exit 0",
+    ""
+  ].join("\n");
+  for (const [name, body] of [
+    ["iptables", chainless], ["ip6tables", chainless], ["ip", plainIp],
+    ["settings", "#!/bin/sh\nexit 0\n"],
+    ["busybox", "#!/bin/sh\nexit 1\n"],
+    ["ping", "#!/bin/sh\nexit 1\n"]
+  ]) {
+    fs.writeFileSync(path.join(stubs, name), body, "utf8");
+    fs.chmodSync(path.join(stubs, name), 0o755);
+  }
   return {
     dir: dir,
+    stubs: stubs,
     config: path.join(dir, "config.json"),
     outbound: path.join(dir, "outbound.json"),
     meta: path.join(dir, "outbound.meta"),
@@ -138,11 +175,14 @@ function makeModule(core) {
 }
 
 function runShell(dir, body, args, extraEnv) {
+  const stubs = path.join(dir, "stubs");
   return execFileSync("bash", ["-c", body, "bash"].concat(args || []), {
     cwd: root,
     env: Object.assign({}, process.env, {
       KR_MODDIR: shPath(dir),
       KR_TEST_SCRIPT: shPath(script),
+      KR_BUSYBOX: shPath(path.join(stubs, "busybox")),
+      PATH: fs.existsSync(stubs) ? posixPathEnv(stubs) : process.env.PATH,
       KR_START_POLLS: "8",
       KR_START_STEP: "0.05"
     }, extraEnv || {}),
@@ -170,7 +210,6 @@ function readJson(p) {
 }
 
 const BODY_RENDER = '. "$KR_TEST_SCRIPT"; kr_render_config "$1"';
-const BODY_RENDER_TP = '. "$KR_TEST_SCRIPT"; KR_TAKEOVER=$TP kr_render_config "$1"';
 const BODY_SET = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_route_set "$1"';
 const BODY_PREF = '. "$KR_TEST_SCRIPT"; kr_route_write "$1"';
 const BODY_MODE = '. "$KR_TEST_SCRIPT"; kr_route_mode';
@@ -190,7 +229,6 @@ const CN_AD_TAKEOVER = [
   { domain: ["geosite:cn"], outboundTag: "direct" },
   { ip: ["geoip:cn"], outboundTag: "direct" }
 ];
-const CN_AD_IDLE = CN_AD_TAKEOVER.slice(4);
 
 // ---- rendering --------------------------------------------------------------------------
 
@@ -198,7 +236,7 @@ check("render: 大陆直连去广告 adds the DNS sink and the block rule to 大
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
 
   // The DNS module is the load-bearing half: taken-over traffic carries no domain, so only the
   // resolver can refuse an ad domain (docs/adr/0021).
@@ -213,14 +251,15 @@ check("render: 大陆直连去广告 adds the DNS sink and the block rule to 大
     "the ad rule sits after the dns/port-53 group (index 4) and before the geo rules");
 });
 
-check("render: the idle form keeps the ad rule and drops the DNS sink", () => {
+check("render: the ad parts are not optional -- there is one form", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
+  // KR_TAKEOVER is not an input any more: the dns module and the ad sink are always authored.
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { KR_TAKEOVER: "0" }));
-  eq(cfg.dns, undefined, "no dns module without takeover");
-  eq(cfg.inbounds.length, 2, "no tproxy inbound");
-  eq(cfg.routing.rules, CN_AD_IDLE, "the ad rule comes first, then the geo rules");
+  eq(cfg.dns.hosts, { "geosite:category-ads-all": "#3" }, "the sink is there");
+  eq(cfg.inbounds.length, 3, "tproxy inbound present");
+  eq(cfg.routing.rules, CN_AD_TAKEOVER, "the full rule set");
   eq(cfg.routing.domainStrategy, "IPIfNonMatch", "strategy");
 });
 
@@ -229,7 +268,7 @@ check("render: a pinned node address and the ad sink share the hosts map", () =>
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
   fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "203.0.113.9\n");
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns.hosts, {
     "full:n.example.com": "203.0.113.9", "geosite:category-ads-all": "#3"
   }, "both entries, one map");
@@ -240,12 +279,12 @@ check("render: 大陆直连 and 全局 carry no ad parts", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
-  const cn = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  const cn = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   if (/category-ads-all/.test(cn)) { throw new Error("大陆直连 must not block ads: " + cn); }
   eq(JSON.parse(cn).dns.hosts, undefined, "no hosts map at all without a pin");
 
   runShell(m.dir, BODY_PREF, ["global"]);
-  const global = runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" });
+  const global = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   if (/category-ads-all/.test(global)) { throw new Error("全局 must not block ads"); }
 });
 
@@ -256,7 +295,7 @@ check("render: no degrade -- missing geo data still renders the ad parts", () =>
   fs.unlinkSync(m.geosite);
   // 大陆直连 falls back to the global form here; 大陆直连去广告 must not, or its name would
   // describe a config it is not running (docs/adr/0021). The refusal happens at -test instead.
-  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER_TP, [shPath(m.outbound)], { TP: "1" }));
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.routing.rules, CN_AD_TAKEOVER, "the ad parts are still there");
   eq(cfg.routing.domainStrategy, "IPIfNonMatch", "still the geo strategy");
   eq(runShell(m.dir, BODY_MODE).trim(), "cnadblock", "the preference is untouched by a render");
@@ -305,8 +344,8 @@ check("cli: routing cnadblock renders, tests and swaps the config, then records 
   runShell(m.dir, BODY_SET, ["cnadblock"]);
   eq(fs.readFileSync(m.route, "utf8").trim(), "cnadblock", "preference written");
   const cfg = readJson(m.config);
-  eq(cfg.routing.rules, CN_AD_IDLE, "idle form: the core is stopped");
-  eq(cfg.dns, undefined, "no dns module in the idle form");
+  eq(cfg.routing.rules, CN_AD_TAKEOVER, "the takeover rule set: there is no other");
+  eq(cfg.dns.hosts, { "geosite:category-ads-all": "#3" }, "the sink is in the dns module");
 });
 
 check("cli: routing cnadblock refuses without data with one short message", () => {

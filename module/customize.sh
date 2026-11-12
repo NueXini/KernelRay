@@ -40,11 +40,9 @@ else
 fi
 
 kr_dirs
-# The tproxy switch defaults to on (ADR 0011): the core's next start after a node is
-# applied takes the device over. An update recreates it the same way.
-command -v kr_tp_default_on >/dev/null 2>&1 && kr_tp_default_on
-# The 分流模式 defaults to 大陆直连去广告 (ADR 0021), the same install-time pattern. With the geo
-# data missing the default stays 全局, so the core can still start.
+# The 分流模式 defaults to 大陆直连去广告 (ADR 0021), the installer's one-time default: only the
+# installer creates it, and only while the preference is unset. With the geo data missing the
+# default stays 全局, so the core can still start.
 command -v kr_route_default >/dev/null 2>&1 && kr_route_default
 # No applied node at install time, so this is a refusal by design (ADR 0010): keep its
 # "apply a node first" message out of the installer output.
@@ -54,10 +52,10 @@ kr_status_write installed idle
 ui_print "- Installed. Nothing starts on boot: open the WebUI and press Start (until a node"
 ui_print "  is applied it stays stopped)."
 ui_print "- Select a node in the WebUI (Nodes -> tap a row) to derive the core config;"
-ui_print "  starting the core with a node applied also brings tproxy up."
-ui_print "- TPROXY transparent proxy is ON by default: every core start (the WebUI's Start"
-ui_print "  button) routes device traffic through the applied node. Turn it off in the"
-ui_print "  WebUI Settings (tproxy透明代理) if you only want the local socks/http inbounds."
+ui_print "  starting the core takes the device over. There is no switch: every start"
+ui_print "  routes device traffic (TCP/UDP, IPv4/IPv6) through the applied node, and a start"
+ui_print "  whose takeover cannot be enforced (another VPN, a rule failure, a config the core"
+ui_print "  rejects) is refused instead of running a core that captures nothing."
 ui_print "- 分流模式 (Settings) defaults to 大陆直连去广告: mainland domains and addresses go"
 ui_print "  direct, everything else through the node, and ad domains stop resolving. Switch to"
 ui_print "  全局 if you want everything through the applied node."
