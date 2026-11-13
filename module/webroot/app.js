@@ -92,10 +92,8 @@ var DICT_ZH = {
   portTp: "这个端口留给透明代理入站（10810），换一个",
   portsSaving: "正在应用端口…", portsSaved: "端口已应用",
   portsSave: "保存",
-  setProxy: "代理与路由", setRouteMode: "模式",
+  setRouteMode: "分流模式",
   routeGlobal: "全局", routeCn: "大陆直连", routeCnAdblock: "大陆直连去广告",
-  routeGlobalHint: "所有流量都走已应用的节点。",
-  routeCnHint: "大陆的域名与 IP 直连，其余走节点；DNS 也随之分流。切换后立即重写配置并重启核心。",
   routeCnNoGeodata: "geo 数据缺失（bin/geosite.dat、geoip.dat）：大陆直连当前按全局渲染，补齐文件后才真正生效。",
   routeGeoMissing: "geo 数据缺失",
   routeSwitching: "正在切换分流模式…",
@@ -183,10 +181,8 @@ var DICT_EN = {
   portTp: "That port is reserved for the tproxy inbound (10810); pick another",
   portsSaving: "Applying ports…", portsSaved: "Ports applied",
   portsSave: "Save",
-  setProxy: "Proxy & routing", setRouteMode: "Mode",
+  setRouteMode: "Routing mode",
   routeGlobal: "Global", routeCn: "Direct-CN", routeCnAdblock: "Direct-CN-Adblock",
-  routeGlobalHint: "Every destination goes through the applied node.",
-  routeCnHint: "Mainland domains and addresses go direct and everything else goes through the node, with DNS split to match. Switching re-renders the config and restarts the core.",
   routeCnNoGeodata: "Geo data is missing (bin/geosite.dat, geoip.dat): Direct-CN renders as Global until the files are back.",
   routeGeoMissing: "geo data missing",
   routeSwitching: "Switching routing mode…",
@@ -238,7 +234,7 @@ var els = {
   lLogLevelDebug: $("l-loglevel-debug"), setLogLevelHint: $("set-loglevel-hint"),
   iSocks: $("i-socks"), iHttp: $("i-http"), portsSave: $("ports-save"),
   lSetPorts: $("l-set-ports"), lSetPortsHint: $("l-set-ports-hint"),
-  lSetProxy: $("l-set-proxy"), lSetRouteMode: $("l-set-route-mode"),
+  lSetRouteMode: $("l-set-route-mode"),
   selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
   lRouteCnAdblock: $("l-route-cnadblock"),
   setRouteHint: $("set-route-hint"),
@@ -335,7 +331,6 @@ function label(key) {
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
-  els.lSetProxy.textContent = T.setProxy;
   els.lSetRouteMode.textContent = T.setRouteMode;
   els.lRouteGlobal.textContent = T.routeGlobal;
   els.lRouteCn.textContent = T.routeCn;
@@ -2125,22 +2120,19 @@ function renderStatus(kv) {
   }
   els.tpRetry.hidden = !tpFailed || busy;
 
-  // The 分流模式 follows the preference (kv.route). kv.routing is what the config may
-  // actually use, and the two differ only while the geo data is missing (ADR 0014): that
-  // is the one case the hint under the select has to explain. 大陆直连去广告 never degrades
-  // -- missing data means the core will not start (ADR 0021) -- so its hint is either the
-  // one short sentence or nothing at all, and an empty hint takes its row with it.
+  // The 分流模式 follows the preference (kv.route). The card sits on the Status page, next to
+  // the state the mode changes, and the hint under it is warning-only: 全局 needs no geo data,
+  // 大陆直连 degrades to 全局 without it (ADR 0014) and 大陆直连去广告 refuses to start
+  // (ADR 0021), so a normal mode says nothing at all and only a missing file has a line.
   var routeMode = routeValue(kv.route);
   els.selRoute.value = routeMode;
   var routeHint = "";
-  if (routeMode === "cn") {
-    routeHint = kv.geodata === "missing" ? T.routeCnNoGeodata : T.routeCnHint;
-  } else if (routeMode === "global") {
-    routeHint = T.routeGlobalHint;
-  } else if (kv.geodata === "missing") {
-    routeHint = T.routeGeoMissing;
+  if (kv.geodata === "missing") {
+    if (routeMode === "cn") { routeHint = T.routeCnNoGeodata; }
+    else if (routeMode === "cnadblock") { routeHint = T.routeGeoMissing; }
   }
   els.setRouteHint.textContent = routeHint;
+  els.setRouteHint.className = routeHint ? "hint warn" : "hint";
   els.setRouteHint.hidden = !routeHint;
 
   // The 日志等级 comes from the shell, not localStorage: the select shows the saved

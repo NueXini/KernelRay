@@ -56,7 +56,7 @@ ui_print "  starting the core takes the device over. There is no switch: every s
 ui_print "  routes device traffic (TCP/UDP, IPv4/IPv6) through the applied node, and a start"
 ui_print "  whose takeover cannot be enforced (another VPN, a rule failure, a config the core"
 ui_print "  rejects) is refused instead of running a core that captures nothing."
-ui_print "- 分流模式 (Settings) defaults to 大陆直连去广告: mainland domains and addresses go"
+ui_print "- 分流模式 on the Status page defaults to 大陆直连去广告: mainland domains and addresses go"
 ui_print "  direct, everything else through the node, and ad domains stop resolving. Switch to"
 ui_print "  全局 if you want everything through the applied node."
 ui_print "  大陆直连 sends mainland domains and addresses direct, with DNS split to match;"

@@ -70,7 +70,7 @@ path of its own in the code: with `XRAY_LOCATION_ASSET` unset the core reads the
 directory, so the two cannot drift apart — and the module stopped exporting the variable once
 that was verified on device. The decision above is otherwise unchanged — the data still ships
 inside the ZIP and the set is still pinned per release — but the device no longer names the
-pinned set: the release notes do, and Settings reports presence rather than a version line.
+pinned set: the release notes do, and the Status page reports presence rather than a version line.
 
 ## Amendment — 0021
 

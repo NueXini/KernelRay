@@ -14,7 +14,7 @@ device stays direct instead of offline. It is fail-closed the other way too: whi
 are up, a core that dies means no traffic instead of leaked traffic
 ([ADR 0011](docs/adr/0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)).
 
-**v0.9 — 分流模式 (routing modes).** Settings gains a routing mode: **全局** (the applied node
+**v0.9 — 分流模式 (routing modes).** The Status page has a routing mode: **全局** (the applied node
 carries every destination — the default, and what every earlier version did) or **大陆直连**
 (mainland domains and addresses leave by `direct`, everything else still goes through the
 node, with DNS split to match so mainland domains are resolved by domestic resolvers). The geo
@@ -33,8 +33,8 @@ instead of a dead core ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and
 | switches to a node | pressing **Apply** in a row's detail dialog writes `state.json` + the rendered outbound; the shell renders/tests/swaps `config.json` and restarts a running core — one render and one test, and no restart at all when the bytes do not change ([ADR 0017](docs/adr/0017-one-render-one-test-per-switch.md)) |
 | takes over device traffic | every core start installs the module's own mangle/filter chains, capture fwmark 19283, bypass fwmark 19282, tables 19283/19282, rule pref 9500/9400; never touches another module's rules, and a start that cannot install them is refused |
 | answers DNS | port 53 is captured into the core's DNS module; in 全局 its upstream is the DoH `https://1.1.1.1/dns-query` through the node, in 大陆直连 mainland domains ask `223.5.5.5` / `119.29.29.29` direct and everything else keeps the DoH; the applied node's own hostname resolves direct |
-| routes | the 分流模式 in Settings: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `bin/`, beside the core |
-| WebUI | the only manual surface: start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the 分流模式 and the 日志等级 live in Settings. The module ships no `action.sh`, so the manager's module card has no ▶ button ([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)) |
+| routes | the 分流模式 on the Status page: 全局 (default) or 大陆直连 (`geosite:cn` / `geoip:cn` → `direct`, with `geosite:private` / `geoip:private` kept local); the geo data ships in `bin/`, beside the core |
+| WebUI | the only manual surface: start / stop, conflict / failure hints + retry, log, import nodes, switch the applied node from the node list; the 分流模式 lives on the Status page and the 日志等级 in Settings. The module ships no `action.sh`, so the manager's module card has no ▶ button ([ADR 0018](docs/adr/0018-no-action-button-and-no-boot-start.md)) |
 | config | `config.json`, generated from `config.example.json`; never hand-edited |
 | log | `logs/xray.log` (core, verbosity from the 日志等级 in Settings; rotated to `xray.log.1` at 1MB on a start) and `logs/kernelray.log` (module: rules, conflicts, starts) |
 
@@ -95,7 +95,7 @@ and [`docs/adr/0006`](docs/adr/0006-dns-goes-through-the-core.md).
 
 ## 分流模式 (routing mode)
 
-Settings has a routing mode, and it decides *where* traffic goes, not whether it is captured
+The Status page has a routing mode, and it decides *where* traffic goes, not whether it is captured
 ([ADR 0014](docs/adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)).
 
 - **全局 (the default).** The applied node carries everything; only the module's fixed policy
@@ -241,14 +241,14 @@ Open the module card in the KernelSU manager and tap **WebUI**. The page has fou
 **Status**, **Nodes**, **Log** and **Settings** — with the title and runtime badge pinned above
 them:
 
-- **Status** — start / stop the core, conflict / failure hints with a retry, and pid, uptime,
-  ports, core version and config path.
+- **Status** — start / stop the core, the 分流模式 with a warning when the geo data it needs is
+  missing, conflict / failure hints with a retry, and pid, uptime, ports, core version and
+  config path.
 - **Nodes** — the node list (tap a row to open its detail dialog; **Apply** there switches), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
 - **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
 - **Settings** — a **General** card with the theme (auto / 日间 / 夜间), the UI language
   (auto / 中文 / English), the log buffer size and the 日志等级 (关闭 / 错误 / 警告 / 信息 /
-  调试), the inbound ports, and the 分流模式 (全局 / 大陆直连) with the pinned geo-data
-  version under it. Theme, language and log buffer are
+  调试), and the inbound ports. Theme, language and log buffer are
   WebView preferences; the ports live in `state.json`,
   the routing mode in `runtime/route` and the log level in `runtime/loglevel`, so none of
   them survives an update or uninstall. The log level applies at the next core start, not

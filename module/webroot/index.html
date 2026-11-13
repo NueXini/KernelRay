@@ -32,6 +32,18 @@
     </section>
 
     <section class="card">
+      <div class="setrow">
+        <label class="setlabel" id="l-set-route-mode" for="sel-route">Routing mode</label>
+        <select id="sel-route">
+          <option value="global" id="l-route-global">Global</option>
+          <option value="cn" id="l-route-cn">Direct-CN</option>
+          <option value="cnadblock" id="l-route-cnadblock">Direct-CN-Adblock</option>
+        </select>
+      </div>
+      <div class="hint" id="set-route-hint" hidden></div>
+    </section>
+
+    <section class="card">
       <dl>
         <dt id="l-pid">PID</dt><dd id="v-pid">–</dd>
         <dt id="l-up">Uptime</dt><dd id="v-up">–</dd>
@@ -132,21 +144,6 @@
           </select>
         </div>
         <div class="hint" id="set-loglevel-hint" hidden></div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="cardtitle" id="l-set-proxy">Proxy &amp; routing</div>
-      <div class="cardsec">
-        <div class="setrow">
-          <label class="setlabel" id="l-set-route-mode" for="sel-route">Mode</label>
-          <select id="sel-route">
-            <option value="global" id="l-route-global">Global</option>
-            <option value="cn" id="l-route-cn">Direct-CN</option>
-            <option value="cnadblock" id="l-route-cnadblock">Direct-CN-Adblock</option>
-          </select>
-        </div>
-        <div class="hint" id="set-route-hint"></div>
       </div>
     </section>
 

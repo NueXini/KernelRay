@@ -127,6 +127,9 @@ pre {
 }
 .banner.show { display: block; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+/* The 分流模式 card's hint is warning-only (a missing geo file), so it is the one .hint that
+   ever needs the warn colour. */
+.hint.warn { color: var(--warn); }
 .nodehead { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .nodehead > span:first-child { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
 .nodehead .spacer { flex: 1; }
