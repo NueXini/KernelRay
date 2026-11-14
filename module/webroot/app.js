@@ -94,6 +94,12 @@ var DICT_ZH = {
   portTp: "这个端口留给透明代理入站（10810），换一个",
   portsSaving: "正在应用端口…", portsSaved: "端口已应用",
   portsSave: "保存",
+  setDev: "开发者选项",
+  diagHint: "把核心日志、模块日志与运行状态打包到 /sdcard/Download，用于反馈问题。分享前请注意对敏感信息脱敏。",
+  diagCollect: "收集诊断包",
+  diagCollecting: "正在收集诊断包…",
+  diagDone: "诊断包已生成",
+  diagFailed: "诊断包生成失败",
   setRouteMode: "分流模式",
   routeGlobal: "全局", routeCn: "大陆直连", routeCnAdblock: "大陆直连去广告",
   routeCnNoGeodata: "geo 数据缺失（bin/geosite.dat、geoip.dat）：大陆直连当前按全局渲染，补齐文件后才真正生效。",
@@ -185,6 +191,12 @@ var DICT_EN = {
   portTp: "That port is reserved for the tproxy inbound (10810); pick another",
   portsSaving: "Applying ports…", portsSaved: "Ports applied",
   portsSave: "Save",
+  setDev: "Developer options",
+  diagHint: "Packs the core and module logs plus runtime state into /sdcard/Download for feedback. Redact sensitive information before sharing.",
+  diagCollect: "Collect diagnostics bundle",
+  diagCollecting: "Collecting the diagnostics bundle…",
+  diagDone: "Diagnostics bundle written",
+  diagFailed: "Writing the diagnostics bundle failed",
   setRouteMode: "Routing mode",
   routeGlobal: "Global", routeCn: "Direct-CN", routeCnAdblock: "Direct-CN-Adblock",
   routeCnNoGeodata: "Geo data is missing (bin/geosite.dat, geoip.dat): Direct-CN renders as Global until the files are back.",
@@ -243,7 +255,9 @@ var els = {
   selRoute: $("sel-route"), lRouteGlobal: $("l-route-global"), lRouteCn: $("l-route-cn"),
   lRouteCnAdblock: $("l-route-cnadblock"),
   setRouteHint: $("set-route-hint"),
-  tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry")
+  tpCard: $("tp-card"), tpHint: $("tp-hint"), tpRetry: $("tp-retry"),
+  lSetDev: $("l-set-dev"), diagHint: $("l-set-diag-hint"),
+  diagCollect: $("diag-collect"), diagPath: $("diag-path")
 };
 var tabs = [].slice.call(document.querySelectorAll(".tab"));
 var pages = {
@@ -266,6 +280,7 @@ var lastState = "unknown";
 var busy = false;
 var clearBusy = false; // 清空日志自己执行一次 exec；busy 只用于核心动作
 var pending = null; // 动作在途期间为 "start" | "stop"
+var diagBusy = false; // 诊断包收集在途：与核心动作互斥（共享 busy 闸门），状态独立
 var lastStateObj = null;
 var lastKv = null;
 var lastApplied = "";
@@ -347,6 +362,9 @@ function label(key) {
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
+  els.lSetDev.textContent = T.setDev;
+  els.diagHint.textContent = T.diagHint;
+  els.diagCollect.textContent = diagBusy ? T.diagCollecting : T.diagCollect;
   els.lSetRouteMode.textContent = T.setRouteMode;
   els.lRouteGlobal.textContent = T.routeGlobal;
   els.lRouteCn.textContent = T.routeCn;
@@ -1040,6 +1058,8 @@ function setButtons() {
   els.iSocks.disabled = !hasBridge;
   els.iHttp.disabled = !hasBridge;
   els.portsSave.disabled = busy || !hasBridge;
+  els.diagCollect.disabled = busy || diagBusy || !hasBridge;
+  els.diagCollect.textContent = diagBusy ? T.diagCollecting : T.diagCollect;
   if (els.nList) { els.nList.classList.toggle("busy", busy); }
   if (dialogId) { renderDialog(); }
 }
@@ -2496,6 +2516,32 @@ function run(command, pendingLabel) {
 
 els.start.addEventListener("click", function () { run("start", T.startingMsg); });
 els.stop.addEventListener("click", function () { run("stop", T.stoppingMsg); });
+// 诊断包不走 run()：它是设置页的手势，不刷新状态页，也用不到 pending 的
+// 启动/停止文案切换；但它尊重 busy——核心动作在途时不并行打包。
+els.diagCollect.addEventListener("click", function () {
+  if (busy || diagBusy) { return; }
+  diagBusy = true;
+  setButtons();
+  toast(T.diagCollecting);
+  exec(CLI + " diagnostics").then(function (r) {
+    if (r.errno !== 0) {
+      toast(T.diagFailed + ": " + (r.stderr || r.errno));
+      return;
+    }
+    var dest = (r.stdout || "").trim();
+    toast(T.diagDone);
+    // toast 会消失，而路径是接下来要拿的东西：写进卡片常驻的 hint 区。
+    if (dest) {
+      els.diagPath.textContent = dest;
+      els.diagPath.hidden = false;
+    }
+  }).catch(function (e) {
+    toast(T.diagFailed + ": " + e.message);
+  }).then(function () {
+    diagBusy = false;
+    setButtons();
+  });
+});
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.selRoute.addEventListener("change", function () {
   var target = routeValue(els.selRoute.value);

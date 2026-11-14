@@ -31,6 +31,7 @@ node tests/config.test.js              # 79 项 config 测试通过（需要 bas
 node tests/tproxy.test.js              # 17 项 tproxy 测试通过（需要假 iptables/ip）
 node tests/routing.test.js             # 20 项 routing 测试通过（分流模式渲染矩阵 + routing CLI）
 node tests/adblock.test.js             # 17 项去广告测试通过（大陆直连去广告渲染 + 失败关闭）
+node tests/diagnostics.test.js          # 9 项诊断包测试通过（收集范围 + 凭据不进包 + 尽力语义）
 ```
 
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，

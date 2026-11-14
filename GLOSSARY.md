@@ -276,3 +276,11 @@ _避免_: feed, provider, source
 从节点库里消失的节点（订阅刷新）会让选择悬空而不是过期；删除已选中节点会清掉它，往没有
 已应用节点的存储里导入会把它设为所切换的节点并在同一手势中应用它。
 _避免_: active node, current proxy, main node
+
+**诊断包 (Diagnostics bundle)**:
+只读收集的诊断归档：核心日志、模块日志、运行状态快照（status.json、规则缓存）、内核
+规则快照与版本信息，打成单个压缩文件放进下载目录（`/sdcard/Download/`），供用户分享。
+它绝不含节点凭据（config.json、state.json、nodeip 一概不进包）；日志以其原文进包——
+分享前请注意对敏感信息脱敏。它是只读手势：收集、打包、写下载目录，
+不修改也不清空任何被收集的文件。
+_避免_: bug report, log export, 日志包（那是它收集的东西之一，不是它）

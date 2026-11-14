@@ -1286,6 +1286,110 @@ kr_mlog_append() { # <标签> <消息...>
   kr_log_file "$_tag" "$_msg"
 }
 
+# ---- 诊断包（词汇表「诊断包」）------------------------------------------
+
+# 诊断包的落点。ADR 0002 说模块目录是模块唯一的写处；下载目录是那条
+# 规则的有意例外：诊断包就是为带出设备而生的，留在模块目录里反而会被
+# 下一次更新整体清掉（ADR 0002 的代价）。可覆盖，供测试指向临时目录。
+KR_DIAG_DL=${KR_DIAG_DL:-/sdcard/Download}
+
+# 只读收集：日志、运行状态与活内核快照打成一个 tar.gz 放进下载目录。
+# 绝不触碰 config.json、state.json、outbound.json、nodeip——凭据不进包
+# 是这个手势存在的前提。日志以其原文进包：访问日志携带到过的域名，
+# 自动脱敏改坏字节比诚实更糟，分享前由用户自查（UI 有提示）。
+kr_diagnostics() {
+  kr_dirs
+  _ts=$(date '+%Y%m%d-%H%M%S')
+  _name=KernelRay-diagnostics-$_ts
+  # 暂存与打包都在自己的 runtime 里做，收尾即清：模块目录之外只留
+  # 最终归档那一个文件。
+  _stage=$KR_RUNDIR/diag.$$
+  if ! mkdir -p "$_stage/$_name"; then
+    echo "diagnostics: cannot stage in $KR_RUNDIR" >&2
+    return 1
+  fi
+  _d=$_stage/$_name
+  _i=$_d/info.txt
+  {
+    printf 'bundle=%s\n' "$_name"
+    printf 'date=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf 'boot=%s\n' "$(kr_boot_id)"
+    _up=""
+    { IFS=' ' read -r _up _ </proc/uptime; } 2>/dev/null || _up=""
+    printf 'uptime=%s\n' "${_up%%.*}"
+    # 分流模式与 geo 数据状态：诊断包回答"当时的配置是什么"的最低限度。
+    if command -v kr_route_status >/dev/null 2>&1; then
+      kr_route_status
+    fi
+  } >"$_i"
+  # 存在哪个收哪个；缺的记进 info.txt，绝不为缺失的文件失败——全新安装
+  # 也要能一键收集（尽力收集）。
+  for _src in \
+    "module.prop $KR_MODDIR/module.prop" \
+    "status.json $KR_STATUS" \
+    "rules $KR_TP_RULES" \
+    "kernelray.log $KR_MLOG" \
+    "xray.log $KR_LOG" \
+    "xray.log.1 $KR_LOG.1"
+  do
+    _n=${_src%% *}
+    _p=${_src#* }
+    if [ -s "$_p" ]; then
+      cp -f "$_p" "$_d/$_n" 2>/dev/null || printf 'missing=%s\n' "$_n" >>"$_i"
+    else
+      printf 'missing=%s\n' "$_n" >>"$_i"
+    fi
+  done
+  # 活内核快照。规则缓存（runtime/rules）只是最后一次真实应答的缓存；
+  # 像停止后残留的接管规则这样的现场，只有实时刻的内核回答得了。
+  {
+    printf '# live takeover snapshot, %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    for _ipt in iptables ip6tables; do
+      printf '\n## %s -t mangle -S\n' "$_ipt"
+      "$_ipt" -t mangle -S 2>/dev/null || printf '(unavailable)\n'
+      printf '\n## %s -t filter -S KR_TP_INPUT\n' "$_ipt"
+      "$_ipt" -t filter -S KR_TP_INPUT 2>/dev/null || printf '(unavailable)\n'
+    done
+    printf '\n## ip rule show\n'
+    ip rule show 2>/dev/null || printf '(unavailable)\n'
+    printf '\n## ip -6 rule show\n'
+    ip -6 rule show 2>/dev/null || printf '(unavailable)\n'
+    for _t in ${KR_TABLE:-19283} ${KR_BYPASS_TABLE:-19282}; do
+      printf '\n## ip route show table %s\n' "$_t"
+      ip route show table "$_t" 2>/dev/null || printf '(unavailable)\n'
+      printf '\n## ip -6 route show table %s\n' "$_t"
+      ip -6 route show table "$_t" 2>/dev/null || printf '(unavailable)\n'
+    done
+  } >"$_d/kernel-snapshot.txt"
+  # 打包：tar 一定有；gzip 缺了就退回纯 tar——一个能解开的包胜过没有包。
+  _tar=$_stage/$_name.tar
+  if ! tar -cf "$_tar" -C "$_stage" "$_name" 2>/dev/null; then
+    echo "diagnostics: tar failed" >&2
+    rm -rf "$_stage"
+    return 1
+  fi
+  _ext=tar
+  if gzip -f "$_tar" 2>/dev/null; then
+    _ext=tar.gz
+  fi
+  mkdir -p "$KR_DIAG_DL" 2>/dev/null
+  _dest=$KR_DIAG_DL/$_name.$_ext
+  # 同一秒里的第二次收集不覆盖前一次：后缀再加一个进程号。
+  [ -e "$_dest" ] && _dest=$KR_DIAG_DL/$_name-$$.$_ext
+  if ! mv -f "$_stage/$_name.$_ext" "$_dest" 2>/dev/null; then
+    echo "diagnostics: cannot write $KR_DIAG_DL" >&2
+    rm -rf "$_stage"
+    return 1
+  fi
+  chmod 644 "$_dest" 2>/dev/null
+  rm -rf "$_stage"
+  # 不走 kr_log：那会往 stdout 塞控制台副本，而本函数的 stdout 是
+  # 交给 WebUI 的最终路径，只能有一行。
+  kr_log_file Module "diagnostics bundle written to $_dest"
+  printf '%s\n' "$_dest"
+  return 0
+}
+
 kr_cli() {
   _cmd=${1:-status}
   [ $# -gt 0 ] && shift
@@ -1295,6 +1399,7 @@ kr_cli() {
     apply) kr_apply "${1:-}" ;;
     unapply) kr_unapply ;;
     ports) kr_apply_ports ;;
+    diagnostics) kr_diagnostics ;;
     routing)
       case "${1:-status}" in
         global|cn|cnadblock) kr_route_set "$1" ;;
@@ -1339,7 +1444,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|diagnostics|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac
