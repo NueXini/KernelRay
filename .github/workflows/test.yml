@@ -14,10 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ubuntu-latest 自带 Node，这么小的测试不需要 setup action。
-      # 解析器、节点列表模型与出站渲染器都从随包发布的
-      # module/webroot/app.js 里抽取；config 测试对着假核心 source 随包
-      # shell。
       - run: |
           node --version
           node --check module/webroot/app.js
@@ -29,3 +25,20 @@ jobs:
           node tests/config.test.js
           node tests/routing.test.js
           node tests/adblock.test.js
+
+      - run: |
+          curl -LO https://github.com/XTLS/Xray-core/releases/latest/download/Xray-android-arm64-v8a.zip
+          unzip -j Xray-android-arm64-v8a.zip xray -d module/bin/
+          rm Xray-android-arm64-v8a.zip
+          curl -LO https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+          curl -LO https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+          mv geosite.dat geoip.dat module/bin/
+
+      - id: pack
+        run: echo "zip=$(scripts/pack.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KernelRay-zip
+          path: ${{ steps.pack.outputs.zip }}
+          retention-days: 7
