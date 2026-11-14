@@ -1,68 +1,59 @@
-# 0007 — One tap on a node switches it
+# 0007 — 一次点按即切换节点
 
-Status: accepted (amends ADR 0005's rule that the UI never applies a selection implicitly; its
-rule that the applied node can never be deleted is amended by
-[ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md), its one-tap rule is
-amended by [ADR 0016](0016-a-node-row-opens-a-detail-dialog.md), and "switching restarts the
-core" is narrowed to "when the config bytes change" by
-[ADR 0017](0017-one-render-one-test-per-switch.md))
+状态：已接受（修订 ADR 0005 的"UI 绝不隐式应用选择"规则；其"已应用节点绝不可删除"规则被
+[ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md) 修订，其一次点按规则被
+[ADR 0016](0016-a-node-row-opens-a-detail-dialog.md) 修订，"切换重启核心"被
+[ADR 0017](0017-one-render-one-test-per-switch.md) 收窄为"配置字节变化时"）
 
-## Context
+## 背景
 
-v0.6 exposed exactly one node: the selected one, rendered as a single card with an **Apply**
-button. ADR 0005 made "selected is not applied" a UI rule — selecting only wrote `state.json`,
-and Apply derived the core config and restarted a running core. That is a safe two-step, but it
-was designed around a page that could only show one node.
+v0.6 只暴露一个节点：已选中的那个，渲染成一张带 **应用** 按钮的卡片。ADR 0005 把"已选中
+不是已应用"立为 UI 规则——选中只写 `state.json`，应用才推导核心配置并重启运行中的核心。
+这是安全的两步操作，但它围绕一个只能显示一个节点的页面设计。
 
-The store has always held many nodes (`state.json`'s `manual` array plus a `selected` pointer);
-only the page did not show them. Turning the Nodes tab into a list makes the two-step awkward:
-in a list, "select a row, find Apply, confirm" is three actions for the one thing a proxy user
-does most often, and a selection left waiting for Apply is easy to miss.
+节点库一直装着多个节点（`state.json` 的 `manual` 数组加一个 `selected` 指针）；只是页面
+没显示它们。把节点标签页变成列表后两步操作变得别扭：列表里"选中一行、找到应用、确认"
+对代理用户最常做的那件事来说是三个动作，而一个停在等待应用状态的选择很容易被错过。
 
-## Decision
+## 决策
 
-Tapping a node row selects **and** applies it: the UI writes `state.selected`, renders the node
-to `outbound.json` + `outbound.meta`, and calls `kernelray.sh apply <id>`.
+点按节点行即选中 **并且** 应用：UI 写 `state.selected`，把节点渲染到 `outbound.json` +
+`outbound.meta`，然后调用 `kernelray.sh apply <id>`。
 
-`selected` is written first. A crash or a failure between the steps therefore leaves the honest
-"wants B, runs A" state, never a config newer than the pointer.
+`selected` 先写。步骤之间崩溃或失败留下的是诚实的"想要 B、运行着 A"状态，绝不是一份比
+指针还新的配置。
 
-The facts stay separate: `state.selected` is the wish, `runtime/applied` is what the core runs.
-They are normally equal and diverge only when a switch fails. The list marks the applied row and,
-after a failed switch, the selected-but-unapplied row.
+事实保持分离：`state.selected` 是愿望，`runtime/applied` 是核心在跑的。两者通常相等，
+只在切换失败时分叉。列表标记已应用行，切换失败后还标记已选中未应用行。
 
-Two rules keep the one tap from doing pointless work:
+两条规则防止一次点按做无谓的事：
 
-- tapping the applied node whose fields have not changed does nothing to the core (the pointer
-  is merely re-synced if a failed switch left it elsewhere);
-- tapping the applied node after a re-import changed it (`dirty`) re-applies it, because the
-  running config predates the node's fields.
+- 点按字段未变的已应用节点，对核心不做任何事（只有失败的切换把指针留在别处时才重新
+  同步）；
+- 点按重导入后变过的已应用节点（`dirty`）则重新应用，因为运行中的配置早于节点的字段。
 
-Switching to another node restarts a running core through the existing atomic
-`xray -test` / swap / rollback path. The shell is unchanged; the UI is the selector.
+切到另一个节点时，经现有的原子 `xray -test` / 换入 / 回滚路径重启运行中的核心。shell
+不变；UI 是选择器。
 
-## Consequences
+## 后果
 
-- The Nodes page has no Apply button. `docs/state-schema.md`, the README and `GLOSSARY.md`
-  describe tapping a row as the switch gesture (`切换节点`).
-- A failed switch leaves `selected` on the attempted node. Tapping it again retries; tapping the
-  still-applied node re-syncs the pointer without restarting the core.
-- The shell still refuses an outbound whose `outbound.meta` id does not match the requested id,
-  so the write order (selected → meta → outbound → CLI) remains part of the contract.
-- Deleting the applied node is refused; a delete that succeeded clears `selected` when it named
-  that node and removes the rendered outbound when it belonged to it. (Amended by
-  [ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md): the applied node may be
-  deleted when it is the last node and the core is stopped, and that delete is an unapply.)
-- Subscriptions stay out of scope: the list renders `state.manual` only and preserves
-  `subscriptions` untouched.
+- 节点页没有应用按钮。`docs/state-schema.md`、README 和 `GLOSSARY.md` 把点按一行描述为
+  切换手势（`切换节点`）。
+- 切换失败把 `selected` 留在被尝试的节点上。再点一次即重试；点仍然已应用的节点则重新
+  同步指针、不重启核心。
+- shell 仍拒绝 `outbound.meta` 的 id 与请求 id 不符的出站，所以写入顺序（selected → meta
+  → outbound → CLI）仍是契约的一部分。
+- 删除已应用节点被拒绝；成功删除时，若删除的是 `selected` 指向的节点则清掉 `selected`，
+  若渲染出站属于它则一并移除。（被
+  [ADR 0013](0013-deleting-the-last-node-while-stopped-unapplies-it.md) 修订：已应用节点
+  是最后一个节点且核心停止时可以删除，那次删除就是一次 unapply。）
+- 订阅仍在范围之外：列表只渲染 `state.manual`，`subscriptions` 原样保留。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Keep the two-step Apply button.** Safer against mis-taps, but it makes the list a selection
-  UI with a separate commit — the thing the list was meant to remove. The rollback path already
-  covers a bad switch.
-- **Apply on tap and hide the selected/applied distinction.** Then a failed switch would show a
-  node as current while the core still runs the old one. The distinction stays as fact, even
-  though the UI no longer creates it deliberately.
-- **Delete the applied node and fall back to direct.** A mis-tap would silently change traffic
-  (and, once takeover lands, expose it). Deleting the applied node is refused instead.
+- **保留两步的应用按钮。** 对误触更安全，但那让列表变成一个带独立提交的选择 UI——正是
+  列表要消除的东西。回滚路径已经覆盖了坏的切换。
+- **点按即应用、隐藏已选中/已应用的区分。** 那样切换失败会显示一个节点是当前的，而核心
+  还在跑旧的。区分作为事实保留，即使 UI 不再有意识地制造它。
+- **删除已应用节点并回退直连。** 一次误触会静默改变流量（等接管落地后还会暴露它）。改为
+  拒绝删除已应用节点。

@@ -1,84 +1,69 @@
-# Geo data ships with the module, and routing is a preset mode
+# geo 数据随模块内置，路由是预设模式
 
-Routing needs `geosite.dat` and `geoip.dat`: `geosite:cn` / `geoip:cn` only resolve if the
-files sit next to the core. They ship inside the release ZIP in `bin/`, the directory the core
-itself lives in, because a device-side download would make a start depend on the network and
-because the WebUI has no TLS-validating fetcher: ADR 0001's reasoning, one file class further.
+路由需要 `geosite.dat` 和 `geoip.dat`：`geosite:cn` / `geoip:cn` 只有在文件紧挨着核心时才
+能解析。它们随发布 ZIP 内置在 `bin/`——核心自己所在的目录——因为设备侧下载会让启动依赖
+网络，而且 WebUI 没有校验 TLS 的 fetcher：ADR 0001 的论证，再往前推一类文件。
 
-Status: accepted (the preference-file pattern it borrows from `runtime/tproxy` is now
-`runtime/route`'s alone, and the 空转 form it mentions no longer exists — see
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
-No asset path is configured: with `XRAY_LOCATION_ASSET` unset the core resolves the files from
-its own executable's directory — 26.10.29 searches there, not the cwd — so the location inside
-the ZIP is the only thing that has to be right.
+状态：已接受（它借自 `runtime/tproxy` 的偏好文件模式如今是 `runtime/route` 独有的，它提到
+的 空转 形态已不存在——见
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)）
+不配置资源路径：`XRAY_LOCATION_ASSET` 未设时核心从自己可执行文件所在目录解析这些文件
+——26.10.29 在那里找，不是 cwd——所以 ZIP 内的位置是唯一必须正确的东西。
 
-Which set is in the ZIP is a **per-release pin, not a code constant**: the release notes and
-`bin/README.md` name it, and the shipped files carry no version stamp of their own. The reference
-release pins **Loyalsoldier/v2ray-rules-dat** — 260 `geoip` categories and the richer ad/reject
-lists a later rule editor will want — while testing uses the geo data that comes inside the
-core's own ZIP (XTLS/Xray-rules-dat) unchanged, because it is already in the file the core is
-extracted from. Both carry every category this version names (`cn`, `private`), and `geoip:cn`
-is no smaller in the XTLS set (25,466 prefixes vs 10,012; 7,049 vs 6,516 IPv4), so the pin changes
-what a release costs (3.3MB compressed / 11.5MB installed vs 7.4MB / 27.9MB) and which extra
-categories exist — never whether 大陆直连 works.
+ZIP 里装哪套数据是 **逐发布钉死，不是代码常量**：发布说明与 `bin/README.md` 点名，随包
+文件自身不带版本戳。参考发布钉 **Loyalsoldier/v2ray-rules-dat** — 260 个 `geoip` 分类、
+以及将来规则编辑器会想要的更丰富的广告/拒绝列表——测试则原样使用核心自带 ZIP 里的 geo
+数据（XTLS/Xray-rules-dat），因为它已经在解出核心的那个文件里。两套都带有本版本引用的
+每个分类（`cn`、`private`），而 `geoip:cn` 在 XTLS 那套里只大不小（25,466 对 10,012 条
+前缀；7,049 对 6,516 条 IPv4），所以钉哪套改变的是发布版的体积（压缩 3.3MB / 装后
+11.5MB 对 7.4MB / 27.9MB）和额外分类有哪些——绝不改变 大陆直连 是否可用。
 
-The user picks a **分流模式** instead of authoring rules: `全局` (the applied node carries
-everything — the default, and what every earlier version did) or `大陆直连` (mainland domains
-and addresses leave by `direct`). The preference is the shell's, in `runtime/route`, written by
-`kernelray.sh routing global|cn` — the `runtime/tproxy` pattern, not `state.json`'s settings,
-whose ADR 0009 `sed` exception stays at two integers. Unlike the tproxy switch it re-derives
-the config immediately (render → `-test` → restart, the `ports` path) and rolls the preference
-back when the new config does not start: nothing about routing needs the start-time ordering
-that makes the tproxy switch a next-start preference.
+用户挑选 **分流模式** 而不是编写规则：`全局`（已应用节点承载一切——默认值，也是之前每个
+版本的行为）或 `大陆直连`（大陆域名和地址走 `direct`）。偏好归 shell，在 `runtime/route`，
+由 `kernelray.sh routing global|cn` 写入——`runtime/tproxy` 的模式，不是 `state.json` 的
+settings，后者的 ADR 0009 `sed` 例外止步于两个整数。与 tproxy 开关不同，它立即重新推导
+配置（渲染 → `-test` → 重启，`ports` 路径），新配置起不来时回滚偏好：路由不需要让 tproxy
+开关成为下次启动偏好的那种启动时顺序。
 
-`大陆直连` is not two rules and a DNS that stays as it was. The fixed DoH upstream answers
-mainland domains with overseas CDN addresses, so `geoip:cn` would never match and the split
-would be half a feature: mainland domains are resolved by domestic resolvers (`223.5.5.5`,
-`119.29.29.29`, filtered by `expectIPs: ["geoip:cn"]`) whose queries leave `direct`, everything
-else keeps the DoH through the node, and `domainStrategy` becomes `IPIfNonMatch` so a domain no
-geosite category knows can still match `geoip:cn`. The same rule set is rendered into the 空转
-form too — without the DNS rules, which only exist where the dns inbound does — so a local
-socks client gets the same 分流 as the device.
+`大陆直连` 不是两条规则加一个维持原样的 DNS。固定的 DoH 上游会用海外 CDN 地址应答大陆
+域名，那样 `geoip:cn` 永远匹配不上、分流只是半个功能：大陆域名由国内解析器（`223.5.5.5`、
+`119.29.29.29`，以 `expectIPs: ["geoip:cn"]` 过滤）解析，它们的查询走 `direct`，其余保持
+经节点的 DoH，`domainStrategy` 变为 `IPIfNonMatch`，让任何 geosite 分类都不认识的域名仍可
+匹配 `geoip:cn`。同一规则集也渲染进 空转 形态——不带 DNS 规则，后者只在 dns 入站存在的
+地方存在——所以本地 socks 客户端得到与设备相同的分流。
 
-Consequences we accept: the ZIP grows by 3.3–7.4MB (11.5–27.9MB installed) depending on the
-pinned set, and a module update resets the data with the rest of the module dir, so the data's
-age is the release's age. Missing or unreadable geo data never bricks the core: a `cn` render
-degrades to the global form and says so in `kernelray.log`, and `routing cn` refuses to switch
-while the files are absent — the safe direction is always "everything through the node".
+我们接受的后果：ZIP 增大 3.3–7.4MB（装后 11.5–27.9MB），取决于钉死的那套数据；模块更新
+把它连同模块目录其余部分一起重置，所以数据的年龄就是发布版的年龄。geo 数据缺失或不可读
+永远不弄死核心：`cn` 渲染降级为全局形态并在 `kernelray.log` 说明，文件缺失时 `routing cn`
+拒绝切换——安全方向永远是"一切走节点"。
 
-## Considered options
+## 考虑过的选项
 
-- **One dataset hard-coded in the module** — the extra 4.1MB a release spends on Loyalsoldier's
-  categories would then be spent on every test build too, and swapping sets would be a code
-  change instead of a file swap plus one line in the release notes.
-- **Downloading the data on the device** at install or first start — network at install time
-  and an unrecoverable failure, the same trade ADR 0001 rejected for the core.
-- **Xray's own `app/geodata` downloader** (https URL + cron, hot-reloaded) — a start-time
-  network dependency, and a cache outside the module dir, which ADR 0002 forbids.
-- **A user-editable rule list** — needs a rule model, ordering semantics, validation and a new
-  UI. This ADR buys the data and the first two modes; the editor is a later version.
-- **`geosite:category-ads-all` → `block` bundled into 大陆直连** — the mode's name promises
-  "mainland goes direct", not "ads are blocked". The template's `block` outbound stays unused,
-  waiting for that editor.
-- **Keeping the fixed DNS** — a 分流 whose IP half can never match. See above.
+- **模块里硬编码一套数据** — 发布版花在 Loyalsoldier 分类上的额外 4.1MB 就得让每个测试
+  构建也花一遍，换数据集会变成改代码，而不是换文件加发布说明里的一行。
+- **在设备上下载**，安装时或首次启动 — 安装时的网络依赖与不可恢复的失败，与 ADR 0001
+  对核心的否决同款。
+- **Xray 自带的 `app/geodata` 下载器**（https URL + cron，热重载）— 启动时的网络依赖，
+  以及模块目录之外的缓存，ADR 0002 禁止。
+- **用户可编辑的规则列表** — 需要规则模型、排序语义、校验和一套新 UI。本 ADR 买下数据和
+  前两个模式；编辑器是以后的版本。
+- **`geosite:category-ads-all` → `block` 捆进 大陆直连** — 模式的名字承诺的是"大陆走
+  直连"，不是"广告被拦"。模板的 `block` 出站保持未用，等那个编辑器。
+- **维持固定的 DNS** — 一个 IP 半边永远匹配不上的分流。见上。
 
-## Amendment
+## 修订
 
-The files were moved from `geodata/` into `bin/`, beside the core, and `geodata/VERSION` was
-dropped. One unpack of the core's own ZIP now fills the whole directory, and the data needs no
-path of its own in the code: with `XRAY_LOCATION_ASSET` unset the core reads them from its own
-directory, so the two cannot drift apart — and the module stopped exporting the variable once
-that was verified on device. The decision above is otherwise unchanged — the data still ships
-inside the ZIP and the set is still pinned per release — but the device no longer names the
-pinned set: the release notes do, and the Status page reports presence rather than a version line.
+文件从 `geodata/` 移进 `bin/`、与核心同目录，`geodata/VERSION` 撤销。解一次核心自带的 ZIP
+就能填满整个目录，数据在代码里也不再需要自己的路径：`XRAY_LOCATION_ASSET` 未设时核心从
+自己所在目录读它们，所以两者不可能漂移——在设备上验证过之后，模块不再导出该变量。上面的
+决策其余不变——数据仍随 ZIP 内置、数据集仍逐发布钉死——但设备不再指名钉死的那套：发布
+说明指名，状态页报告存在性而不是版本行。
 
-## Amendment — 0021
+## 修订 — 0021
 
-分流模式 is no longer two values: 大陆直连去广告 (`cnadblock`) renders 大陆直连's rules plus the
-`geosite:category-ads-all` parts, as a mode of its own rather than a switch (docs/adr/0021). The
-option rejected above — "`geosite:category-ads-all` → `block` bundled into 大陆直连" — stays
-rejected as written: 大陆直连 itself is unchanged and blocking lives in a mode whose name says so.
-The template's `block` outbound is no longer unused, and `category-ads-all` is now a category
-this version names. 大陆直连去广告 is also the default the installer creates, so the "全局 is the
-default" sentence above describes an earlier version: 全局 is now a choice, and the absent file
-only means it.
+分流模式 不再只有两个值：大陆直连去广告（`cnadblock`）渲染 大陆直连 的规则加上
+`geosite:category-ads-all` 部分，是独立模式而不是开关（docs/adr/0021）。上文否决的选项
+——"`geosite:category-ads-all` → `block` 捆进 大陆直连"——维持否决：大陆直连 本身不变，
+拦截活在一个名字就说明问题的模式里。模板的 `block` 出站不再闲置，`category-ads-all` 成了
+本版本引用的分类。大陆直连去广告 也是安装器创建的默认值，所以上文"全局 是默认"的句子
+描述的是更早的版本：全局 现在是一个选项，文件不存在只是意味着它。

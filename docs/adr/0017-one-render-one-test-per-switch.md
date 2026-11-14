@@ -1,142 +1,124 @@
-# 0017 — One render and one test per switch
+# 0017 — 每次切换一次渲染一次测试
 
-Status: accepted (the start path it describes is amended by
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the config is
-rendered and tested *before* the rules go in, `kr_config_form` and `runtime/config.form` are
-gone with the second form, and `kr_tp_engage` installs rules only. The one-render-one-test
-accounting, `runtime/config.tested` and the split between "a switch renders" and "a start does
-not test" are unchanged)
+状态：已接受（它描述的启动路径被
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) 修订：配置在规则
+装入 *之前* 渲染并测试，`kr_config_form` 与 `runtime/config.form` 随第二种形态移除，
+`kr_tp_engage` 只装规则。"一次渲染一次测试"的账目、`runtime/config.tested` 以及"切换才
+渲染、启动不测试"的划分不变）
 
-## Context
+## 背景
 
-v0.9 turned a node switch into three config loads of the same bytes. `kr_apply` rendered a
-candidate and tested it; `kr_start_locked` then engaged takeover, which re-rendered and
-re-tested the config (`kr_tp_swap_config`); and the start tested the same file once more before
-forking. Measured on the emulator, a switch from a running core was 3.21 s, of which ~0.2 s was
-`xray -test` and the rest was script overhead that grew with the process count.
+v0.9 把一次节点切换变成了对同一份字节的三次配置加载。`kr_apply` 渲染候选并测试；
+`kr_start_locked` 随后落实接管，后者重渲染并重测试配置（`kr_tp_swap_config`）；启动在
+fork 之前又把同一文件测了一遍。模拟器上实测，从运行中的核心切换一次要 3.21 s，其中约
+0.2 s 是 `xray -test`，其余是随进程数增长的脚本开销。
 
-The duplication was not one function called twice — it was six places that each did a slightly
-different subset of "render, test, swap":
+重复不是同一个函数被调两次——是六处各自做"渲染、测试、换入"的略微不同的子集：
 
-| Caller | Renders | Tests | Swaps |
+| 调用方 | 渲染 | 测试 | 换入 |
 | --- | --- | --- | --- |
-| `kr_apply` | yes | yes | yes |
-| `kr_apply_ports` | yes | yes | yes |
-| `kr_route_set` | yes | yes | yes |
-| `kr_tp_engage` | yes | yes | yes |
-| `kr_ensure_config` | yes | **no** | yes |
-| `kr_start_locked` (drift repair) | yes | yes | yes |
+| `kr_apply` | 是 | 是 | 是 |
+| `kr_apply_ports` | 是 | 是 | 是 |
+| `kr_route_set` | 是 | 是 | 是 |
+| `kr_tp_engage` | 是 | 是 | 是 |
+| `kr_ensure_config` | 是 | **否** | 是 |
+| `kr_start_locked`（漂移修复） | 是 | 是 | 是 |
 
-They had already drifted: `kr_ensure_config` moved an untested config into place and relied on
-the start to test it afterwards. The start's "drift detector" decided which form the on-disk
-config had by grepping the rendered JSON for `"tag":"tp-in"` and `geosite:cn`, and the log level
-by a third grep — JSON read back with text tools, which ADR 0003 rejected for the node store.
+它们已经漂移了：`kr_ensure_config` 把未经测试的配置搬到位、指望启动稍后测试它。启动的
+"漂移检测器"靠在渲染出的 JSON 里 grep `"tag":"tp-in"` 和 `geosite:cn` 来判断磁盘配置的
+形态，靠第三个 grep 判断日志级别——用文本工具读回 JSON，正是 ADR 0003 对节点库拒绝过的
+做法。
 
-The pin (`kr_tp_pin_node`) sat inside `kr_tp_engage`, i.e. *after* the core had been stopped and
-*while* the rules were still up: the DoH query went into a capture that led to a dead core, so
-it timed out (`--max-time 4`) and the pin was lost — on every switch with takeover on.
+钉死（`kr_tp_pin_node`）位于 `kr_tp_engage` 内部，也就是核心已被停止 *之后*、而规则还在
+位 *之时*：那次 DoH 询问进入了一条通向死核心的捕获，于是超时（`--max-time 4`）、钉死
+丢失——每一次开接管切换都如此。
 
-## Decision
+## 决策
 
-**One module decides what config.json should be, and it is idempotent.**
+**一个模块决定 config.json 应该是什么，而且它是幂等的。**
 
-- `kr_render_config` is a pure function of the template, the outbound and an explicit
-  `KR_TAKEOVER=0|1`. It no longer reads the live rules to guess the form.
-- `kr_config_form` is the single place that answers "which form do these rules need":
-  takeover while the switch says so *and* the rules are up. It is read by
-  `kr_config_candidate`, never by the renderer.
-- `kr_config_candidate <applied-id> [route]` renders the config this start would run, compares
-  it byte for byte with `config.json`, and **tests only when the bytes differ**. It hands back
-  either a tested candidate (`KR_CANDIDATE`) or nothing at all. Nothing is touched before the
-  test passes (ADR 0007's promise), and "nothing at all" is a first-class answer: no test, no
-  write, no restart.
-- `kr_ensure_config` is `kr_config_candidate` plus the install: the start's whole config step.
-- `kr_apply`, `kr_apply_ports` and `kr_route_set` are "candidate + install + start". Saving the
-  ports that are already rendered, re-applying the applied node, or setting the 分流模式 it
-  already has now costs one render and one `cmp`, and restarts nothing.
-- **A start does not test.** `kr_ensure_config` guarantees that `config.json` is the bytes that
-  passed `-test`, so the start forks on them directly. The three tests of a switch become one.
+- `kr_render_config` 是模板、出站和显式 `KR_TAKEOVER=0|1` 的纯函数。它不再读活规则去猜
+  形态。
+- `kr_config_form` 是回答"这些规则需要哪种形态"的唯一地点：开关这么说 *且* 规则在位时为
+  接管。它被 `kr_config_candidate` 读取，绝不被渲染器读取。
+- `kr_config_candidate <applied-id> [route]` 渲染这次启动将运行的配置，与 `config.json`
+  逐字节比较，**仅在字节不同时测试**。它交回一个测过的候选（`KR_CANDIDATE`）或什么都没
+  有。测试通过前什么都不碰（ADR 0007 的承诺），而"什么都没有"是一等答案：不测试、不写、
+  不重启。
+- `kr_ensure_config` 是 `kr_config_candidate` 加安装：启动的全部配置步骤。
+- `kr_apply`、`kr_apply_ports` 和 `kr_route_set` 是"候选 + 安装 + 启动"。保存已渲染的端口、
+  重新应用已应用节点、或设置已有的 分流模式，如今只花一次渲染和一次 `cmp`，什么也不
+  重启。
+- **启动不测试。** `kr_ensure_config` 保证 `config.json` 就是通过了 `-test` 的字节，启动
+  直接在它们之上 fork。一次切换的三次测试变成一次。
 
-**The test result travels with the bytes.** `runtime/config.tested` is a copy of the exact file
-that passed `xray -test`; a config whose bytes match it needs no second test. This rests on two
-facts, both checked:
+**测试结果随字节走。** `runtime/config.tested` 是通过 `xray -test` 的那份文件的精确副本；
+字节与它匹配的配置不需要第二次测试。这依赖两个事实，都已核实：
 
-- the render is a pure function of the intent (template, outbound, ports, preferences, pin,
-  form) — the reason the form had to become an input;
-- `xray -test` does not bind the inbound ports, so it is a pure function of the config file and
-  the geo data. (Measured: `-test` succeeds while a core holds the same ports.)
+- 渲染是意图（模板、出站、端口、偏好、钉死、形态）的纯函数——这正是形态必须变成输入的
+  原因；
+- `xray -test` 不绑定入站端口，所以它是配置文件和 geo 数据的纯函数。（实测：核心占着相同
+  端口时 `-test` 依然成功。）
 
-`runtime/config.form` records the form those bytes were rendered in. It is the one derived fact
-the config cannot be asked about without re-rendering it, and it is needed by exactly one
-reader: the start that finds `outbound.json` describing another node (see below). It is written
-by the one place that installs a config, not grepped back out of the JSON.
+`runtime/config.form` 记录那些字节渲染时的形态。它是唯一一个不重渲染就无法向配置询问的
+派生事实，而且恰好只有一个读者：发现 `outbound.json` 描述另一个节点的启动（见下）。它由
+唯一安装配置的地方写入，而不是从 JSON 里 grep 回来。
 
-**The pin happens before the render, once per invocation.** `kr_apply` pins the node host while
-the old node still works, then renders. `kr_tp_pin_node` is memoized per process, so the start
-that follows does not resolve again. At boot the pin still happens inside engage — before the
-rules go up, which is the same requirement (a working network).
+**钉死发生在渲染之前，每此调用一次。** `kr_apply` 趁旧节点还能用时钉住节点主机，然后
+渲染。`kr_tp_pin_node` 按进程记忆化，随后的启动不再解析。开机时钉死仍在 engage 内——在
+规则装上之前，那是同一个要求（能用的网络）。
 
-**Engage owns the rules, not the config.** `kr_tp_engage` keeps its conflict check, its pin and
-its install; the config form follows from whether the rules ended up installed. On a conflict or
-a failed install the rules are down, `kr_config_form` answers "idle", and `kr_ensure_config`
-renders that — which is what the two `kr_tp_swap_config` calls used to do by hand.
+**engage 拥有规则，不拥有配置。** `kr_tp_engage` 保留其冲突检查、其钉死和其安装；配置
+形态由规则最终是否装上决定。冲突或安装失败时规则不在位，`kr_config_form` 回答"直连"，
+`kr_ensure_config` 渲染那个——正是过去两次 `kr_tp_swap_config` 调用手做的事。
 
-**The rollback restores the intent, then the config.** Because a start re-derives the config
-from the current intent, rolling back the bytes alone is not enough: a routing switch whose
-start failed would be re-rendered from the *new* mode by the rollback's own start. So the swap
-is split into `kr_swap_install` (back up, stop, install, record), `kr_swap_start` (start) and
-`kr_swap_rollback` (restore, start again), and `kr_route_set` restores the preference between
-install and rollback. `kr_swap_config` is the composition for callers with no intent of their
-own (apply, ports, ensure).
+**回滚先恢复意图，再恢复配置。** 因为启动会从当前意图重新推导配置，只回滚字节不够：一次
+启动失败的分流切换会被回滚自己的启动从 *新* 模式重新渲染。所以换入拆成 `kr_swap_install`
+（备份、停止、安装、记录）、`kr_swap_start`（启动）和 `kr_swap_rollback`（恢复、再次
+启动），`kr_route_set` 在安装与回滚之间恢复偏好。`kr_swap_config` 是给没有自己意图的调用
+方（apply、ports、ensure）的组合。
 
-**A failed switch keeps running the applied node.** After a failed switch `outbound.json` and
-`outbound.meta` describe the node the user *tried*, while `runtime/applied` and the restored
-config describe the node that runs (ADR 0007's "wants B, runs A"). Nothing can be re-rendered
-from that outbound, so the start takes the config on disk as it is — through the same test gate,
-which only bites when the bytes are unknown — but only while its recorded form still agrees with
-the live rules. Anything else refuses with "re-tap the node in the WebUI": running a marked
-outbound with no ip rule loses routing, and an idle config under installed rules blackholes
-traffic (ADR 0008, 0011). Before this ADR the drift detector would have silently rendered the
-*tried* node's outbound into the config while `runtime/applied` still named the old node.
+**失败的切换继续运行已应用节点。** 切换失败后 `outbound.json` 和 `outbound.meta` 描述的
+是用户 *尝试* 的节点，而 `runtime/applied` 与恢复的配置描述的是运行中的节点（ADR 0007 的
+"想要 B、运行着 A"）。从那条出站什么都渲染不出来，所以启动把磁盘配置原样接受——走同一个
+测试闸门，它只在字节未知时才咬人——但仅当其记录形态仍与活规则一致。其他情况以"在 WebUI
+重新点按该节点"拒绝：带 mark 的出站没有 ip 规则会丢路由，装着规则的直连配置会黑洞流量
+（ADR 0008、0011）。本 ADR 之前，漂移检测器会在 `runtime/applied` 仍指名旧节点时静默把
+*尝试* 节点的出站渲染进配置。
 
-## Consequences
+## 后果
 
-Measured on the emulator (tproxy on, 192 processes, native core):
+模拟器上实测（tproxy 开、192 个进程、原生核心）：
 
-| Gesture | before | after |
+| 手势 | 之前 | 之后 |
 | --- | --- | --- |
-| switch to another node (core running) | 3.21 s | **1.06 s** |
-| re-apply the same node | 3.21 s | **0.28 s** |
-| save the ports already rendered | 3.21 s | **0.23 s** |
-| `xray -test` calls per switch | 3 | **1** |
+| 切到另一个节点（核心运行中） | 3.21 s | **1.06 s** |
+| 重新应用同一节点 | 3.21 s | **0.28 s** |
+| 保存已渲染的端口 | 3.21 s | **0.23 s** |
+| 每次切换的 `xray -test` 次数 | 3 | **1** |
 
-- The start's drift block, the two `kr_tp_swap_config` calls and the `kr_ensure_config`
-  special case are gone; the renderer is a pure function and the form is decided once.
-- A config that the core rejects now fails at the *install* gesture (apply, ports, routing) or
-  at the start's ensure — never after the running core has been stopped.
-- The rollback's start re-renders from the restored intent, so `config.json.prev` is a
-  convenience (it keeps the bytes identical, so the marker makes the re-render free), not the
-  source of truth.
-- `runtime/config.tested` and `runtime/config.form` contain the same secrets as `config.json`
-  and get the same `0600`; `unapply` and the failed-start cleanup remove them, and `pack.sh`
-  already excludes `runtime/`.
-- A hand-written `config.json` is still not supported (ADR 0005), but it is now *tested* before
-  it is trusted: unknown bytes are tested once and then marked.
+- 启动的漂移块、两次 `kr_tp_swap_config` 调用与 `kr_ensure_config` 的特例全部移除；渲染器
+  是纯函数，形态只判定一次。
+- 被核心拒绝的配置现在在 *安装* 手势（apply、ports、routing）或启动的 ensure 处失败——
+  绝不在运行中的核心被停止之后。
+- 回滚的启动从恢复的意图重渲染，所以 `config.json.prev` 是便利（它让字节一致，标记使
+  重渲染免费），不是事实来源。
+- `runtime/config.tested` 和 `runtime/config.form` 含与 `config.json` 相同的秘密、享受相同
+  的 `0600`；`unapply` 与启动失败清理会移除它们，`pack.sh` 本就排除 `runtime/`。
+- 手写的 `config.json` 仍不受支持（ADR 0005），但它现在在被信任之前会 *被测试*：未知字节
+  被测一次、然后打上标记。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Keep the drift detector and only skip the duplicate tests.** Cheaper, but it keeps three
-  copies of "what form is this config" — a grep of the rendered JSON, `kr_tp_engage`'s forced
-  render, and the start's test — and the two of them already disagreed.
-- **Skip `xray -test` entirely on the switch.** The test is what makes "a bad node never stops
-  the running core" true (ADR 0007); one test per switch is the price.
-- **Hot-swap through the core's API instead of restarting.** The shipped build has
-  `xray api ado/rmo/adrules/rmrules`, so a switch *could* add an outbound and re-point a routing
-  rule without a restart. It would make `config.json` "what the core would run on restart"
-  rather than what it runs, lose the `-test` gate at switch time, and add a local API port any
-  app on the device can call. Not worth it for a 0.5 s traffic gap; it would need its own ADR.
-- **Roll back the config without the intent.** Simpler, but the rollback's own start re-renders
-  from the preference, so a failed 分流模式 switch would install the failing mode again.
-- **Accept any on-disk config after a failed switch.** The form would then be unverifiable, and
-  the two documented recovery paths ("switch off and start again", "turn takeover on") could
-  leave the device with no working routing.
+- **保留漂移检测器、只跳过重复测试。** 更省，但它保留三份"这是什么形态的配置"——渲染
+  JSON 的 grep、`kr_tp_engage` 的强制渲染、启动的测试——而且其中两处已经互相矛盾。
+- **切换时完全跳过 `xray -test`。** 测试正是"坏节点永远不会停掉运行中的核心"成立的原因
+  （ADR 0007）；每次切换一次测试就是代价。
+- **经核心的 API 热换入而不是重启。** 随包构建带 `xray api ado/rmo/adrules/rmrules`，切换
+  *本可以* 不重启就加一条出站、改指一条路由规则。那会让 `config.json` 变成"重启时核心
+  将运行的东西"而不是它在运行的，失去切换时的 `-test` 闸门，并加一个设备上任何应用都能
+  调用的本地 API 端口。为 0.5 s 的流量空档不值得；它需要自己的 ADR。
+- **只回滚配置、不回滚意图。** 更简单，但回滚自己的启动会从偏好重渲染，一次失败的 分流
+  模式 切换会把失败的模式再装一遍。
+- **切换失败后接受磁盘上的任意配置。** 形态将无法验证，两条成文的恢复路径（"关掉开关再
+  启动"、"打开接管"）可能让设备没有任何可用的路由。

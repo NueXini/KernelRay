@@ -1,41 +1,33 @@
-# 0020 — The version is the pack date
+# 0020 — 版本就是打包日期
 
-Status: accepted
+状态：已接受
 
-## Context
+## 背景
 
-The module used semver (`version=v0.10.0`) plus a hand-bumped counter (`versionCode=74`).
-Both lived in `module/module.prop` and both were edited by hand before every
-`scripts/pack.sh` run. That had two failure modes: forgetting to bump (the installer then
-silently treats the new ZIP as the same version) and forgetting what the bump meant (the
-counter carries no information about when a build shipped). Meanwhile the release cadence
-never followed semver discipline anyway — there is no API surface, and breaking changes
-were already communicated in release notes rather than in the version string.
+模块用 semver（`version=v0.10.0`）加一个手动的计数器（`versionCode=74`）。两者都住在
+`module/module.prop`，每次跑 `scripts/pack.sh` 之前都要手动编辑。有两个失败模式：忘改
+（安装器于是静默把新 ZIP 当成同一版本）和忘了改动的含义（计数器不携带构建何时发布的信息）。
+与此同时发布节奏本来就没遵循过 semver 纪律——没有 API 面，破坏性变更早已通过发布说明而
+不是版本字符串传达。
 
-## Decision
+## 决策
 
-- **`version` is the pack date, `YY.MM.DD`** (e.g. `26.11.08`), and **`versionCode` is the
-  same date as `YYMMDD`** (e.g. `261108`). The counter jumps from 74 to 261108, which is
-  still monotonic, so installer-side upgrade detection (it compares `versionCode`) keeps
-  working unchanged.
-- **`pack.sh` stamps both into `module.prop` at pack time** with `date -u` (UTC). Nobody
-  edits them by hand, the version always matches the build, and — because the number is a
-  pure function of absolute time rather than the packing machine's local timezone — the
-  same moment packs to the same version from anywhere, and `versionCode` can never go
-  backwards across machines.
-- **The ZIP is named `<id>-<version>.zip`** (`KernelRay-26.11.08.zip`). Under the date
-  scheme `versionCode` and `version` carry the same information, so the old
-  `<id>-<code>-<version>` name spelled the date twice.
-- **Same-day releases**: one pack per UTC day; the ZIP is overwritten. If same-day
-  re-releases ever become real, the escape hatch is an 8-digit `versionCode` (`YYMMDDNN`)
-  — not implemented until then.
-- **Breaking changes are signalled in release notes**, not in the version string. Calver
-  buys "when did this ship", not "what changed shape"; the trade-off was accepted
-  deliberately.
+- **`version` 是打包日期 `YY.MM.DD`**（如 `26.11.08`），**`versionCode` 是同一日期的
+  `YYMMDD`**（如 `261108`）。计数器从 74 跳到 261108，仍然单调，所以安装器侧的升级检测
+  （它比较 `versionCode`）原样继续工作。
+- **`pack.sh` 在打包时用 `date -u`（UTC）把两者写进 `module.prop`**。没有人手改它们，版本
+  始终与构建一致，而且——因为这个数字是绝对时间的纯函数、而不是打包机本地时区的——同一
+  时刻在任何地方都打包成同一版本，`versionCode` 也绝不可能跨机器倒退。
+- **ZIP 命名为 `<id>-<version>.zip`**（`KernelRay-26.11.08.zip`）。在日期方案下
+  `versionCode` 和 `version` 携带同一信息，旧的 `<id>-<code>-<version>` 命名把日期拼了
+  两遍。
+- **同日发布**：每个 UTC 日一次打包；ZIP 被覆盖。若同日重发真成为需求，逃生门是 8 位的
+  `versionCode`（`YYMMDDNN`）——在那之前不实现。
+- **破坏性变更在发布说明里示警**，不在版本字符串里。Calver 买到的是"何时发布"，不是
+  "什么变了形"；这个取舍是有意接受的。
 
-## Consequences
+## 后果
 
-- Reading a version answers "how old is this build", not "how big is the change". That is
-  the right question for a single-user module with notes-per-release.
-- `versionCode` grows by ~1 per calendar day; overflow is not a concern (it fits in int32
-  past the year 2033).
+- 读一个版本回答的是"这个构建多老"，不是"改动有多大"。对一个逐发布写说明的单用户模块，
+  这是正确的问题。
+- `versionCode` 每个日历日增长约 1；溢出不是问题（到 2033 年之后都装得进 int32）。

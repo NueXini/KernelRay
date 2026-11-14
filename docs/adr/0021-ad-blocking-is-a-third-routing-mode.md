@@ -1,102 +1,86 @@
-# 0021 — Ad blocking is a third routing mode
+# 0021 — 去广告是第三种分流模式
 
-Status: accepted (the ad sink it places in the DNS module is now unconditional: the 空转 form
-it contrasts against no longer exists, and `kr_tp_default_on`, the install-time-default
-precedent it borrows, is gone with the switch — see
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
+状态：已接受（它放进 DNS 模块的广告沉没端现在是无条件的：它对比的 空转 形态已不存在，
+它借鉴安装时默认先例的 `kr_tp_default_on` 也随开关一起移除——见
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)）
 
-## Context
+## 背景
 
-ADR 0014 bought 地理数据 that already carries the ad lists: `category-ads-all` is the union of
-EasyList, EasyListChina, AdGuard DNS Filter, Peter Lowe and Dan Pollock — 905 entries in
-the pinned set — and both the pinned Loyalsoldier set and the XTLS set inside the core's ZIP
-carry it. The data was never the missing part. What 0014 refused was bundling
-`geosite:category-ads-all` → `block` into 大陆直连, on the grounds that the mode's name promises
-"mainland goes direct", not "ads are blocked"; the template's `block` outbound stayed there,
-unused, "waiting for that editor". The user wants 去广告, and wants it as **one more 分流模式**
-rather than a second, independent switch: `大陆直连去广告` / `Direct-CN-Adblock`, persisted as
-`cnadblock` in `runtime/route`.
+ADR 0014 买下的 地理数据 本就带着广告列表：`category-ads-all` 是 EasyList、EasyListChina、
+AdGuard DNS Filter、Peter Lowe 和 Dan Pollock 的并集——钉死的那套里有 905 条——钉死的
+Loyalsoldier 集与核心 ZIP 里的 XTLS 集都带它。数据从来不是缺的那块。0014 拒绝的是把
+`geosite:category-ads-all` → `block` 捆进 大陆直连，理由是模式的名字承诺"大陆走直连"，
+不是"广告被拦"；模板的 `block` 出站留在原地、未使用，"等那个编辑器"。用户想要 去广告，
+而且要它作为 **再加一种 分流模式** 而不是第二个独立开关：`大陆直连去广告` /
+`Direct-CN-Adblock`，持久化为 `runtime/route` 里的 `cnadblock`。
 
-The mechanism is not free. `tp-in` has no `sniffing`, so for taken-over traffic the core only
-ever sees IP:port — `domain` and `geosite` rules never match it, which is why 大陆直连 on a device
-matches by `geoip` alone. The DNS module always sees the domain. Both references this decision
-was checked against use **both** halves: v2fly's DNS documentation exemplifies
-`"hosts": {"geosite:category-ads-all": [...]}`, and Loyalsoldier's README (the upstream of the
-pinned set) gives `{"outboundTag": "Reject", "domain": ["geosite:category-ads-all"]}` in routing
-*and* the same `hosts` entry in DNS. Xray's own documentation exemplifies neither — it documents
-only the primitives (`hosts` with `geosite:` keys, `#<rcode>`, `blackhole`) — so this ADR records
-a composition, not a copied recipe.
+机制不是免费的。`tp-in` 没有 `sniffing`，所以对被接管的流量，核心只见 IP:port——
+`domain` 和 `geosite` 规则永远匹配不上它，这正是设备上的 大陆直连 只按 `geoip` 匹配的
+原因。DNS 模块则总是看到域名。本决策对照过的两份参考都用了 **两半**：v2fly 的 DNS 文档
+示例 `"hosts": {"geosite:category-ads-all": [...]}`，Loyalsoldier 的 README（钉死那套的
+上游）在路由里给 `{"outboundTag": "Reject", "domain": ["geosite:category-ads-all"]}` *同时*
+在 DNS 里给同一个 `hosts` 条目。Xray 自己的文档两者都没示例——它只记载原语（带 `geosite:`
+键的 `hosts`、`#<rcode>`、`blackhole`）——所以本 ADR 记录的是一个组合，不是抄来的配方。
 
-## Decision
+## 决策
 
-- **A third 分流模式, not an orthogonal switch.** `runtime/route` holds `cn` or `cnadblock`
-  (absent = 全局): the file stops being a presence flag and becomes a value. 大陆直连去广告 routes
-  exactly as 大陆直连 does and additionally blocks ads.
-- **Two ad parts, each where it can exist**: `dns.hosts` refuses the domains
-  `geosite:category-ads-all` names (takeover form only — the 空转 form has no dns module), and
-  `{"domain": ["geosite:category-ads-all"], "outboundTag": "block"}` goes into both forms' routing
-  block. The routing rule sits **after** the dns/port-53 group and **before** the geo direct
-  rules: first match wins, so a mainland ad domain must not fall into `geosite:cn` → `direct`,
-  and a resolver query must not be swallowed by the block rule.
-- **`category-ads-all` is fixed**, not a choice among lists, and there is no per-list picker.
-- **No 全局 + 去广告 cell.** Three of the enum's four cells are reachable on purpose; a future
-  `globaladblock` is a fourth value, not a new model.
-- **Fail-closed, unlike `cn`.** `cnadblock` never degrades: missing `bin/*.dat`, or a set without
-  `CATEGORY-ADS-ALL`, refuses the start (`failed config-invalid`) with a `Routing` line in
-  `kernelray.log` and one short line on stderr so the WebUI toasts it — the missing files are
-  caught before the start, the missing category by the core's own `-test`. `routing cnadblock`
-  refuses up front when the files are absent. The reason
-  is 0014's own lesson read the other way: a mode named 去广告 that silently renders as 大陆直连 is
-  a mode whose name lies.
-- **`block` keeps `settings: {}`**: blackhole closes the connection at once (`type: "none"` is the
-  default), which is a fast failure; Loyalsoldier's `response: http` is not needed here.
-- **The preference lifecycle is `routing`'s**, not the tproxy switch's: render → `-test` → write
-  `runtime/route` → swap, restoring the old value when the new config does not start.
-- **`大陆直连去广告` is the install-time default.** The installer writes `runtime/route` =
-  `cnadblock` when the preference is still unset — the `kr_tp_default_on` pattern of ADR 0011 —
-  so a fresh install splits mainland traffic out and blocks ads without the user picking
-  anything, and 全局 becomes a choice rather than the absence of one. With the geo data missing
-  the installer skips the default and leaves 全局: a default the core refuses to start with is
-  worse than one that does less. A start after the `.dat` files disappear therefore refuses for
-  a fresh install too — the fail-closed clause above, now reached by default rather than by
-  choice.
+- **第三种 分流模式，不是正交开关。** `runtime/route` 装 `cn` 或 `cnadblock`（不存在 =
+  全局）：文件不再是存在标志，而成为值。大陆直连去广告 的路由与 大陆直连 完全一致、额外
+  拦截广告。
+- **两个广告部分，各放在它能存在的地方**：`dns.hosts` 拒绝 `geosite:category-ads-all` 点名
+  的域名（仅接管形态——空转 形态没有 dns 模块），`{"domain": ["geosite:category-ads-all"],
+  "outboundTag": "block"}` 进两种形态的路由块。路由规则放在 dns/端口-53 组 **之后**、geo
+  直连规则 **之前**：先命中先赢，所以大陆广告域名绝不能落进 `geosite:cn` → `direct`，
+  解析器查询也绝不能被 block 规则吞掉。
+- **`category-ads-all` 固定**，不是列表间的选择，也没有逐列表选择器。
+- **没有 全局 + 去广告 的格子。** 枚举四格中三格是有意可达的；将来的 `globaladblock` 是
+  第四个值，不是新模型。
+- **Fail-closed，不同于 `cn`。** `cnadblock` 永不降级：`bin/*.dat` 缺失、或数据集里没有
+  `CATEGORY-ADS-ALL`，拒绝启动（`failed config-invalid`），`kernelray.log` 里一行
+  `Routing`、stderr 上一短句让 WebUI 弹 toast——缺文件在启动前被拦下，缺分类由核心自己的
+  `-test` 拦下。文件缺失时 `routing cnadblock` 提前拒绝。理由是把 0014 自己的教训反着读：
+  一个名叫 去广告 的模式静默渲染成 大陆直连，就是一个名字在撒谎的模式。
+- **`block` 保持 `settings: {}`**：blackhole 立即关闭连接（`type: "none"` 是默认），那是一
+  次快速失败；Loyalsoldier 的 `response: http` 在这里不需要。
+- **偏好的生命周期是 `routing` 的**，不是 tproxy 开关的：渲染 → `-test` → 写
+  `runtime/route` → 换入，新配置起不来时恢复旧值。
+- **`大陆直连去广告` 是安装时默认。** 偏好未设时安装器写 `runtime/route` = `cnadblock`
+  ——ADR 0011 的 `kr_tp_default_on` 模式——所以全新安装不挑任何东西就完成大陆分流和广告
+  拦截，全局 成为选项而不是选项的缺席。geo 数据缺失时安装器跳过默认、留下 全局：核心
+  拒绝以其启动的默认值，比一个少做事的默认值更糟。因此 `.dat` 文件消失后的一次启动对全新
+  安装同样拒绝——上面的 fail-closed 条款，如今经默认而非经选择到达。
 
-## Considered options
+## 考虑过的选项
 
-- **An orthogonal 去广告 switch** (`runtime/adblock`, rendered into either mode): the shape the
-  glossary would have preferred, since 分流模式 would keep meaning "where does the rest leave",
-  and 全局 + 去广告 would be expressible. Rejected because the user asked for one mode; the cost
-  is the missing cell above and the escape is a fourth enum value.
-- **Routing-only** (Loyalsoldier's first half): blocks nothing on a device, because `tp-in` sees
-  IPs, not domains. It would look implemented and do nothing.
-- **DNS-only** (v2fly's example): leaves 空转 and domain-carrying socks/http clients unblocked.
-- **`sniffing` on `tp-in`** so IP-only connections can match by SNI: stronger — it would also
-  catch apps that bring their own DoH — but it changes 大陆直连's existing behaviour for device
-  traffic (`geosite:cn` would start matching taken-over connections), so it is a decision of its
-  own, not a detail of this one.
-- **Degrading like `cn`** (render the global form, log it): the safe direction 0014 chose, and
-  the reason the fail-closed clause above needed its own argument.
-- **`category-ads` (845) or `category-ads-and-telemetry` (877)**: narrower and broader
-  respectively; `-all` is what 0014 named and what the data's own README documents as the union.
+- **正交的 去广告 开关**（`runtime/adblock`，渲染进任一模式）：词汇表本来会偏好的形状，
+  因为 分流模式 可以继续只指"其余流量从哪出去"，全局 + 去广告 也可表达。否决，因为用户
+  要的是一个模式；代价是上面缺的那个格子，逃生门是第四个枚举值。
+- **只走路由**（Loyalsoldier 的前一半）：在设备上什么都拦不住，因为 `tp-in` 看到 IP，不是
+  域名。它会看起来实现了、实则什么都没做。
+- **只走 DNS**（v2fly 的示例）：留下 空转 和自带域名的 socks/http 客户端不拦。
+- **给 `tp-in` 开 `sniffing`** 让纯 IP 连接能按 SNI 匹配：更强——它还能抓住自带 DoH 的
+  应用——但它改变 大陆直连 对设备流量的既有行为（`geosite:cn` 将开始匹配被接管的连接），
+  所以那是它自己的决策，不是本决策的细节。
+- **像 `cn` 那样降级**（渲染全局形态、记日志）：0014 选的安全方向，也是上文 fail-closed
+  条款需要自己论证的原因。
+- **`category-ads`（845）或 `category-ads-and-telemetry`（877）**：分别更窄和更广；`-all`
+  是 0014 点名的、也是数据自带 README 记载的并集。
 
-## Consequences
+## 后果
 
-- 全局 and 大陆直连 render byte for byte as before; only a `cnadblock` render carries the ad parts.
-- The install default is a preference, not a constant: a user who picks 全局 gets an absent file,
-  and the next install or update recreates `cnadblock` — the tproxy switch's behaviour, and the
-  same trade ADR 0002/0011 already accept (an update resets the preferences it owns).
-- The render stops comparing `= cn` in strings: `kr_route_effective` sets `KR_ROUTE_CN` and
-  `KR_ROUTE_BLOCK_ADS`, and the DNS/routing builders read those flags, so a fourth value later
-  cannot silently miss a branch.
-- A device whose `.dat` files disappear while the mode is `cnadblock` **loses its network at the
-  next start**: the takeover rules go in before the config is tested (ADR 0011), the test fails,
-  and the core never runs — fail-closed drops the traffic until the user picks another mode in
-  the WebUI. Accepted, and the reason the switch refuses up front.
-- Ads become failed connections rather than blocked ones, and three classes stay out of reach: ads
-  served from the content's own domain (YouTube in-app), apps with their own DoH/DoT, and
-  hardcoded IPs. No category can name them.
-- The WebUI select and its hints, `routing`'s usage and status, `status`'s `route=`/`routing=`,
-  `docs/config-derivation.md`, `docs/state-schema.md`, `docs/xray-guide.md` and
-  `bin/README.md`'s category list all grow a third value; `tests/adblock.test.js` carries the new
-  render matrix. `README.md` and `module.prop` still describe two modes: left untouched by this
-  change on purpose, so their wording is now narrower than the code.
+- 全局 和 大陆直连 逐字节照旧渲染；只有 `cnadblock` 渲染带广告部分。
+- 安装默认是偏好，不是常量：挑了 全局 的用户得到文件不存在，而下一次安装或更新会重建
+  `cnadblock`——tproxy 开关的行为，ADR 0002/0011 已接受的同一取舍（更新重置它拥有的
+  偏好）。
+- 渲染不再用字符串比较 `= cn`：`kr_route_effective` 设置 `KR_ROUTE_CN` 和
+  `KR_ROUTE_BLOCK_ADS`，DNS/路由构建器读这些标志，所以日后第四个值不可能静默漏掉分支。
+- 模式为 `cnadblock` 时 `.dat` 文件消失的设备 **在下一次启动失去网络**：接管规则在配置
+  测试之前装入（ADR 0011），测试失败，核心永不运行——fail-closed 丢弃流量，直到用户在
+  WebUI 挑另一个模式。接受，而且这正是 CLI 提前拒绝的原因。
+- 广告变成失败的连接而不是被拦的连接，三类始终拦不到：广告出自内容自己的域名（YouTube
+  应用内）、自带 DoH/DoT 的应用、硬编码 IP。没有任何分类能点名它们。
+- WebUI 的下拉框及其提示、`routing` 的用法与状态、`status` 的 `route=`/`routing=`、
+  `docs/config-derivation.md`、`docs/state-schema.md`、`docs/xray-guide.md` 和
+  `bin/README.md` 的分类列表都增加第三个值；`tests/adblock.test.js` 承载新的渲染矩阵。
+  `README.md` 和 `module.prop` 仍描述两个模式：本次变更有意不碰它们，所以它们的措辞如今
+  比代码窄。

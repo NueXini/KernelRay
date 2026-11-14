@@ -1,18 +1,16 @@
-# One core at `bin/xray`, verified by running it
+# 唯一核心放 `bin/xray`，以运行来验证
 
-The module ships a single arm64 core at `module/bin/xray`. There is no per-architecture
-layout and nothing is downloaded at install time: the installer only checks that the binary
-executes (`xray -version`) before accepting the module.
+模块在 `module/bin/xray` 只带一个 arm64 核心。没有按架构划分的布局，安装时也不下载任何
+东西：安装器只检查该二进制能执行（`xray -version`）就接受模块。
 
-Rejected alternatives:
+被否决的替代方案：
 
-- **Download the core on install** (what Xray4Magisk does) — a network failure at install
-  time is unrecoverable, and the core version becomes whatever the device happened to fetch.
-- **`bin/<arch>/xray` with a runtime probe** — the first version did this, then `AMD64` and
-  `arm64` were both loaded into every ZIP, doubling size for a device class we do not target.
-  Probing also invited the illusion that `$ARCH`/`uname -m` was trustworthy; both lie on
-  emulators (an x86_64 emulator here reports `aarch64` and `ARCH=x64`).
+- **安装时下载核心**（Xray4Magisk 的做法）— 安装时的网络故障不可恢复，核心版本变成设备
+  碰巧拉到的那个。
+- **`bin/<arch>/xray` 加运行时探测** — 第一版就是这么做的，后来 `AMD64` 和 `arm64` 都被
+  塞进了每个 ZIP，对一个我们不针对的设备类型而言体积翻倍。探测还助长了 `$ARCH`/`uname -m`
+  可信的错觉；两者在模拟器上都会撒谎（这里的 x86_64 模拟器报告 `aarch64` 和 `ARCH=x64`）。
 
-**Consequences:** x86_64 devices/emulators rely on ARM translation. The release workflow must
-inject the pinned core into `module/bin/` before packaging, since the binary is gitignored; a
-ZIP built without it installs and then refuses to start (`status.json` → `failed/no-core`).
+**后果：** x86_64 设备/模拟器依赖 ARM 转译。核心二进制不入库，发布工作流必须在打包前把
+钉死版本的核心注入 `module/bin/`；没有它构建出的 ZIP 装得上、但拒绝启动（`status.json`
+→ `failed/no-core`）。

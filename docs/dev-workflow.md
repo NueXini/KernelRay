@@ -21,16 +21,16 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 ```sh
 node --check module/webroot/app.js     # 页面语法（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
-node tests/parse.test.js               # 24 parser tests passing
-node tests/outbound.test.js            # 17 outbound tests passing
-node tests/nodelist.test.js            # 45 node list + delete-gate + import-switch + dialog-state tests passing
-node tests/link.test.js                # 18 node-link + subscription-Base64 tests passing
-node tests/prefs.test.js               # 22 prefs tests passing
-node tests/theme.test.js               # 14 theme tests passing
-node tests/config.test.js              # 79 config tests passing（需要 bash 和 /proc）
-node tests/tproxy.test.js              # 17 tproxy tests passing（需要假 iptables/ip）
-node tests/routing.test.js             # 20 routing tests passing（分流模式渲染矩阵 + routing CLI）
-node tests/adblock.test.js             # 17 ad-blocking tests passing（大陆直连去广告渲染 + 失败关闭）
+node tests/parse.test.js               # 24 项解析器测试通过
+node tests/outbound.test.js            # 17 项出站测试通过
+node tests/nodelist.test.js            # 45 项节点列表 + 删除闸门 + 导入应用 + 弹窗状态测试通过
+node tests/link.test.js                # 18 项节点链接 + 订阅 Base64 测试通过
+node tests/prefs.test.js               # 22 项偏好测试通过
+node tests/theme.test.js               # 14 项主题测试通过
+node tests/config.test.js              # 79 项 config 测试通过（需要 bash 和 /proc）
+node tests/tproxy.test.js              # 17 项 tproxy 测试通过（需要假 iptables/ip）
+node tests/routing.test.js             # 20 项 routing 测试通过（分流模式渲染矩阵 + routing CLI）
+node tests/adblock.test.js             # 17 项去广告测试通过（大陆直连去广告渲染 + 失败关闭）
 ```
 
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
@@ -144,7 +144,7 @@ adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh start"'
 adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh stop"'
 ```
 
-**切换节点（v0.6 的列表手势，现在多一步弹窗）**：在 Nodes 页导入节点，点列表里的一行打开节点详情
+**切换节点（v0.6 的列表手势，现在多一步弹窗）**：在节点页导入节点，点列表里的一行打开节点详情
 弹窗，再点弹窗里的「应用」—— 这一步才是选中 + 应用。导入只写节点库、不改 `selected`；但库里
 还没有已应用节点时，导入会顺带应用（`selected` 仍能解析就用它，否则用列表第一个），等于替你
 按了一次「应用」（ADR 0012）。切换成功后验证：
@@ -177,7 +177,7 @@ adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh tproxy s
 ```
 
 模拟器（x86_64 + ARM 翻译）能装规则但别当真机结论：内核要有 `xt_TPROXY`/`nf_tproxy_core`。
-验证接管真的生效要用普通（非 socks）请求看出口 IP，见 README 的 Verify 一节。**规则在而核心死 = 断网**
+验证接管真的生效要用普通（非 socks）请求看出口 IP，见 README 的「验证」一节。**规则在而核心死 = 断网**
 （fail-closed，设计行为）：再启动核心即恢复接管；想直连就 `unapply`（同时忘掉已应用节点）、
 重启或卸载——已经没有“关掉开关”这条路了。
 

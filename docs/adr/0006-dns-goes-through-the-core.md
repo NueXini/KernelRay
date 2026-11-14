@@ -1,74 +1,62 @@
-# 0006 — DNS is taken over through the core's DNS module
+# 0006 — DNS 经核心的 DNS 模块接管
 
-Status: accepted
+状态：已接受
 
-## Context
+## 背景
 
-TPROXY captures TCP/UDP 53, and DNS is where "just route everything to the node" stops working:
+TPROXY 捕获 TCP/UDP 53，而 DNS 是"全扔给节点"失效的地方：
 
-- Android sends DNS through `netd`, not from the app's socket, so a UID or socket-mark bypass
-  cannot distinguish "the core resolving its own server" from an app's lookup.
-- The resolver a phone receives from the network is usually the LAN router (`192.168.x.1`).
-  Forwarding that packet to a remote node asks the node to reach a private address on *its* LAN;
-  it cannot work.
-- Leaving 53 out of takeover leaks every lookup, and the answers are geo-located for the device,
-  not the node, which defeats half the point of proxying.
-- DNAT-ing 53 to a public resolver keeps the leak out but still needs UDP on the node and
-  overrides the app's resolver.
+- Android 经 `netd` 发 DNS，不是从应用的 socket，所以 UID 或 socket-mark 旁路无法区分
+  "核心解析自己的服务器"和"某应用的查询"。
+- 手机从网络拿到的解析器通常是局域网路由器（`192.168.x.1`）。把这个包转发给远程节点，是
+  让节点去访问 *它那边* 局域网里的私网地址；不可能成功。
+- 把 53 留在接管之外，每次查询都泄漏，而且应答是按设备、而不是按节点的地理位置定位的，
+  代理的意义被砍掉一半。
+- 把 53 DNAT 到公共解析器能堵住泄漏，但仍需要节点的 UDP，并且覆盖应用选择的解析器。
 
-Xray's DNS module can answer captured queries itself, and its upstream queries can be routed
-(`dns.tag` + `inboundTag` routing), which makes the lookup follow the proxy without depending on
-the node's UDP support.
+Xray 的 DNS 模块能自己应答捕获的查询，其上游查询可被路由（`dns.tag` + `inboundTag`
+路由），这让解析跟随代理，而不依赖节点的 UDP 支持。
 
-## Decision
+## 决策
 
-- TCP and UDP 53 arriving on the tproxy inbound are routed to a `dns` outbound. The DNS module
-  answers them.
-- The module's upstream is fixed to `https://1.1.1.1/dns-query` — an IP literal, so the upstream
-  never needs a lookup of its own. Its queries carry the DNS module's tag and are routed through
-  the proxy, so the resolver sees the node's egress, not the device's.
-- The **applied node's own hostname is resolved through the `direct` outbound** (a routing rule
-  built from the node meta). This breaks the bootstrap cycle "connect to the node → resolve the
-  node → needs the node". The `direct` outbound carries the bypass mark; the node outbound
-  deliberately does not in v0.6 (see ADR 0005). The exception is one domain, not all DNS.
-- Apps that speak DoH/DoT themselves (TCP 443/853) are ordinary proxied traffic and are not
-  intercepted. The hijack applies to port 53 only.
-- No fake-ip, no DNAT to a public resolver, no DNS bypass.
+- 到达 tproxy 入站的 TCP 与 UDP 53 被路由到一条 `dns` 出站，由 DNS 模块应答。
+- 模块的上游固定为 `https://1.1.1.1/dns-query` — 是 IP 字面量，所以上游永远不需要为自己
+  做解析。它的查询带 DNS 模块的 tag 并经代理路由，所以解析器看到的是节点的出口，不是
+  设备的。
+- **已应用节点自身的主机名经 `direct` 出站解析**（一条从节点 meta 构建的路由规则）。这
+  打破"连接节点 → 解析节点 → 需要节点"的自举循环。`direct` 出站携带旁路标记；节点出站
+  在 v0.6 有意不带（见 ADR 0005）。这个例外只针对一个域名，不是全部 DNS。
+- 自己说 DoH/DoT 的应用（TCP 443/853）是普通的被代理流量，不被截获。劫持只作用于
+  端口 53。
+- 不用 fake-ip，不 DNAT 到公共解析器，不让 DNS 旁路。
 
-## Consequences
+## 后果
 
-- DNS works even when the node has no UDP relay, and the answers are resolved from the node's
-  point of view.
-- v1 has one fixed upstream. A user who wants a different resolver cannot change it yet; the
-  README must say so instead of implying configurability.
-- Because Android's queries are answered by the module, a local/private resolver configured on
-  the device stops being used for plain DNS. DoH/DoT still work because they are not port 53.
-- The generated config depends on the applied node's host (the meta file in ADR 0005); an IP
-  node simply produces no direct exception.
-- If direct access to the fixed DoH endpoint is blocked on the underlying network, the bootstrap
-  lookup fails and the node cannot be reached. Using an IP address for the node avoids this;
-  it is a documented bootstrap limitation, not a per-app setting.
+- 即使节点没有 UDP 中继，DNS 也能工作，且应答是从节点的视角解析出来的。
+- v1 只有一个固定上游。想换解析器的用户暂时改不了；README 必须写明，而不是暗示可配置。
+- 因为 Android 的查询由模块应答，设备上配置的本地/私网解析器对普通 DNS 不再被使用。
+  DoH/DoT 仍然可用，因为它们不是端口 53。
+- 生成的配置依赖已应用节点的主机名（ADR 0005 的 meta 文件）；IP 型节点自然不产生直连
+  例外。
+- 若底层网络封锁对固定 DoH 端点的直接访问，自举解析失败、节点无法抵达。节点用 IP 地址
+  可以避开；这是文档化的自举限制，不是逐应用设置。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Send 53 to the node like any other UDP.** Breaks on the LAN-resolver case, which is the
-  common case.
-- **Let DNS go direct.** Simple and fast, but leaks lookups and returns device-located answers.
-- **DNAT 53 to a public DNS and route it through the node.** Still needs node UDP and overrides
-  the resolver the app chose.
-- **fake-ip.** Only pays off when routing decisions need domains; this version has one proxy
-  outbound, so it adds a subsystem without changing where traffic goes.
+- **把 53 当普通 UDP 送给节点。** 在局域网解析器这一常见情形下失效。
+- **让 DNS 直连。** 简单又快，但泄漏查询、返回按设备定位的应答。
+- **把 53 DNAT 到公共 DNS 并经节点路由。** 仍需要节点 UDP，并覆盖应用选的解析器。
+- **fake-ip。** 只有路由决策需要域名时才有收益；本版本只有一条代理出站，加了一个子系统
+  却不改变流量去向。
 
-## Amendment
+## 修订
 
-The routing rules match `inboundTag: ["dns"]`, so the rendered `dns` block **must declare
-`"tag": "dns"`**. Xray only stamps the module's own upstream queries with that tag when the block
-names it; with no tag they carry `xray.system.<uuid>`, none of the `inboundTag: ["dns"]` rules
-fire, and the queries fall through to the later `port 53 -> dns-out` rule — the module answering
-itself instead of asking the resolver. Observed on device in 大陆直连 before the fix: the
-domestic-resolver queries were self-answered (the DoH answer came back labelled `223.5.5.5`),
-`expectIPs: ["geoip:cn"]` then rejected those DoH-shaped answers, mainland names resolved to
-overseas CDN addresses — or failed outright when the node was down, since the DoH upstream is the
-only server that still worked — each lookup took 4–12 s, and no mainland destination ever took
-`direct`. The tag is not cosmetic: the decision above ("`dns.tag` + `inboundTag` routing") only
-works when both halves name the same tag.
+路由规则匹配 `inboundTag: ["dns"]`，所以渲染出的 `dns` 块 **必须声明 `"tag": "dns"`**。
+只有块里写明这个 tag，Xray 才会给模块自己的上游查询打上它；没有 tag 时它们带着
+`xray.system.<uuid>`，所有 `inboundTag: ["dns"]` 规则都不触发，查询落进后面的
+`port 53 -> dns-out` 规则 — 模块自己应答而不是询问解析器。修复前在设备上的 大陆直连 观察
+到的现象：国内解析器查询被自答（DoH 应答回来标着 `223.5.5.5`），`expectIPs: ["geoip:cn"]`
+接着拒掉这些 DoH 形状的应答，大陆域名解析成海外 CDN 地址——或在节点挂掉时彻底失败，因为
+DoH 上游是唯一还活着的服务器——每次查询耗时 4–12 s，且大陆目的地从未走上 `direct`。
+tag 不是装饰：上面的决策（"`dns.tag` + `inboundTag` 路由"）只在两半指名同一个 tag 时才
+成立。

@@ -1,47 +1,42 @@
-# 0012 — An import into a store with no applied node applies a node
+# 0012 — 往没有已应用节点的存储里导入会应用一个节点
 
-Status: accepted (amends the import rule stated in `docs/state-schema.md`, `GLOSSARY.md` and
-`docs/config-derivation.md`; leaves ADR 0007's selected/applied distinction untouched)
+状态：已接受（修订 `docs/state-schema.md`、`GLOSSARY.md` 和 `docs/config-derivation.md`
+中的导入规则；不动 ADR 0007 的已选中/已应用区分）
 
-## Context
+## 背景
 
-Every documented rule said an import only fills the node store: ADR 0007 made the tapped row the
-switch gesture, `docs/state-schema.md` said import "never changes `selected`", and `GLOSSARY.md`
-said importing never switches or applies. On a fresh install that leaves the user with a filled
-list, no applied node and a dead core until they work out that a row must be tapped — even though
-the first import is precisely the moment they intend to use the node they just pasted.
+所有成文规则都说过导入只填充节点库：ADR 0007 把点按行定为切换手势，
+`docs/state-schema.md` 说导入"绝不改变 `selected`"，`GLOSSARY.md` 说导入绝不切换、绝不
+应用。全新安装时，用户面对的是一个填好的列表、没有已应用节点、一个死核心，直到他们悟出
+必须点按某一行——尽管第一次导入恰恰是他们打算使用刚粘贴的那个节点的时刻。
 
-## Decision
+## 决策
 
-If `runtime/applied` is absent or empty after a successful merge, the import also switches a node
-through the same `switchTo` path a tapped row uses, so `selected`, `outbound.json` /
-`outbound.meta` and `kernelray.sh apply <id>` happen in the documented order. The node it switches
-is `selected` when that pointer still resolves to a node the list can show (a failed switch left
-it there), else the first such node in `state.manual` order. With a node already applied, an
-import still changes nothing but the store.
+成功合并后若 `runtime/applied` 不存在或为空，导入还会经与点按行相同的 `switchTo` 路径
+切换一个节点，于是 `selected`、`outbound.json` / `outbound.meta` 与
+`kernelray.sh apply <id>` 按成文顺序发生。它切换的节点：`selected` 仍能解析到列表可显示
+的节点（失败的切换会把它留在那里）时是它，否则是 `state.manual` 顺序里的第一个此类节点。
+已有节点被应用时，导入仍然只动节点库。
 
-The rule belongs to the import path, not to the store: deleting the selected node still clears
-`selected` without re-selecting anything.
+这条规则属于导入路径，不属于存储：删除已选中节点仍然只清掉 `selected`，不重新选中任何
+东西。
 
-## Consequences
+## 后果
 
-- Applying never starts a stopped core (`kr_swap_config` only restarts one that was already
-  running), so a first import writes `config.json` + `runtime/applied` and leaves the core down:
-  the user still presses Start. With the tproxy switch on, that Start is the takeover start.
-- A failed auto-apply leaves the ordinary failed-switch state (selected, not applied, row marked
-  as such); the pointer is not rolled back, and tapping the row retries.
-- The trigger is the applied node the page currently shows, so a transiently unreadable
-  `runtime/applied` can make the UI apply over a running core's node. Accepted: `apply` is
-  transactional (test the candidate → swap → roll back on failure), and the alternative — a
-  second status read as a guard — buys little for the added branch.
-- Partial imports behave the same: the merge happened, so the switch happens even while the
-  dialog stays open over the failed lines.
+- 应用绝不启动已停止的核心（`kr_swap_config` 只重启本来就在运行的），所以第一次导入写
+  `config.json` + `runtime/applied`、核心保持停止：用户仍要按启动。tproxy 开关开着时，
+  那次启动就是接管启动。
+- 自动应用失败留下普通的切换失败状态（已选中、未应用、行上带着相应标记）；指针不回滚，
+  点按该行即重试。
+- 触发条件是页面当前显示的已应用节点，所以瞬时读不出 `runtime/applied` 会让 UI 越过运行
+  中核心的节点去应用。接受：`apply` 是事务性的（测候选 → 换入 → 失败回滚），而替代方案
+  ——再来一次状态读取作守卫——多一条分支买不来多少东西。
+- 部分导入行为相同：合并已经发生，所以即使弹窗还开着盖着那些失败行，切换照样发生。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Select without applying.** The store would point at a node the core never derived a config
-  from, and the user would still have to tap.
-- **Collapse `selected` into `runtime/applied`.** ADR 0007 keeps them separate so a failed switch
-  can be shown as "wants B, runs A"; the import gesture does not need to change that.
-- **Apply on every import, or re-point a dangling `selected`.** That would let a paste change
-  which node carries traffic after the user had already chosen one.
+- **只选中、不应用。** 节点库会指向一个核心从未为其推导配置的节点，用户还是得点。
+- **把 `selected` 塌缩进 `runtime/applied`。** ADR 0007 让两者分离，为的是把失败的切换
+  展示为"想要 B、运行着 A"；导入手势不需要改变这一点。
+- **每次导入都应用，或重定向悬空的 `selected`。** 那会让一次粘贴改变已选好的承载流量的
+  节点。

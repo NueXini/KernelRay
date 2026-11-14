@@ -1,83 +1,70 @@
-# 0018 — No action button and no boot start: the core starts only when the user asks
+# 0018 — 没有 action 按钮、开机不自启：核心只在用户要求时启动
 
-Status: accepted (removes the two automatic paths to a running core; the boot semantics of
-[ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md) and the "every start (boot or
-the status page's Start)" wording of
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) no longer apply, and
-the `action.sh` in ADR 0004's recovery path no longer ships)
+状态：已接受（移除通往运行中核心的两条自动路径；
+[ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md) 的开机语义与
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) 的"每次启动（开机
+或状态页的启动）"措辞不再适用，ADR 0004 恢复路径中的 `action.sh` 已不再随包）
 
-## Context
+## 背景
 
-Two paths started the core without the WebUI: the manager's ▶ button (`module/action.sh`) and
-boot (`module/service.sh`). By v0.10 both were duplicates. The WebUI had carried start, stop,
-the status poll, the failure cards and the retry for several versions, so `action.sh` was a
-second implementation of the same two gestures plus a human-readable report (`kr_report`) whose
-only consumer it was. `service.sh` was three lines: a `disable` check, `kr_dirs` and `kr_start`.
+有两条路径不经 WebUI 就启动核心：管理器的 ▶ 按钮（`module/action.sh`）和开机
+（`module/service.sh`）。到 v0.10，两者都是重复。WebUI 已经承载了启动、停止、状态轮询、
+失败卡片和重试好几个版本，所以 `action.sh` 是同两个手势加一份只有它在用的人类可读报告
+（`kr_report`）的第二份实现。`service.sh` 是三行：一个 `disable` 检查、`kr_dirs` 和
+`kr_start`。
 
-The duplication was not free. Anything that changed about a start had to be true in two places,
-and the two had drifted in exactly the way that matters: `action.sh` explained the fail-closed
-consequence of stopping under the tproxy switch ("the rules stay up, the device has no network")
-and the WebUI did not. The button was also the only surface that could start the core without
-opening the manager's WebUI page — the reason the docs kept it, not the reason users needed it.
+重复不是免费的。任何关于启动的改动都得在两处成立，而且两处恰恰在最重要的一点上漂移了：
+`action.sh` 解释了 tproxy 开关之下停止的 fail-closed 后果（"规则留在位上、设备没有网络"），
+而 WebUI 没有。按钮还是唯一能不经打开管理器 WebUI 页面就启动核心的界面——文档保留它的
+原因，不是用户需要它的原因。
 
-Boot start was a different kind of decision: v0.7's whole promise was that a reboot comes back
-under takeover. That is convenience bought with an action the user did not ask for in that
-moment — and with the tproxy switch defaulting on, a freshly rebooted device is captured before
-anyone has looked at it.
+开机启动是另一种决定：v0.7 的全部承诺就是重启回来后仍处于接管之下。那是用一次用户在那一刻
+没有要求的动作买来的便利——而 tproxy 开关默认开启，意味着刚重启的设备在任何人看它一眼
+之前就已被捕获。
 
-## Decision
+## 决策
 
-**The core starts only when the user asks, and there is exactly one place to ask.**
+**核心只在用户要求时启动，而且要求的地方只有一个。**
 
-- `module/action.sh` is deleted, and `kr_report` with it: the manager renders no ▶ for a module
-  without the file, so the module card keeps its WebUI entry and nothing else.
-- `module/service.sh` is deleted. Nothing starts at boot.
-- The WebUI's 启动/停止 is the only manual surface; `kernelray.sh start|stop` stays as the
-  terminal fallback, the same code path the buttons run, so there is one start and not two.
-- The one behaviour that existed only in `action.sh` moves into the WebUI: while the tproxy
-  switch is on, a stopped core means the device is going direct, and the status hint now says
-  so (`stoppedHintTp`) instead of the neutral "takes effect on the next start".
-- `runtime/status.json` records the boot that wrote it (`boot`, from
-  `/proc/sys/kernel/random/boot_id`). With no boot hook left to rewrite the file, a status from
-  an earlier boot is the normal case after a reboot, not an edge case: `kr_status_kv` reads such
-  a file as `stopped/idle` — "nothing has run since boot" — instead of repeating a `failed/rules`
-  or `crashed` phase the current boot never had. The comparison needs no clock, unlike the
-  `started`-against-`/proc/uptime` arithmetic it replaces, which is wrong until NTP syncs.
+- `module/action.sh` 连同 `kr_report` 一起删除：没有该文件的模块管理器不渲染 ▶，模块卡片
+  只保留 WebUI 入口、再无其他。
+- `module/service.sh` 删除。开机不自启。
+- WebUI 的 启动/停止 是唯一的手动操作面；`kernelray.sh start|stop` 保留为终端回退，与按钮
+  跑同一条代码路径，所以启动只有一个、不是两个。
+- 只存在于 `action.sh` 的那一个行为移入 WebUI：tproxy 开关开着时，已停止的核心意味着设备
+  正在直连，状态提示现在这么说（`stoppedHintTp`），而不是中性的"下次启动生效"。
+- `runtime/status.json` 记录写入它的那次开机（`boot`，来自
+  `/proc/sys/kernel/random/boot_id`）。没有开机钩子再来重写该文件之后，早前开机的状态是
+  重启后的常态而非边缘情形：`kr_status_kv` 把这种文件读作 `stopped/idle`——"开机以来什么
+  都没运行过"——而不是重复一次本次开机从未有过的 `failed/rules` 或 `crashed` phase。这个
+  比较不需要时钟，不像它取代的 `started` 对 `/proc/uptime` 的算术——NTP 同步之前那是错的。
 
-## Consequences
+## 后果
 
-- **A reboot leaves the device direct** until the user presses 启动. That is the largest
-  user-visible change here, and the reason the status hint had to stop being neutral: with the
-  switch on and a node applied, "stopped" now means "not proxied", not "about to be".
-- **A reboot becomes the escape from fail-closed.** The rules live in netfilter, which is
-  volatile: rebooting clears them, so a device left with no network by a dead core under the
-  switch can be recovered without adb — a recovery path ADR 0004 did not have.
-- **"Next start" now means a start the user performs.** Every "stop → start (or reboot)" in the
-  README, the glossary, the installer output and the Settings hints loses the "or reboot" half:
-  a reboot no longer applies the tproxy switch, it only stops the core.
-- **The pin is unaffected.** `kr_apply` pins the node host while the network is still direct
-  (ADR 0017), not the start, so nothing about boot was load-bearing for it. `kr_cleanup_legacy`
-  now runs at the first start instead of at boot; it deletes two stale files and reads nothing.
-- **The status file is no longer self-healing.** A reader must distrust a `boot` that is not the
-  current one; the glossary's "status is written, never inferred by callers" now names that
-  exception rather than pretending the file is always current.
-- **Uninstall is unchanged.** KernelSU still runs `uninstall.sh` at removal, which stops the core
-  and removes the module's own rules.
-- The module ships one fewer boot script and one fewer entry point, and the installer no longer
-  chmods either of them.
+- **重启让设备保持直连**，直到用户按下 启动。这是本次最大的用户可见变化，也是状态提示
+  必须不再中性的原因：开关开着、节点已应用时，"已停止"现在意味着"未被代理"，而不是
+  "即将被代理"。
+- **重启成了逃出 fail-closed 的路。** 规则活在 netfilter 里，它是易失的：重启清掉它们，
+  所以被死核心留在无网络状态的设备可以不经 adb 恢复——ADR 0004 没有的一条恢复路径。
+- **"下次启动"现在指用户执行的启动。** README、词汇表、安装器输出和设置提示里每一条
+  "停止 → 启动（或重启）"都失去"或重启"那一半：重启不再应用 tproxy 开关，它只是停掉核心。
+- **钉死不受影响。** `kr_apply` 趁网络还直连时钉住节点主机（ADR 0017），不是启动，所以
+  开机对它毫无承重。`kr_cleanup_legacy` 改在第一次启动时运行，而不是开机；它删除两个
+  过期文件、不读任何东西。
+- **状态文件不再自愈。** 阅读方必须不信任不是本次开机的 `boot`；词汇表的"状态只被写入、
+  绝不由调用方推断"现在点名这个例外，而不是假装文件永远最新。
+- **卸载不变。** KernelSU 仍在移除时运行 `uninstall.sh`，它停止核心并移除模块自己的规则。
+- 模块少带一个开机脚本、少一个入口点，安装器也不再 chmod 两者。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Keep the ▶ button as a shortcut.** It is a second implementation of two gestures that
-  already exist one page away, and the drift it caused (the fail-closed warning living only
-  there) is the argument against keeping it, not for it.
-- **Keep boot start behind a Settings switch.** It reintroduces the boot hook, a preference and
-  a UI row to preserve a behaviour this ADR removes on purpose, and the first thing it would do
-  on a fresh install is capture a device nobody has configured yet.
-- **Start the core when the WebUI opens.** Convenient, and wrong: opening a page is not asking
-  for takeover. The 启动 button is one tap and it is an explicit one.
-- **Keep a trimmed `service.sh` that only writes `stopped/idle` at boot.** A boot hook whose sole
-  job is to refresh a cache. Recording the boot id in the file makes the reader honest instead,
-  with no hook at all.
-- **Delete `status.json` at boot to force freshness.** There is nothing left to run at boot, and
-  a file that must be deleted to be correct is worse than one that says which boot wrote it.
+- **保留 ▶ 按钮作为快捷方式。** 它是一页之外已经存在的两个手势的第二份实现，而它造成的
+  漂移（fail-closed 警告只活在它那里）正是反对保留它的论据，不是支持。
+- **开机启动藏在一个设置开关后面。** 它重新引入开机钩子、一个偏好和一行 UI，为的是保留
+  本 ADR 有意移除的行为，而且它在全新安装上做的第一件事就是捕获一台还没人配置过的设备。
+- **WebUI 打开时启动核心。** 方便，但错误：打开一个页面不是要求接管。启动 按钮只差一次
+  点按，而且是显式的。
+- **保留一个只在开机写 `stopped/idle` 的精简 `service.sh`。** 一个唯一职责是刷新缓存的开机
+  钩子。把开机 id 记进文件让阅读方诚实，而且根本不需要钩子。
+- **开机删除 `status.json` 以强制新鲜。** 开机已经没有任何东西可运行，而一个必须靠删除才
+  正确的文件，不如一个写明自己出自哪次开机的文件。

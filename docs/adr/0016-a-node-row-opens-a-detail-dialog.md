@@ -1,62 +1,54 @@
-# 0016 — A node row opens a detail dialog; its Apply button switches
+# 0016 — 点节点行打开详情弹窗；其中的应用按钮完成切换
 
-Status: accepted (amends [ADR 0007](0007-one-tap-switches-the-node.md)'s one-tap rule; leaves
-[ADR 0012](0012-import-applies-the-first-node-when-nothing-is-applied.md)'s import exception in
-place)
+状态：已接受（修订 [ADR 0007](0007-one-tap-switches-the-node.md) 的一次点按规则；保留
+[ADR 0012](0012-import-applies-the-first-node-when-nothing-is-applied.md) 的导入例外）
 
-## Context
+## 背景
 
-ADR 0007 made tapping a row both the selection and the apply gesture, because the list replaced
-a single-node page and a separate Apply button would have made the common action three steps.
-The list now has a second job the single-node page never had: users want to inspect a node's
-fields and copy its share link before committing, and the one-tap gesture leaves no room for
-either. Applying also restarts a running core, so a mis-tap costs every live connection.
+ADR 0007 让点按行既是选中又是应用手势，因为列表替换了单节点页面，而一个独立的应用按钮会
+让最常用的动作变成三步。列表现在有一份单节点页面从未有过的第二职责：用户想在提交之前
+查看节点字段、复制其分享链接，而一次点按的手势给两者都留不出空间。应用还会重启运行中的
+核心，一次误触的代价是每条活连接。
 
-## Decision
+## 决策
 
-**Tapping a node row outside edit mode opens a read-only 节点详情弹窗.** Opening it writes
-nothing: not `state.selected`, not `outbound.json`, and not the core. The dialog shows the
-node's fields, its 节点链接, the applied/selected/changed state, and an Apply button.
+**编辑模式之外点按节点行打开只读的 节点详情弹窗。** 打开它不写任何东西：不写
+`state.selected`，不写 `outbound.json`，也不碰核心。弹窗显示节点字段、其 节点链接、
+已应用/已选中/已变更 状态，以及一个应用按钮。
 
-**The Apply button is the 切换节点 gesture.** It runs the same `selected` → `outbound.meta` →
-`outbound.json` → `kernelray.sh apply` sequence ADR 0007 defined, including the atomic
-test/swap/rollback path. The button is a small state machine: 应用 for a normal node, 重试应用
-for a selected-but-unapplied node (a failed switch), 重新应用 for an applied node whose fields
-changed (`dirty`), and 应用 for an applied clean node — the last one only re-syncs `selected`
-and never restarts the core, preserving the old recovery gesture after a failed switch.
+**应用按钮就是 切换节点 手势。** 它跑 ADR 0007 定义的同一 `selected` → `outbound.meta` →
+`outbound.json` → `kernelray.sh apply` 序列，包括原子的 测试/换入/回滚 路径。按钮是一个
+小状态机：普通节点是 应用，已选中未应用节点（切换失败）是 重试应用，字段变过的已应用节点
+（`dirty`）是 重新应用，无变化的已应用节点也是 应用——最后一种只重新同步 `selected`、绝不
+重启核心，保留切换失败后的旧恢复手势。
 
-**The dialog owns the copy actions.** 复制链接 copies the canonical link derived from the node
-fields; the caret menu also copies the Base64 encoding of that whole link, which is the
-one-line subscription form. The link is derived, not stored, so it always matches what the
-module would render. Base64 is an encoding, not encryption; the menu labels it as the
-subscription format.
+**复制动作归弹窗所有。** 复制链接 复制由节点字段推导的规范链接；折叠菜单还能复制整条
+链接的 Base64 编码，即单行订阅形式。链接是推导的、不落盘，所以它始终与模块将渲染的内容
+一致。Base64 是编码，不是加密；菜单把它标为订阅格式。
 
-**Nothing else moves.** Edit mode still toggles checkboxes, the row's ✕ still deletes, and the
-delete gate is unchanged. The import into a store with no applied node still applies a node
-without the dialog (ADR 0012): it is the one apply path a user did not reach by tapping a row.
+**其他一切不动。** 编辑模式仍然切换复选框，行的 ✕ 仍然删除，删除闸门不变。往没有已应用
+节点的存储里导入仍然不经弹窗就应用一个节点（ADR 0012）：它是唯一一条用户不经点行就到达
+的应用路径。
 
-## Consequences
+## 后果
 
-- Switching costs one extra tap. That is the price of inspecting/copying before a core restart,
-  and the dialog is also the place a failed switch is retried from.
-- The applied node's dialog is useful even though Apply does no core work: it is where the link
-  is copied and where a failed switch's pointer is repaired.
-- The canonical link can differ from the text originally pasted: the parser drops fields the
-  module does not use, and the copy reflects the node store. That is deliberate — a copied link
-  should describe the node the module actually runs, not a field it ignores.
-- The dialog's credentials are visible in full (the user chose that), so every field is written
-  with `textContent`, never `innerHTML`; the row and dialog share the same rule.
-- The copy fallback is `navigator.clipboard` → a temporary textarea + `execCommand`, because a
-  WebView is not guaranteed to expose the async Clipboard API. It needs a device check.
+- 切换多花一次点按。这是在核心重启之前查看/复制的代价，而弹窗也是切换失败的重试之处。
+- 已应用节点的弹窗依然有用，尽管应用对核心不做任何事：那里是复制链接的地方，也是修复
+  切换失败指针的地方。
+- 规范链接可能与最初粘贴的文本不同：解析器丢掉模块不用的字段，复制反映的是节点库。这是
+  有意的——复制的链接应该描述模块实际运行的节点，而不是它忽略的字段。
+- 弹窗里的凭据完整可见（用户的选择），所以每个字段都用 `textContent` 写入，绝不
+  `innerHTML`；行与弹窗共享同一条规则。
+- 复制回退是 `navigator.clipboard` → 临时 textarea + `execCommand`，因为 WebView 不保证
+  暴露异步 Clipboard API。它需要一次设备检查。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Keep one-tap and add a separate details/copy button per row.** Two targets in a small row,
-  and the applied row would still have no place for its link.
-- **Make the dialog a pure confirmation with no copy.** It would add the tap without paying for
-  it; the copy surface is why the dialog exists.
-- **Store the original link and copy it verbatim.** It duplicates credentials in `state.json`
-  and can reproduce parameters the module never honours. The node fields are the model; the
-  link is derived from them.
-- **Disable Apply on an applied clean node.** It looks safer, but it removes the only way to
-  re-sync `selected` after a failed switch without re-applying the attempted node.
+- **保留一次点按、每行另加一个详情/复制按钮。** 小小一行里两个目标，而且已应用行仍然
+  没有放链接的地方。
+- **让弹窗变成没有复制功能的纯确认框。** 它会加上那次点按却不给出回报；复制面正是弹窗
+  存在的理由。
+- **存储原始链接、逐字复制。** 它在 `state.json` 里复制一份凭据，还可能复现模块从不遵循
+  的参数。节点字段是模型；链接从它们推导。
+- **无变化的已应用节点上禁用应用按钮。** 看起来更安全，但它移除了切换失败后不重新应用
+  被尝试节点、却重新同步 `selected` 的唯一途径。

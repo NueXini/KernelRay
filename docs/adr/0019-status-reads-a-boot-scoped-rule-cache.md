@@ -1,98 +1,86 @@
-# 0019 — The status poll reads a boot-scoped rule cache; the start path asks the kernel
+# 0019 — 状态轮询读开机范围规则缓存；启动路径询问内核
 
-Status: accepted (the one detail it names that changed: `kr_tp_form` no longer exists, so
-`kr_tp_rules_present`'s callers are the start path and `kr_conf_accept_ondisk` only — see
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md))
+状态：已接受（其中点名的一个细节已变化：`kr_tp_form` 不复存在，`kr_tp_rules_present` 的
+调用方只剩启动路径和 `kr_conf_accept_ondisk`——见
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)）
 
-## Context
+## 背景
 
-The WebUI polls `kernelray.sh status` every 2 s while the page is visible. `kr_status_kv`
-answered "are the takeover rules installed?" with `kr_tp_rules_present`, which runs
-`iptables -t mangle -nL KR_TP_OUTPUT` and `ip6tables -t mangle -nL KR_TP_OUTPUT`. The same
-function also read the pid, applied id, start time, version, log level and both inbound ports
-through a dozen `cat`/`sed`/`head` calls. A stopped-core poll was roughly 15–20 external
-processes, two of them `iptables`; a running-core poll added the pid and start-time reads.
-None of those facts changes between two polls unless the user acts.
+页面可见时 WebUI 每 2 s 轮询一次 `kernelray.sh status`。`kr_status_kv` 用
+`kr_tp_rules_present` 回答"接管规则装了吗？"，后者运行 `iptables -t mangle -nL KR_TP_OUTPUT`
+和 `ip6tables -t mangle -nL KR_TP_OUTPUT`。同一函数还经十几个 `cat`/`sed`/`head` 调用读
+pid、已应用 id、启动时间、版本、日志级别和两个入站端口。停止核心的一次轮询大约 15–20 个
+外部进程，其中两个是 `iptables`；运行中核心的轮询再加上 pid 和启动时间读取。这些事实没有
+一个会在两次轮询之间变化，除非用户有所动作。
 
-The rules themselves change only at three moments: `kr_tp_install` (a start with the switch
-on), `kr_tp_remove` (a start with the switch off, `unapply`, or a failed install), and an
-external actor (another module, a manual `iptables -F`). The status value is **advisory**: it
-feeds the status badge and the takeover hint. The safety-critical readers — `kr_tp_form`,
-`kr_conf_accept_ondisk` and the start path — must keep asking the kernel, because a config
-whose form disagrees with the live rules loses routing or blackholes traffic
-([ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md),
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)).
+规则本身只在三个时刻变化：`kr_tp_install`（开关开着的一次启动）、`kr_tp_remove`（开关
+关闭的一次启动、`unapply`、或失败的安装），以及外部行为者（另一个模块、手动
+`iptables -F`）。状态值是 **建议性的**：它喂给状态徽章和接管提示。安全攸关的读者——
+`kr_tp_form`、`kr_conf_accept_ondisk` 与启动路径——必须继续询问内核，因为形态与活规则
+不一致的配置会丢路由或黑洞流量
+（[ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md)、
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)）。
 
-## Decision
+## 决策
 
-**`runtime/rules` is a read-through cache of the last real kernel answer, not a second source
-of truth.**
+**`runtime/rules` 是最后一次真实内核应答的读穿缓存，不是第二事实来源。**
 
-- The file carries `boot=<boot_id>` and `present=<0|1>`. The boot id is the one
-  `/proc/sys/kernel/random/boot_id` mints per boot, already used by `runtime/status.json`
-  ([ADR 0018](0018-no-action-button-and-no-boot-start.md)). No clock is involved.
-- `kr_tp_install` writes `present=1`, including the "rules already present" early return;
-  `kr_tp_remove` writes `present=0`. Both write the current boot id. A start with the switch
-  off that finds no rules writes `present=0` as well, so a cache left stale by an external
-  flush is repaired by the same start that already asked the kernel.
-- `kr_status_kv` reads the cache. A usable cache (file present, boot id matches, value `0|1`)
-  answers without touching iptables. A missing or stale cache is answered by one real
-  `kr_tp_rules_present` and normally written back (the write is skipped if another writer
-  changed the cache while the kernel was being asked). That is the same shape as the version
-  cache: `kr_version_cached` already refreshes `runtime/version` on a miss.
-- The cache is boot-scoped because netfilter is volatile: after a reboot the old boot id no
-  longer matches, so the first poll checks the kernel again instead of trusting a file from a
-  boot whose rules are gone. `runtime/` is also wiped by a module update
-  ([ADR 0002](0002-everything-lives-in-the-module-dir.md)), so a miss after an update is a
-  normal path, not an error.
-- `kr_tp_rules_present` stays the authoritative check and is still called by `kr_tp_form`,
-  `kr_conf_accept_ondisk`, `kr_tp_install` and the `tproxy status` CLI. The cache is never
-  read by them.
-- The status output keeps `rules=present|absent`; the UI does not learn about the cache.
-- The cache is `0600` (it carries only a boot id and a flag, but it lives beside the other
-  runtime state and `kr_dirs` tightens it with them).
+- 文件携带 `boot=<boot_id>` 和 `present=<0|1>`。boot id 是
+  `/proc/sys/kernel/random/boot_id` 每次开机铸造的那个，`runtime/status.json` 已在用
+  （[ADR 0018](0018-no-action-button-and-no-boot-start.md)）。不涉及时钟。
+- `kr_tp_install` 写 `present=1`，包括"规则已在位"的提前返回；`kr_tp_remove` 写
+  `present=0`。两者都写当前 boot id。开关关闭、发现无规则的启动同样写 `present=0`，所以
+  被外部 flush 弄陈旧的缓存由本就询问过内核的同一次启动修复。
+- `kr_status_kv` 读缓存。可用的缓存（文件存在、boot id 匹配、值为 `0|1`）不碰 iptables 就
+  作答。缺失或陈旧的缓存由一次真实的 `kr_tp_rules_present` 回答并通常写回（若询问内核期间
+  有别的写入者改了缓存则跳过写回）。与版本缓存同一形状：`kr_version_cached` 未命中时本来
+  就会刷新 `runtime/version`。
+- 缓存按开机划界，因为 netfilter 是易失的：重启后旧 boot id 不再匹配，第一次轮询会重新
+  检查内核，而不是信任一份出自规则已消失的开机的文件。`runtime/` 也会被模块更新清空
+  （[ADR 0002](0002-everything-lives-in-the-module-dir.md)），所以更新后的未命中是正常
+  路径，不是错误。
+- `kr_tp_rules_present` 仍是权威检查，仍被 `kr_tp_form`、`kr_conf_accept_ondisk`、
+  `kr_tp_install` 和 `tproxy status` CLI 调用。缓存绝不被它们读取。
+- 状态输出保持 `rules=present|absent`；UI 无从得知缓存的存在。
+- 缓存为 `0600`（它只带一个 boot id 和一个标志，但它与其他运行时状态同住，`kr_dirs` 会
+  一并收紧权限）。
 
-**The status path also stops forking for facts it already has.**
+**状态路径同样不再为已有的事实 fork。**
 
-- `kr_pid`, `kr_applied_id`, `kr_loglevel_get` and the version cache gained variable-setting
-  readers (`kr_pid_read`, `kr_applied_read`, `kr_loglevel_read`, `kr_version_read`), and
-  `kr_boot_id` now uses `read` instead of `sed`, so the status poll reads instead of forking a
-  `cat`/`sed` per field. The echo-style functions stay for the other callers and for the tests
-  that override them.
-- `kr_status_kv` reads `runtime/status.json` once (one `awk`) instead of one `sed` per field.
-- `kr_settings_ports` parses both inbound ports in one `awk`; `kr_setting_port` remains the
-  one-field interface for the other callers. The render uses the combined reader too.
+- `kr_pid`、`kr_applied_id`、`kr_loglevel_get` 和版本缓存获得了设变量型读者
+  （`kr_pid_read`、`kr_applied_read`、`kr_loglevel_read`、`kr_version_read`），
+  `kr_boot_id` 改用 `read` 而不是 `sed`，所以状态轮询用读取代替每字段 fork 一个
+  `cat`/`sed`。echo 风格的函数保留给其他调用方和覆盖它们的测试。
+- `kr_status_kv` 一次读 `runtime/status.json`（一个 `awk`），而不是每字段一个 `sed`。
+- `kr_settings_ports` 用一个 `awk` 解析两个入站端口；`kr_setting_port` 保留为其他调用方的
+  单字段接口。渲染也用合并读者。
 
-## Consequences
+## 后果
 
-- **Steady state: zero iptables and roughly ten forks per poll** (four applets — `tr` and
-  three `awk`s — plus the command substitutions around them), down from roughly thirty with
-  two iptables. The 2 s poll stops being a measurable background cost.
-- **After a boot, a module update, or a cache write failure, the first poll pays one real
-  check** (one `iptables` if the IPv4 chain is missing, two if both families answer). That is
-  the old behaviour for one tick, not for every tick.
-- **An external flush is invisible until the next install/remove/start.** If another actor
-  deletes the chains, the cache still says `present=1` and the UI keeps its "takeover is on"
-  hint. The start path is unaffected: it asks the kernel and repairs the cache. This is the
-  accepted cost of an advisory status; a manual-refresh check can close the window later
-  without putting iptables back into the 2 s loop.
-- **No boot id means the old behaviour.** On a kernel without
-  `/proc/sys/kernel/random/boot_id`, the cache cannot be validated, so every poll falls back
-  to the kernel check. Android exposes it; the fallback exists for completeness.
-- **Fail-closed is unchanged.** The rules, their install order and the config form are still
-  decided by the kernel check at start time. The cache only decides what the status card says.
+- **稳态：每轮询零次 iptables、约十次 fork**（四个 applet——`tr` 和三个 `awk`——外加
+  环绕它们的命令替换），从约三十次（含两次 iptables）降下来。2 s 轮询不再是可测量的后台
+  开销。
+- **开机、模块更新或缓存写入失败之后，第一次轮询付一次真实检查**（IPv4 链缺失则一次
+  `iptables`，两族都应答则两次）。那是一个 tick 的旧行为，不是每个 tick。
+- **外部 flush 在下一次安装/移除/启动之前不可见。** 若别的行为者删除链，缓存仍说
+  `present=1`，UI 保留"接管已开启"提示。启动路径不受影响：它询问内核并修复缓存。这是
+  建议性状态被接受的代价；手动刷新检查可以日后收窄这个窗口，而不必把 iptables 放回 2 s
+  循环。
+- **没有 boot id 即旧行为。** 在没有 `/proc/sys/kernel/random/boot_id` 的内核上，缓存无法
+  校验，每次轮询都回退到内核检查。Android 暴露它；回退为完整性而存在。
+- **Fail-closed 不变。** 规则、安装顺序和配置形态仍由启动时的内核检查决定。缓存只决定
+  状态卡片说什么。
 
-## Alternatives
+## 备选项
 
-- **Keep the iptables pair in the poll.** Correct, but it is the dominant cost of a 2 s loop
-  and asks a question whose answer cannot change between user actions.
-- **Drop `rules=` from status.** The UI loses the difference between "running with takeover"
-  and "running idle" — exactly the distinction the status hint exists for.
-- **Presence-only marker.** A marker that only exists while the rules do cannot cache the
-  "absent" answer: every poll with the switch off would miss and check. `present=0` is needed.
-- **TTL instead of a boot id.** A TTL needs the wall clock, which is wrong until NTP syncs and
-  can jump; the boot id is the signal the module already trusts for `status.json`
-  ([ADR 0018](0018-no-action-button-and-no-boot-start.md)).
-- **Let `kr_tp_form` read the cache too.** That would make an advisory file load-bearing for
-  routing: a stale `present=1` with the rules gone is a blackhole. The safety-critical readers
-  keep the kernel.
+- **轮询里保留 iptables 对。** 正确，但它是 2 s 循环的主要开销，而问题在两次用户动作之间
+  不可能有变化的答案。
+- **从状态里去掉 `rules=`。** UI 失去"带接管运行"与"直连运行"的差别——恰是状态提示存在
+  的理由。
+- **仅存在的标记。** 只在规则存在时才存在的标记无法缓存"不存在"的答案：开关关闭时每次
+  轮询都会未命中并检查。需要 `present=0`。
+- **TTL 而不是 boot id。** TTL 需要墙钟，NTP 同步之前是错的、还会跳变；boot id 是模块为
+  `status.json` 已经信任的信号
+  （[ADR 0018](0018-no-action-button-and-no-boot-start.md)）。
+- **让 `kr_tp_form` 也读缓存。** 那会让一份建议性文件对路由承重：规则已消失时的陈旧
+  `present=1` 是黑洞。安全攸关的读者保留内核。

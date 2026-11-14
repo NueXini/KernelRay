@@ -1,70 +1,59 @@
-# 0004 — TPROXY takeover is module-owned, opt-in and fail-closed
+# 0004 — TPROXY 接管由模块持有、需主动开启且失败关闭
 
-Status: accepted (the opt-in decision, the default, the no-node refusal and the after-update
-behaviour are all superseded by
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md), which removes the
-switch entirely: every core start takes over, and a start whose takeover cannot be enforced is
-refused. The `action.sh` named in the recovery path below no longer ships and the WebUI is the
-only manual surface — see [ADR 0018](0018-no-action-button-and-no-boot-start.md))
+状态：已接受（"需主动开启"的决定、默认值、无节点拒绝与更新后的行为均被
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) 取代——该 ADR
+彻底移除开关：每次核心启动都接管，无法落实接管的启动被拒绝。下文恢复路径中提到的
+`action.sh` 已不再随包，WebUI 是唯一的手动操作面——见
+[ADR 0018](0018-no-action-button-and-no-boot-start.md)）
 
-## Context
+## 背景
 
-v0 is an idle run: the core listens on local socks/http inbounds and nothing redirects device
-traffic into it. Transparent proxying was parked. The user now wants TPROXY.
+v0 是直连运行：核心监听本地 socks/http 入站，没有任何东西把设备流量重定向进去。透明代理
+当时被搁置。用户现在要 TPROXY。
 
-That leaves three forks that are expensive to reverse: who installs the rules (the module, or
-the user/another module around a bare tproxy inbound), whether takeover is opt-in, and what
-happens to traffic when the core is not running. A fourth fork is reachability: a partial
-capture (some UIDs, one address family, TCP only) is a silent leak, not a smaller feature.
+于是留下三个难以回退的分叉：谁来装规则（模块，还是用户/别的模块围绕一个裸 tproxy 入站来
+装）、接管是否需主动开启、以及核心不运行时流量怎么办。第四个分叉是覆盖面：部分捕获
+（某些 UID、单一地址族、仅 TCP）是静默泄漏，不是更小的功能。
 
-## Decision
+## 决策
 
-**The module owns the whole mechanism.** It installs and removes `iptables`/`ip6tables` mangle
-rules plus the policy routing that steers packets into the core's tproxy inbound. The user gets
-a switch, not a rule-writing tutorial.
+**整个机制由模块持有。** 它安装并移除 `iptables`/`ip6tables` mangle 规则加上把包送进核心
+tproxy 入站的策略路由。用户得到的是一个开关，不是一份写规则的教程。
 
-- **Scope:** device-local traffic from all UIDs (root and system included); TCP and UDP; IPv4
-  and IPv6. Forwarded/tethered traffic is *not* taken over — this module proxies the device, it
-  is not a router.
-- **Fixed bypass:** loopback, private/LAN and link-local/multicast ranges, and the core's own
-  outbound sockets. The core bypasses through a dedicated socket mark and an `ip rule` that
-  outranks the capture rule; it is never excluded by UID, which would also exempt every other
-  root process.
-- **Opt-in, default off.** The tproxy switch is persisted and restored at boot. With no
-  applied node the switch cannot be turned on: capture without an outbound is worse than an
-  idle run. (The default and the no-node refusal were lifted by
-  [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the switch is on
-  from install, and without an applied node it simply has no effect.)
-- **Fail-closed.** While the switch is on, the rules exist independently of the core's health:
-  at boot they are installed before the core starts, and a core that crashes later leaves them
-  in place, so traffic is dropped instead of going out directly. A failed *rule install* is the
-  one path that rolls back and can leak; it must be reported as `failed/rules`.
-- **Exclusive namespace.** Dedicated chain names, fwmark, routing table and `ip rule`
-  preference; only those are cleaned up, never another module's rules. Enabling refuses with
-  `failed/conflict` when a TUN/WireGuard interface is up or a foreign `-j TPROXY` rule is
-  present. Detection is heuristic; the documentation still says only one transparent proxy may
-  be active.
-- **The listener is not an open proxy.** TPROXY requires the inbound to bind a wildcard address;
-  an INPUT rule drops direct connections to that port from anything but loopback.
+- **范围：** 所有 UID（含 root 和 system）的设备本地流量；TCP 和 UDP；IPv4 和 IPv6。
+  转发/热点流量 *不* 接管——本模块代理的是这台设备，不是路由器。
+- **固定的旁路：** 环回、私网/局域网与链路本地/组播段，以及核心自己的出站 socket。核心
+  经一个专用 socket mark 和一条压过捕获规则的 `ip rule` 旁路；绝不用 UID 排除——那会连
+  其他 root 进程一起豁免。
+- **需主动开启，默认关闭。** tproxy 开关持久化、开机恢复。没有已应用节点时开关无法打开：
+  没有出站的捕获比直连运行更糟。（默认值与无节点拒绝被
+  [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) 解除：开关自安装
+  起就是开的，没有已应用节点时它只是没有效果。）
+- **失败关闭。** 开关打开期间，规则独立于核心的生死存在：开机时先装规则后起核心，之后
+  崩溃的核心任由规则留在原位，流量被丢弃而不是直连出去。失败 *规则安装* 是唯一会回滚、
+  可能泄漏的路径；它必须报告为 `failed/rules`。
+- **独占命名空间。** 专用的链名、fwmark、路由表和 `ip rule` preference；只清理这些，绝不
+  碰其他模块的规则。TUN/WireGuard 接口在位或存在外来 `-j TPROXY` 规则时，启用以
+  `failed/conflict` 拒绝。检测是启发式的；文档仍然写明同一时刻只能有一个透明代理。
+- **监听端口不是开放代理。** TPROXY 要求入站绑定通配地址；一条 INPUT 规则丢弃来自环回
+  之外、指向该端口的直接连接。
 
-## Consequences
+## 后果
 
-- A dead core looks like "no network". Recovery is turning the switch off (WebUI or
-  `action.sh`), which does not require network access. Status and the module log must say why.
-- ICMP is not captured: `ping` stays direct. That is a documented limitation, not a bug.
-- Per-app bypass, TUN mode and tethering are explicitly not supported in this version.
-- An update still resets the switch, config and node store (ADR 0002), so a fresh install after
-  an update is idle until the user applies a node and turns takeover on again.
+- 死核心看起来像"没有网络"。恢复是关掉开关（WebUI 或 `action.sh`），不需要网络。状态和
+  模块日志必须说明原因。
+- ICMP 不被捕获：`ping` 保持直连。这是文档化的限制，不是 bug。
+- 分应用旁路、TUN 模式和热点在本版本明确不支持。
+- 更新仍会重置开关、配置和节点库（ADR 0002），所以更新后的全新安装保持直连，直到用户
+  应用节点并再次打开接管。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Expose a tproxy inbound and let the user write rules.** That is an inbound, not support for
-  transparent proxying; every user would get the fail-open/leak semantics wrong differently.
-- **TUN / VpnService.** Another device to manage and a different permission model; the core
-  already supports tproxy.
-- **REDIRECT.** TCP-only, and UDP is half the reason to use TPROXY.
-- **Fail-open with a supervisor.** A core crash would silently restore direct traffic, which is
-  the privacy failure this feature exists to prevent. A watchdog was also explicitly parked.
-- **Auto-enable at boot / after upgrade.** An update must never take over a device's network
-  without the user asking again.
-- **Flush foreign rules to win the conflict.** Destructive and unannounced; refusing is honest.
+- **暴露 tproxy 入站、让用户自己写规则。** 那只是个入站，不是透明代理支持；每个用户都会
+  以各自的方式把 fail-open/泄漏语义搞错。
+- **TUN / VpnService。** 多一个要管理的设备、另一套权限模型；核心本来就支持 tproxy。
+- **REDIRECT。** 仅 TCP，而 UDP 是用 TPROXY 的一半理由。
+- **看门狗配合 fail-open。** 核心崩溃会静默恢复直连流量，这正是本功能要阻止的隐私失败。
+  看门狗也被明确搁置。
+- **开机/升级后自动启用。** 更新绝不能在用户没有再次要求的情况下接管设备的网络。
+- **冲掉外来规则赢得冲突。** 破坏性且不打招呼；拒绝才是诚实的。

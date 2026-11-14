@@ -1,111 +1,90 @@
-# 0011 — 启动即接管: every core start takes over, and there is no switch
+# 0011 — 启动即接管: 每次核心启动都接管，不存在开关
 
-Status: accepted. Supersedes [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md)'s
-opt-in decision and the switch that
-[ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md) gave toggle semantics, and it
-replaces this ADR's own first form (a default-on preference in Settings) wholesale: the switch
-is gone. The ordering it records is amended by
-[ADR 0017](0017-one-render-one-test-per-switch.md), which no longer describes the start path.
-"Every start" still means a start the user asks for — nothing starts at boot, see
-[ADR 0018](0018-no-action-button-and-no-boot-start.md).
+状态：已接受。取代 [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md) 的
+"需主动开启"决定，以及 [ADR 0008](0008-takeover-namespace-boot-and-toggle-semantics.md)
+为其赋予切换语义的开关；也整体替换本 ADR 自己的第一个形态（设置里的默认开启偏好）：开关
+没了。它记录的顺序被 [ADR 0017](0017-one-render-one-test-per-switch.md) 修订——后者不再
+描述启动路径。"每次启动"仍指用户要求的启动——开机不自启，见
+[ADR 0018](0018-no-action-button-and-no-boot-start.md)。
 
-*The file name is the old decision's name, kept so every link to it still resolves; it is a
-historical artefact, not a description of the decision below.*
+*文件名是旧决策的名字，保留它让所有指向它的链接仍然可解析；这是历史痕迹，不是下述决策
+的描述。*
 
-## Context
+## 背景
 
-ADR 0011 first shipped a switch: a persisted preference in Settings, on from install, that
-decided whether the next core start installed the TPROXY rules and ran the takeover config. It
-was "start-coupled" — flipping it never touched a running core — but it was still a mode, and
-that mode was the source of everything awkward about the feature:
+ADR 0011 最初带来的是一个开关：设置里一个持久化偏好，自安装起开启，决定下一次核心启动
+是否安装 TPROXY 规则并运行接管配置。它是"启动耦合"的——翻转它从不碰运行中的核心——但它
+仍是一个模式，而那个模式正是这个功能所有别扭之处的来源：
 
-- Two config forms existed. The renderer had to be told which one to build, so
-  `runtime/config.form` recorded the form the bytes on disk were rendered in, `kr_tp_form`
-  decided the form from the switch *and* the live rules, and `kr_conf_accept_ondisk` refused a
-  config whose recorded form disagreed. Three places encoded one question.
-- The switch had a second, unintended meaning: it was the only way out of the fail-closed
-  "rules up, core dead, no network" state. Recovery advice was "switch it off and start again",
-  which meant the switch doubled as an emergency stop for the whole feature.
-- An off switch produced 空转 — a core that proxies nothing for the device. The glossary had a
-  word for it, the UI had hints for it, and it was a mode nobody actually wanted: a user who
-  wants only the local socks/http inbounds is not using this module's reason to exist.
+- 两种配置形态并存。渲染器必须被告知构建哪种，于是 `runtime/config.form` 记录磁盘字节
+  渲染时的形态，`kr_tp_form` 从开关 *和* 活规则判定形态，`kr_conf_accept_ondisk` 拒绝
+  记录形态不符的配置。三个地方编码同一个问题。
+- 开关有第二个、无意的含义：它是 fail-closed 的"规则在位、核心死亡、没有网络"状态的唯一
+  出路。恢复建议是"关掉开关再启动"，于是开关兼职了整个功能的紧急停止。
+- 关着的开关产出 空转 — 一个对设备什么都不代理的核心。词汇表为它造了词，UI 为它做了
+  提示，而它是一个没人真想要的模式：只想用本地 socks/http 入站的用户，用的不是这个模块
+  存在的理由。
 
-The user's decision is that takeover is not optional. The core exists on this device to carry
-device traffic; a start that does not take over is a start that does nothing.
+用户的决定是：接管不是可选项。核心在这台设备上存在就是为了承载设备流量；不接管的启动
+是什么都不做的启动。
 
-## Decision
+## 决策
 
-**启动即接管 — every core start takes over, unconditionally.**
+**启动即接管 — 每次核心启动无条件接管。**
 
-- **No preference, no file, no command.** `runtime/tproxy` is gone; `kr_tp_switch_on`,
-  `kr_tp_default_on`, `kr_tproxy_set` and `kr_tp_form` are gone; `kernelray.sh tproxy` accepts
-  only `status`, and `status` reports the rules, not a preference. `status.json` and the
-  `status` key/value output no longer carry a `tproxy` field. A leftover `runtime/tproxy` from
-  an older version is deleted by `kr_cleanup_legacy`, never read.
-- **No core without takeover.** The start has two takeover halves and the config sits between
-  them:
-  1. `kr_tp_prepare` — the conflict check and the node pin, while the network is still direct.
-     The pin's DoH ask must not enter a capture that leads into a core that is not up, and the
-     render needs its answer (the DNS module's hosts entry).
-  2. `kr_ensure_config` — render the one form, then `xray -test` it.
-  3. `kr_tp_engage` — install the rules, still before the core runs (fail-closed, ADR 0004).
+- **没有偏好、没有文件、没有命令。** `runtime/tproxy` 移除；`kr_tp_switch_on`、
+  `kr_tp_default_on`、`kr_tproxy_set` 和 `kr_tp_form` 移除；`kernelray.sh tproxy` 只接受
+  `status`，而 `status` 报告规则，不是偏好。`status.json` 与 `status` 的 key/value 输出
+  不再携带 `tproxy` 字段。旧版残留的 `runtime/tproxy` 由 `kr_cleanup_legacy` 删除，绝不
+  被读取。
+- **没有接管就没有核心。** 启动有两个接管半程，配置夹在中间：
+  1. `kr_tp_prepare` — 冲突检查与节点钉死，趁网络还直连。钉死的那次 DoH 询问绝不能进入
+     一条通向尚未运行的核心的捕获，渲染也需要它的答案（DNS 模块的 hosts 条目）。
+  2. `kr_ensure_config` — 渲染那唯一的形态，然后 `xray -test`。
+  3. `kr_tp_engage` — 安装规则，仍在核心运行之前（fail-closed，ADR 0004）。
 
-  Any half that fails refuses the start: `failed/conflict`, `failed/rules`,
-  `failed/config-invalid` or `failed/no-config`, with the core down and the device direct. The
-  WebUI's Retry runs the same start again.
-- **Test before rules, not after.** The rules go in only once `xray -test` accepted the config.
-  A config the core rejects therefore leaves the device direct instead of offline — the failure
-  direction the old order got wrong, where a rule install that succeeded and a test that failed
-  produced a capture into a core that never started. Fail-closed is unchanged where it belongs:
-  the rules are still installed before the core runs, and a core that dies afterwards leaves
-  them up.
-- **One form.** The renderer always splices the tproxy inbound, the `dns-out` outbound, the DNS
-  module, the routing block and the bypass mark. `KR_TAKEOVER`, `kr_config_form`,
-  `runtime/config.form`, `config.form.prev` and `KR_CANDIDATE_FORM` are gone with the second
-  form; `kr_tp_install`'s existing "rules already present" check and the status poll's
-  `rules=present|absent` are the only remaining readers of rule presence.
-- **Every restart is a start.** `apply`, `ports` and `routing` restart a running core through
-  `kr_swap_*`, which does not re-run `kr_tp_prepare`; the start it triggers does. A swap whose
-  start does not come back removes the rules it brought up, so a failed swap cannot leave a
-  device with no core and a live capture.
-- **No replacement mode.** A user who wants only the local socks/http inbounds has no mode for
-  it. That is deliberate: the module is a transparent proxy. An update from a version where the
-  switch was off takes the device over at the next start, and the release notes say so.
-- **UI.** The Settings row titled 「tproxy透明代理」 is removed. The status page keeps the
-  failure card and its Retry; the `runningHint` ("the core does not intercept system traffic
-  yet") is unreachable and deleted, and the conflict/rule messages now say the core did not
-  start rather than telling the user to switch something off.
-- **Vocabulary.** `空转` is deleted from `GLOSSARY.md`: no state it names can exist.
-  `接管` says every start is a takeover, and `核心配置` says there is one form.
+  任何半程失败都拒绝启动：`failed/conflict`、`failed/rules`、`failed/config-invalid` 或
+  `failed/no-config`，核心不起、设备直连。WebUI 的重试重跑同一次启动。
+- **先测试后装规则，而不是相反。** 规则只在 `xray -test` 接受配置之后装入。被核心拒绝的
+  配置因此让设备保持直连而不是断网——旧顺序弄错的失败方向：规则安装成功而测试失败会产出
+  一条通向从未启动的核心的捕获。fail-closed 在它该在的地方不变：规则仍在核心运行之前
+  装入，之后死掉的核心任由规则在位。
+- **唯一的形态。** 渲染器总是拼入 tproxy 入站、`dns-out` 出站、DNS 模块、路由块和旁路
+  mark。`KR_TAKEOVER`、`kr_config_form`、`runtime/config.form`、`config.form.prev` 和
+  `KR_CANDIDATE_FORM` 随第二种形态一起移除；`kr_tp_install` 既有的"规则已在位"检查和状态
+  轮询的 `rules=present|absent` 是仅存的规则存在性读者。
+- **每次重启都是一次启动。** `apply`、`ports` 和 `routing` 经 `kr_swap_*` 重启运行中的
+  核心，后者不重跑 `kr_tp_prepare`；它触发的启动会跑。启动没能回来的换入会移除它拉起的
+  规则，所以失败的换入不会留下一个没有核心、却带着活捕获的设备。
+- **没有替代模式。** 只想要本地 socks/http 入站的用户没有对应的模式。这是有意的：模块是
+  透明代理。从开关处于关闭状态的版本升级，会在下一次启动时接管设备，发布说明里有说明。
+- **UI。** 标题为「tproxy透明代理」的设置行移除。状态页保留失败卡片和它的重试；
+  `runningHint`（"核心尚未接管系统流量"）不可达、已删除，冲突/规则消息现在说的是核心没有
+  启动，而不是让用户去关掉什么。
+- **词汇。** `空转` 从 `GLOSSARY.md` 删除：它指名的状态不再存在。`接管` 说每次启动都是
+  接管，`核心配置` 说只有一种形态。
 
-## Consequences
+## 后果
 
-- Recovery from "rules up, core dead" is: start the core again, `kernelray.sh unapply`, a
-  reboot (netfilter does not survive one), or an uninstall. The switch's emergency-stop role is
-  gone; `unapply` is the gesture that both forgets the node and takes the capture down.
-- A device with another VPN active cannot run this module at all — not even for its local
-  socks/http inbounds. `failed/conflict` is the honest report of that, and the user resolves the
-  conflict or uninstalls.
-- `docs/config-derivation.md` loses its "Start and the switch" section and its two-form matrix;
-  the derivation is one render path.
-- Historical ADRs that describe the switch (0004, 0008, 0013, 0015, 0017, 0019) keep their text
-  and gain a status note pointing here. Their narrative is the record of how the feature got
-  here; rewriting it would lose why the switch looked like a good idea.
-- The glossary's `空转` entry had back-references from `接管` and `全局`; those are cleaned up.
-  The word survives in old logs and issues only, like `直连运行`.
+- "规则在位、核心死亡"的恢复是：再启动核心、`kernelray.sh unapply`、重启（netfilter
+  活不过重启）、或卸载。开关的紧急停止角色没了；`unapply` 是既忘掉节点又撤掉捕获的
+  手势。
+- 另一个 VPN 活跃的设备完全无法运行本模块——连它的本地 socks/http 入站也不行。
+  `failed/conflict` 是对此诚实的报告，用户解决冲突或卸载。
+- `docs/config-derivation.md` 失去其"启动与开关"一节和两形态矩阵；推导只有一条渲染路径。
+- 描述开关的历史 ADR（0004、0008、0013、0015、0017、0019）保留原文、加上指向本篇的状态
+  注。它们的叙述是这个功能如何走到今天的记录；重写会丢失"开关为什么看起来是个好主意"。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Keep the switch but make it default-on and immutable.** A preference with one legal value is
-  a file, a command, a status field and a UI control that exist to say nothing.
-- **Bind the rules to the core's lifetime (tear them down on Stop).** It sounds like a stronger
-  binding than "start-coupled", but nothing tears them down when the core *crashes*, so the
-  equivalence would still not hold — and it would reintroduce a gesture that switches takeover
-  off, which is the thing being removed.
-- **Fall back to an idle run when takeover cannot be enforced.** That is the old behaviour, and
-  it makes "the core is running" mean two different things. It also keeps the second config form
-  alive.
-- **Keep a hidden `tproxy off` for scripts.** It is the same switch with a smaller surface, and
-  the first thing an emergency would reach for.
-- **Install the rules before testing the config.** Then a rejected config leaves a live capture
-  and no core — the device offline, which is strictly worse than direct.
+- **保留开关但默认开启且不可改。** 只有一个合法值的偏好，是一个存在的意义就是什么都没
+  说的文件、命令、状态字段和 UI 控件。
+- **把规则绑在核心的生命周期上（停止时拆除）。** 听起来比"启动耦合"绑得更紧，但核心
+  *崩溃* 时没有任何东西拆除它们，等价性仍然不成立——而且它会重新引入一个把接管关掉的
+  手势，而那正是要移除的东西。
+- **接管无法落实时回退直连运行。** 那是旧行为，它让"核心在运行"意味着两种不同的事。它
+  还会让第二种配置形态继续活着。
+- **给脚本保留一个隐藏的 `tproxy off`。** 那是面积更小的同一个开关，也是紧急情况第一个
+  会去摸的东西。
+- **先装规则再测配置。** 那样被拒绝的配置留下活捕获而没有核心——设备断网，严格比直连
+  更糟。

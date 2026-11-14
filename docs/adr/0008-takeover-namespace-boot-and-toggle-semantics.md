@@ -1,165 +1,131 @@
-# 0008 — Takeover namespace, boot and toggle semantics
+# 0008 — 接管的命名空间、开机与开关语义
 
-Status: accepted (implements the rule-level details left open by
-[ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md); refines the DNS
-bypass of [ADR 0006](0006-dns-goes-through-the-core.md)). The toggle semantics below — default
-off, immediate toggle, boot-time rules without a node — are superseded by
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): there is no switch
-left to toggle, every start takes over, and the rule namespace it defines is otherwise
-unchanged. Its boot semantics — the boot-time start, the boot-time conflict verdict and the
-pin that rode on it — are superseded by
-[ADR 0018](0018-no-action-button-and-no-boot-start.md): nothing starts at boot, so the
-start that pins, engages and installs is the user's.
+状态：已接受（落实 [ADR 0004](0004-tproxy-takeover-is-module-owned-and-fail-closed.md) 留
+下的规则层细节；细化 [ADR 0006](0006-dns-goes-through-the-core.md) 的 DNS 旁路）。下文的
+开关语义——默认关闭、即时切换、开机无节点也装规则——被
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) 取代：不再存在
+可切换的开关，每次启动都接管，除此之外它定义的规则命名空间不变。其开机语义——开机时的
+启动、开机时的冲突判定与随之而来的钉死——被
+[ADR 0018](0018-no-action-button-and-no-boot-start.md) 取代：开机不自启，钉死、落实与安装
+的启动属于用户。
 
-## Context
+## 背景
 
-ADR 0004 fixed *who* owns the rules and *what* happens when the core dies, but the
-implementation still had to pick the actual numbers, the boot-time conflict behaviour,
-the toggle gesture's exact sequence, and where the node outbound's socket mark comes
-from. Each choice is device-visible; some are effectively permanent once users have
-the rules installed.
+ADR 0004 定了 *谁* 持有规则、核心死了 *会怎样*，但实现仍要挑出具体的数字、开机时的冲突
+行为、切换手势的精确序列、以及节点出站的 socket mark 从哪来。每个选择都是设备可见的；
+其中一些在用户装上规则之后实际上就是永久的。
 
-## Decision
+## 决策
 
-**Exclusive namespace — one set of literal numbers:**
+**独占命名空间——一组字面数字：**
 
-| Thing | Value |
+| 事物 | 值 |
 | --- | --- |
-| capture fwmark | `19283` (0x4B53; set by the OUTPUT chain, read by the capture rule) |
-| bypass fwmark | `19282` (0x4B52; carried by every core-owned socket: node, direct, tproxy listener) |
-| routing tables | `19283` (local-table capture), `19282` (bypass: a copy of the current default route) |
-| `ip rule` preferences | `9500` (capture), `9400` (bypass) |
-| tproxy listener port | `10810` |
-| chains | `KR_TP_PREROUTING`, `KR_TP_OUTPUT` (mangle), `KR_TP_INPUT` (filter) |
+| 捕获 fwmark | `19283`（0x4B53；OUTPUT 链设置，捕获规则读取） |
+| 旁路 fwmark | `19282`（0x4B52；每个核心自有 socket 携带：节点、直连、tproxy 监听） |
+| 路由表 | `19283`（local 表捕获）、`19282`（旁路：当前默认路由的副本） |
+| `ip rule` preference | `9500`（捕获）、`9400`（旁路） |
+| tproxy 监听端口 | `10810` |
+| 链 | `KR_TP_PREROUTING`、`KR_TP_OUTPUT`（mangle）、`KR_TP_INPUT`（filter） |
 
-All literals; Android has no `/etc/iproute2`, so nothing depends on name resolution.
+全部是字面值；Android 没有 `/etc/iproute2`，所以不依赖任何名字解析。
 
-**Two marks, not one.** The capture mark reroutes captured packets into the listener
-(`fwmark 19283 → table 19283 = local`). The core's own sockets must never enter that
-table — the first bypass attempt reused 19283 for both and looped every core connection
-back into the core (measured on-device: DNS DoH timeouts, zero outbound sockets). So the
-bypass mark is distinct and has its own rule, `9400: fwmark 19282 lookup 19282`, whose
-table carries a **copy of the current default route** (parsed from `ip route show table
-all` at install time). Copying is required because Android keeps the default route in a
-per-network table selected by netd's own marks, and rule 32000 is `unreachable` — an
-arbitrary mark with no rule of its own is dead (the v0.6 lesson). A network switch after
-takeover is on invalidates the copy; a core restart rebuilds it.
+**两个 mark，不是一个。** 捕获 mark 把被捕获的包重路由进监听（`fwmark 19283 → table 19283
+= local`）。核心自己的 socket 绝不能进那张表——第一次旁路尝试把 19283 同时用在两处，把每
+个核心连接都环回进核心（设备上实测：DNS DoH 超时、出站 socket 为零）。所以旁路 mark 是
+独立的，有自己的规则 `9400: fwmark 19282 lookup 19282`，其表携带 **当前默认路由的副本**
+（安装时从 `ip route show table all` 解析）。必须复制，因为 Android 把默认路由放在按
+netd 自己的 mark 选择的逐网络表里，而规则 32000 是 `unreachable`——没有自己规则的任意
+mark 是死的（v0.6 的教训）。接管开启后切换网络会使副本失效；重启核心会重建它。
 
-**Rule shape.** `KR_TP_OUTPUT` returns core sockets (bypass mark) first, marks DNS (tcp/udp
-53) *before* the bypass ranges so a LAN resolver is captured too (ADR 0006's leak argument
-wins over the LAN bypass for this one port), bypasses DHCP (udp 67:68) — a proxied DHCP reply
-never assigns an address — the device's own addresses (a tproxy reply goes back to the device
-itself, which is not in any fixed range on a public-IP device), and the fixed bypass ranges
-(loopback, RFC1918, CGNAT, link-local, multicast, limited broadcast; `::1/128`, `fe80::/10`,
-`fc00::/7`, `ff00::/8` for v6); everything else is marked with the capture mark and
-policy-routed to the local table, where `KR_TP_PREROUTING` (reached over `lo` only —
-physical interfaces RETURN) TPROXYs it into port 10810. `KR_TP_PREROUTING` matches on
-**source, not destination or mark**: every captured packet originates from a local client
-(the device's own addresses or 127/8), while the core's own transparent replies — SYN-ACKs
-and DNS answers, which inherit the captured SYN's tproxy mark via `inet_request_sock` and
-whose destination is the local client — must flow to normal local delivery. Mark-based or
-destination-based matching loops every answer back into the core (measured: all handshakes
-stuck in SYN-SENT/SYN-RECV). A loopback **destination** is the one exception and RETURNs
-before the source rules: the core's own socks/http listeners answer a local client from
-127/8 to 127/8, and that SYN-ACK matches the source rule; without the return every local
-proxy connection hangs in SYN-SENT/SYN-RECV (found on device: the listener's reply was
-stolen into 10810). The return is destination-based, but it is a local-delivery bypass,
-not a TPROXY match: captured traffic keeps its external destination and never hits it.
-`KR_TP_INPUT` drops direct LAN access to the wildcard listener.
-The listener is one dokodemo-door inbound on `::` carrying `sockopt.tproxy`.
+**规则的形状。** `KR_TP_OUTPUT` 先放行核心 socket（旁路 mark），在旁路段 *之前* 标记 DNS
+（tcp/udp 53），让局域网解析器也被捕获（对这一个端口，ADR 0006 的泄漏论证压过局域网
+旁路），旁路 DHCP（udp 67:68）——被代理的 DHCP 应答永远分不到地址——设备自身的地址
+（tproxy 应答要回到设备自己，而它不在公网 IP 设备的任何固定段里），以及固定的旁路段
+（环回、RFC1918、CGNAT、链路本地、组播、受限广播；v6 为 `::1/128`、`fe80::/10`、
+`fc00::/7`、`ff00::/8`）；其余全部打上捕获 mark 并策略路由进 local 表，在那里
+`KR_TP_PREROUTING`（只经 `lo` 到达——物理接口 RETURN）把它 TPROXY 进端口 10810。
+`KR_TP_PREROUTING` 匹配 **源，不是目的或 mark**：每个被捕获的包都源自本地客户端（设备
+自身地址或 127/8），而核心自己的透明应答——SYN-ACK 和 DNS 应答，它们经
+`inet_request_sock` 继承被捕获 SYN 的 tproxy mark、目的地是本地客户端——必须流向正常的
+本地投递。按 mark 或目的匹配会把每条应答都环回进核心（实测：所有握手卡在
+SYN-SENT/SYN-RECV）。环回 **目的** 是唯一例外，在源规则之前 RETURN：核心自己的
+socks/http 监听从 127/8 应答到 127/8 的本地客户端，那个 SYN-ACK 会命中源规则；没有这条
+return，每条本地代理连接都挂在 SYN-SENT/SYN-RECV（设备上发现：监听的应答被劫进 10810）。
+这条 return 按目的匹配，但它是本地投递的旁路，不是 TPROXY 匹配：被捕获的流量保持其外部
+目的地，永不命中它。`KR_TP_INPUT` 丢弃对通配监听的直接局域网访问。
+监听是 `::` 上一个携带 `sockopt.tproxy` 的 dokodemo-door 入站。
 
-**The mark placeholder.** The UI's node renderer writes `"sockopt":{"mark":"__KERNELRAY_MARK__"}` —
-never a real mark, because the renderer cannot know the switch state and a mark without
-its ip rule loses routing (verified on v0.6). The shell replaces the placeholder with
-the bypass mark 19282 while takeover is on and `0` while it is off (Xray treats mark 0
-as unset), so mark and rules always ship together from one place. The template's direct
-outbound keeps its literal 19282: an unused outbound creates no socket.
+**mark 占位符。** UI 的节点渲染器写出 `"sockopt":{"mark":"__KERNELRAY_MARK__"}` — 绝不是
+真实 mark，因为渲染器无从知晓开关状态，而没有对应 ip 规则的 mark 会丢路由（v0.6 验证）。
+shell 在接管开启时把占位符替换为旁路标记 19282、关闭时替换为 `0`（Xray 把 mark 0 当作
+未设），所以 mark 与规则永远同出一体。模板的 direct 出站保留其字面 19282：一条不使用的
+出站不创建 socket。
 
-**Boot with the switch on** (superseded by ADR 0011: the engagement now lives inside
-`kr_start_locked` as `kr_tp_engage`, and a start without an applied node installs no rules).
-The on-start path re-renders the config to match the switch — a takeover-form config without
-rules loses routing, and rules without a tproxy listener blackhole traffic, so the stale
-combination is never started.
-Then: conflict → rules are skipped, the idle-form config is written, status is
-`failed/conflict`, and the switch file stays on (intent is never silently rewritten);
-the WebUI shows the reason and a retry button. Rule install failure → idle-form config,
-`failed/rules`, switch stays on. No conflict and a clean install → the node address is
-pinned (below), rules first, core second (the fail-closed ordering), phase `idle`.
+**开关开着时开机**（被 ADR 0011 取代：落实现在活在 `kr_start_locked` 里的 `kr_tp_engage`，
+没有已应用节点的启动不装规则）。启动路径先重渲染配置以匹配开关——没有规则的接管形态
+配置会丢路由，没有 tproxy 监听的规则会把流量黑洞掉，所以过期组合绝不被启动。
+然后：有冲突 → 跳过规则，写直连形态配置，状态 `failed/conflict`，开关文件保持打开
+（意图绝不被静默重写）；WebUI 显示原因和重试按钮。规则安装失败 → 直连形态配置、
+`failed/rules`，开关保持打开。无冲突且安装干净 → 先钉死节点地址（见下），先规则后核心
+（fail-closed 的顺序），phase `idle`。
 
-**The pinned node address.** The bootstrap chain "connect to the node → resolve the
-node" must not depend on an upstream resolver: on networks where the fixed DoH
-endpoint or the node's own resolution is unreachable, a domain-based node can never
-bootstrap. So `tproxy on` and the boot path resolve the node host **while the network
-is still direct** (rules not yet installed) and write the answer to `runtime/nodeip`;
-the takeover render puts it into the DNS module's `hosts`, so the core answers the
-node domain locally. The network-provided resolver is the thing a polluted network
-poisons, so the first ask is Ali DoH (`https://223.5.5.5/resolve`, an IP literal that
-needs no lookup of its own) via `/data/adb/ksu/bin/busybox wget`, taking the first A
-record to match the DNS module's `UseIPv4`. KernelSU's busybox ships the wget applet,
-but symlinks only `busybox`/`ksud`/`resetprop` into `/data/adb/ksu/bin`, so PATH has
-neither `wget` nor `curl` and the ask names the binary outright.
-Certificate verification is off (`--no-check-certificate`): Android's busybox has no CA
-store to verify against, so a verified ask would almost always fail back to the system
-resolver — the very thing this pin exists to avoid. An unverified ask to a fixed IP is
-still stronger than that fallback: a forged answer needs an on-path attacker, pollution
-only needs the resolver. `-T 4` bounds reads only, so a `timeout 4` wrapper (the same
-busybox) gives the ask a hard whole-call budget — a connect on a hostile network can
-otherwise hang for tens of seconds, and a start must not wait on it. A failed ask is
-logged. A device without KernelSU's busybox — and calls that fail — fall
-back to the system resolver (`ping`). Resolution failure is not fatal — the direct-DoH routing
-rule remains as the fallback, and the log says so. A stale pin (node IP changed, or
-the device changed network) is rebuilt by toggling the switch.
+**钉死节点地址。** "连接节点 → 解析节点"的自举链绝不能依赖上游解析器：在固定 DoH 端点或
+节点自身的解析不可达的网络上，域名型节点永远无法自举。所以 `tproxy on` 和开机路径在
+**网络仍直连时**（规则尚未安装）解析节点主机，把答案写进 `runtime/nodeip`；接管渲染把它
+放进 DNS 模块的 `hosts`，核心本地应答节点域名。网络提供的解析器正是被污染的网络会毒化的
+东西，所以第一问是 Ali DoH（`https://223.5.5.5/resolve`，一个自身无需解析的 IP 字面量），
+经 `/data/adb/ksu/bin/busybox wget`，取与 DNS 模块 `UseIPv4` 匹配的第一条 A 记录。
+KernelSU 的 busybox 带 wget applet，但只把 `busybox`/`ksud`/`resetprop` 链接进
+`/data/adb/ksu/bin`，所以 PATH 里既没有 `wget` 也没有 `curl`，调用直接点名二进制。
+证书校验关闭（`--no-check-certificate`）：Android 的 busybox 没有可校验的 CA 库，带校验的
+询问几乎总会失败、退回系统解析器——恰恰是这个钉死要避免的东西。对固定 IP 的未校验询问
+仍然强于那个回退：伪造应答需要路径上的攻击者，污染只需要解析器。`-T 4` 只限读取，所以
+`timeout 4` 包装（同一个 busybox）给询问一个硬性的整调用预算——敌意网络上的连接否则可能
+挂几十秒，而启动绝不能等它。询问失败会记日志。没有 KernelSU busybox 的设备——以及调用
+失败时——回退到系统解析器（`ping`）。解析失败不致命——直连 DoH 路由规则仍是回退，日志
+也如此说明。过期的钉死（节点 IP 变了，或设备换了网络）通过切换开关重建。
 
-**A records only.** The DNS module runs with `queryStrategy: UseIPv4`. When the device
-has any IPv6 connectivity, AAAA answers make apps prefer v6 — and that traffic either
-leaks direct (the enumeration of the device's own v6 addresses can never keep up with
-privacy-extension temporary addresses) or dangles. Without AAAA, every app connection
-is IPv4 and captured. Sites reachable only over IPv6 are unreachable during takeover;
-that is a documented limitation, not a bug.
+**只要 A 记录。** DNS 模块以 `queryStrategy: UseIPv4` 运行。设备有任何 IPv6 连通性时，
+AAAA 应答会让应用偏好 v6——那些流量要么直连泄漏（对设备自身 v6 地址的枚举永远追不上
+隐私扩展的临时地址）要么悬空。没有 AAAA，每个应用连接都是 IPv4、都被捕获。只在 IPv6
+可达的站点在接管期间不可达；这是文档化的限制，不是 bug。
 
-**Toggle semantics** (`kernelray.sh tproxy on|off`) — superseded by
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md): the command now
-only writes the preference, applied at the next core start. The v0.7 immediate-toggle
-semantics were:
+**切换语义**（`kernelray.sh tproxy on|off`）——被
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md) 取代：该命令现在
+只写偏好，在下一次核心启动时生效。v0.7 的即时切换语义曾是：
 
-- `on` requires an applied node with a matching outbound and a clean conflict check.
-  Order: render + `xray -test` the takeover candidate → install rules (a failure
-  removes everything and reports `failed/rules`) → write the switch → swap the config →
-  start the core, whatever it was doing before. A core that fails to start on the
-  takeover config rolls back completely — previous config, rules removed, switch
-  cleared — because restoring a marked config with no rules breaks the node outbound,
-  and an offline device is a worse default than a reported leak.
-- `off` removes the rules first (the core's marked sockets lose routing the moment
-  they are gone anyway), clears the switch, then re-renders the config in idle form,
-  restarting the core if it was running. A candidate that fails `-test` falls back to
-  idle rather than keeping a takeover-form config.
+- `on` 要求一个带匹配出站的已应用节点和一次干净的冲突检查。顺序：渲染 + `xray -test`
+  接管候选 → 安装规则（失败则移除一切并报告 `failed/rules`）→ 写开关 → 换入配置 → 启动
+  核心，无论它之前在干什么。核心在接管配置上启动失败则完全回滚——恢复旧配置、移除规则、
+  清掉开关——因为恢复一份带 mark 的配置而没有规则会弄坏节点出站，离线的设备比报告在案的
+  泄漏更糟。
+- `off` 先移除规则（反正核心带 mark 的 socket 在它们消失的瞬间就丢了路由），清掉开关，
+  再以直连形态重渲染配置，核心在运行则重启。`-test` 失败的候选回退为直连，而不是保留
+  接管形态配置。
 
-**Status vocabulary.** `status.json` gains `tproxy` (`on`/`off`, from the switch file)
-and the phases `failed/rules` and `failed/conflict`; `logs/kernelray.log` records every
-rule install, removal and conflict verdict.
+**状态词汇。** `status.json` 增加 `tproxy`（`on`/`off`，来自开关文件）与 phase
+`failed/rules`、`failed/conflict`；`logs/kernelray.log` 记录每次规则安装、移除和冲突判定。
 
-## Consequences
+## 后果
 
-- The namespace values are a compatibility contract: a future version must keep
-  matching and removing exactly these names, or devices accumulate orphaned rules.
-- While the switch is on, `action.sh` stopping the core leaves the rules up
-  (fail-closed): the device is offline until the core starts again or `tproxy off` runs.
-  The action output says so.
-- Boot never auto-enables anything: the switch survives the reboot only because the
-  user set it; a switch without a usable outbound is cleared, not honoured.
-- DNS to LAN resolvers enters the core; a local Pi-hole-style resolver on the LAN is
-  bypassed for everything except port 53. That is ADR 0006 applied consistently, and
-  the README says so.
+- 命名空间的值是兼容性契约：未来版本必须继续精确匹配并移除这些名字，否则设备上会积累
+  孤儿规则。
+- 开关开着时，`action.sh` 停止核心会把规则留在位上（fail-closed）：设备离线，直到核心
+  再次启动或执行 `tproxy off`。action 输出会说明。
+- 开机绝不自动启用任何东西：开关之所以熬过重启，只是因为用户设过；没有可用出站的开关被
+  清除，而不是被遵循。
+- 发往局域网解析器的 DNS 进入核心；局域网里本地 Pi-hole 式解析器对除端口 53 以外的一切
+  被旁路。这是 ADR 0006 的一致应用，README 有说明。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Different marks per outbound** (node vs direct). Two marks, two rules, no benefit;
-  every core-owned socket must bypass, so they share one mark.
-- **Shell-side JSON surgery to inject the mark.** The placeholder keeps the shell's
-  "outbound is an opaque line" property (ADR 0003/0005).
-- **Separate v4/v6 listeners.** One dual-stack wildcard listener; a second inbound is
-  another port for the INPUT guard to protect.
-- **Leave the config as-is on boot conflict.** The on-disk config is takeover-form;
-  starting it without rules breaks the node outbound's routing for the whole session.
-- **Honour a switch with no applied node.** Capture without an outbound drops all
-  traffic; the switch is cleared instead.
+- **每出站不同的 mark**（节点 vs 直连）。两个 mark、两条规则，没有收益；每个核心自有
+  socket 都必须旁路，所以共享一个 mark。
+- **在 shell 侧动 JSON 手术注入 mark。** 占位符保持了 shell 的"出站是不透明一行"性质
+  （ADR 0003/0005）。
+- **分开的 v4/v6 监听。** 一个双栈通配监听；第二个入站是 INPUT 守卫要多保护的又一个
+  端口。
+- **开机冲突时配置原样不动。** 磁盘上的配置是接管形态；不带规则启动它，会把节点出站的
+  路由弄坏一整个会话。
+- **遵循没有已应用节点的开关。** 没有出站的捕获丢掉全部流量；改为清除开关。

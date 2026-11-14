@@ -1,63 +1,53 @@
-# 0009 — The shell reads the inbound ports from state.json's settings
+# 0009 — shell 从 state.json 的 settings 里读入站端口
 
-Status: accepted (narrows the "the shell does not read `state.json`" rule from
-[ADR 0005](0005-core-config-is-derived.md), which itself extended [ADR 0003](0003-webui-writes-state-json.md))
+状态：已接受（收窄 [ADR 0005](0005-core-config-is-derived.md) 的"shell 不读 `state.json`"
+规则，而 0005 又扩展自 [ADR 0003](0003-webui-writes-state-json.md)）
 
-## Context
+## 背景
 
-The local socks/http inbounds were fixed at 10808/10809 in the config template. Making them
-user-configurable puts two more fields of core intent in the UI's hands: the user's choice
-must reach the shell's render, and the render is invoked from paths where the WebUI is not
-involved (boot, the takeover toggle, `kr_ensure_config`).
+本地 socks/http 入站在配置模板里固定为 10808/10809。让它们可由用户配置，等于把核心意图的
+另外两个字段交到 UI 手里：用户的选择必须抵达 shell 的渲染，而渲染会在 WebUI 不参与的路径
+上被调用（开机、接管开关、`kr_ensure_config`）。
 
-The obvious bridge — a flat file the UI writes for the shell, mirroring `outbound.meta` —
-works, but adds a second store of the same fact: state.json's `settings` would hold the
-intent and the mirror file would be what the shell actually reads, and the two can drift.
+显而易见的桥——UI 为 shell 写一个扁平文件，镜像 `outbound.meta`——可行，但同一事实有了
+第二份存储：state.json 的 `settings` 持有意图、镜像文件才是 shell 实际读的东西，两者可能
+漂移。
 
-## Decision
+## 决策
 
-**`kr_render_config` reads the two ports directly from `state.json`'s `settings`, via a
-line-level `sed` extraction of `socksPort` / `httpPort` inside the `settings` object.** The
-template's ports become quoted placeholders (`"__KERNELRAY_SOCKS_PORT__"`,
-`"__KERNELRAY_HTTP_PORT__"`), so the template stays valid JSON, and the shell replaces each
-whole quoted string with the number.
+**`kr_render_config` 直接从 `state.json` 的 `settings` 里读这两个端口，用行级 `sed` 提取
+`settings` 对象内的 `socksPort` / `httpPort`。** 模板的端口变成带引号的占位符
+（`"__KERNELRAY_SOCKS_PORT__"`、`"__KERNELRAY_HTTP_PORT__"`），模板保持合法 JSON，shell 把
+每个整段带引号的字符串替换为数字。
 
-This is a deliberate, narrow exception to the rule that the shell never parses `state.json`:
+这是"shell 绝不解析 `state.json`"规则的一次有意的、狭窄的例外：
 
-- The extraction reads exactly two flat integer keys whose shape the UI owns (the UI
-  serialises `state.json` pretty-printed, every key on its own line). It is not general
-  JSON parsing, and it does not grow: routing/DNS settings, when they come, will need this
-  ADR revisited or a real parser.
-- A missing, unparseable or out-of-range value falls back **per field** to 10808/10809,
-  so a hand-pretty-printed `state.json` can never knock an inbound off its port; it can
-  only reset it to the default.
-- Nothing else is read from the file. The "no `jq` on the device" liability stays contained
-  to two `sed` lines that `tests/config.test.js` exercises.
+- 提取恰好读两个扁平整数键，其形状由 UI 拥有（UI 把 `state.json` 序列化为美化输出、每个键
+  独占一行）。这不是通用 JSON 解析，也不再增长：路由/DNS 设置将来若加入，需要重审本 ADR
+  或换真正的解析器。
+- 缺失、解析失败或超范围的值 **逐字段** 回退到 10808/10809，所以一份手改美化的
+  `state.json` 永远无法把入站踢下端口；最多只能把它重置为默认。
+- 除此之外不从文件读任何东西。"设备上没有 `jq`"的负担被限制在两行 `sed` 里，
+  `tests/config.test.js` 对其演练。
 
-Saving a port goes through the same machinery as a node apply: the UI writes `state.json`
-(intent first), then calls `kernelray.sh ports`, which renders the candidate with the
-applied node as-is, runs `xray -test`, and swaps it in via the same
-backup → stop → move → restart → rollback path. The applied id is untouched: the ports
-change the local inbounds, never the outbound.
+保存端口走的机制与节点应用相同：UI 写 `state.json`（意图先行），然后调 `kernelray.sh
+ports`，它以已应用节点原样渲染候选、跑 `xray -test`，经相同的 备份 → 停止 → 换入 → 重启
+→ 回滚 路径换入。已应用 id 不动：端口改的是本地入站，从不改出站。
 
-## Consequences
+## 后果
 
-- The UI's write shape of `state.json` is now load-bearing for the shell, not just a
-  serialisation detail: whoever changes `writeState`'s pretty-printing must keep the
-  `settings` keys on their own lines.
-- A collision with the tproxy inbound's port (10810) is refused in the UI, not the shell;
-  a hand-edited `state.json` that claims it would pass `xray -test` and fail at start,
-  which the rollback path recovers from.
-- `state.json`'s `settings` object is no longer "reserved, not interpreted": `socksPort`
-  and `httpPort` are interpreted; every other field stays verbatim.
+- UI 对 `state.json` 的写入形状现在对 shell 是承重的，不只是序列化细节：改 `writeState`
+  美化输出的任何人必须让 `settings` 键独占一行。
+- 与 tproxy 入站端口（10810）的冲突在 UI 拒绝，不在 shell；手改 `state.json` 声称占用它
+  能通过 `xray -test`、在启动时失败，回滚路径能从中恢复。
+- `state.json` 的 `settings` 对象不再是"保留、不解释"：`socksPort` 和 `httpPort` 被解释；
+  其余字段原样保留。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **A flat mirror file (e.g. `inbound.meta`) written by the UI next to `state.json`.**
-  No parsing risk at all, but two stores of one fact: the shell would render from a file
-  that can silently lag the intent the UI shows. The user picked one store.
-- **Ship `jq`** to parse `state.json` properly. Another binary and another architecture to
-  verify, for two integers.
-- **Keep the ports in the template and hand-edit it.** The template is replaced on module
-  update (ADR 0002), so hand edits do not survive; and ADR 0005 made `config.json` derived
-  precisely to keep hand-editing out.
+- **UI 在 `state.json` 旁边写一个扁平镜像文件（如 `inbound.meta`）。** 完全没有解析风险，
+  但一个事实两份存储：shell 会从一个可能静默落后于 UI 所示意图的文件渲染。用户只挑了
+  一个存储。
+- **随包带 `jq`** 正经解析 `state.json`。又一个二进制、又一个要验证的架构，就为两个整数。
+- **端口留在模板里、手改模板。** 模板在模块更新时被替换（ADR 0002），手改活不过更新；而
+  ADR 0005 把 `config.json` 变成派生物，正是为了排除手改。

@@ -1,79 +1,67 @@
-# 0005 — The core config is derived; the UI renders the node, the shell assembles
+# 0005 — 核心配置是派生的；UI 渲染节点，shell 拼装
 
-Status: accepted (extends ADR 0003; `config.json` is no longer user-owned; the UI's "select
-then Apply" rule is amended by [ADR 0007](0007-one-tap-switches-the-node.md); the render/test/swap
-mechanics below are amended by [ADR 0017](0017-one-render-one-test-per-switch.md)). The
-`runtime/tproxy` line in the file table is gone, and the render has one form rather than two —
-see [ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md).
+状态：已接受（扩展 ADR 0003；`config.json` 不再归用户所有；UI 的"先选中后应用"规则被
+[ADR 0007](0007-one-tap-switches-the-node.md) 修订；下文的渲染/测试/换入机制被
+[ADR 0017](0017-one-render-one-test-per-switch.md) 修订）。文件表中的 `runtime/tproxy` 一行
+已移除，渲染只有一种形态而非两种——见
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)。
 
-## Context
+## 背景
 
-v0 copies `config.example.json` to `config.json` once, after which the user owns that file.
-Applying a node and enabling TPROXY changes that: the core config now has to carry the applied
-node's outbound, a tproxy inbound, DNS and routing rules, and socket marks. Hand-editing it
-would silently invalidate the takeover invariants.
+v0 把 `config.example.json` 复制成 `config.json` 一次，此后该文件归用户所有。应用节点与
+启用 TPROXY 改变了这一点：核心配置现在必须携带已应用节点的出站、tproxy 入站、DNS 与路由
+规则、以及 socket mark。手改它会静默作废接管的各条不变量。
 
-The obvious split — shell writes derived artifacts, UI writes intent — collides with a hard
-fact: `state.json` is nested JSON and the device has no `jq`. Parsing it in `awk`/`sed` is the
-same liability ADR 0003 already rejected for share links.
+显而易见的划分——shell 写派生产物、UI 写意图——撞上一个硬事实：`state.json` 是嵌套 JSON
+而设备上没有 `jq`。用 `awk`/`sed` 解析它，就是 ADR 0003 对分享链接已经拒绝过的同一个
+负担。
 
-## Decision
+## 决策
 
-**`config.example.json` becomes a config template, and `config.json` becomes a generated
-artifact that is never hand-edited.** Generation is split along what each side actually knows:
+**`config.example.json` 变成配置模板，`config.json` 变成绝不手改的生成物。** 生成沿双方
+实际知道的东西切分：
 
-| Writer | File | Kind |
+| 写入者 | 文件 | 性质 |
 | --- | --- | --- |
-| WebUI | `state.json` | user intent: node store, selected node |
-| WebUI | `outbound.meta` + `outbound.json` | the selected node rendered as one Xray outbound, plus its id/host |
-| shell | `config.json` | derived: template + outbound + takeover state |
-| shell | `runtime/tproxy`, `runtime/applied` | takeover switch, applied node id |
-| shell | `runtime/status.json`, `runtime/xray.pid`, `logs/` | runtime facts |
+| WebUI | `state.json` | 用户意图：节点库、已选中节点 |
+| WebUI | `outbound.meta` + `outbound.json` | 已选中节点渲染成的一条 Xray 出站，及其 id/host |
+| shell | `config.json` | 派生：模板 + 出站 + 接管状态 |
+| shell | `runtime/tproxy`、`runtime/applied` | 接管开关、已应用节点 id |
+| shell | `runtime/status.json`、`runtime/xray.pid`、`logs/` | 运行时事实 |
 
-Rules that keep this honest:
+维持诚实性的规则：
 
-- **One writer per file.** The UI never writes `config.json`, `status.json` or the switch; the
-  shell never writes `state.json`, `outbound.json` or `outbound.meta`. No locks.
-- **The UI renders data, the shell owns the layout.** Protocol knowledge (vless/vmess/trojan/ss,
-  transports, TLS/REALITY) stays in the tested JS renderer; inbounds, routing, DNS, the fixed
-  outbounds and the takeover rules stay in the shell template. The renderer deliberately does
-  not stamp a socket mark on the node outbound: on Android an arbitrary `SO_MARK` with no
-  matching ip rule loses routing (v0.6 verification: the node's Reality handshake failed until
-  the mark was removed). The template's fixed `direct` outbound carries the v0.7 bypass mark;
-  v0.7 must add the node mark and the bypass rule as one change.
-- **Apply is a CLI operation.** The UI writes `outbound.meta`, then `outbound.json`, and calls
-  `kernelray.sh apply <id>`. The shell writes `config.new.json`, runs `xray -test`, swaps it in
-  atomically, restarts a running core and records the applied id. A failed test leaves the old
-  config and the running core untouched.
-- **The switch rewrites the config too.** When takeover is off the template has no tproxy
-  inbound, so an idle module does not listen on a tproxy port that a LAN peer could reach.
-  Toggling the switch therefore restarts the core.
-- **Selected is not applied.** `state.selected` is what the user wants; `runtime/applied` is
-  what the core runs. The UI must show the difference instead of pretending a selection
-  changed the traffic.
+- **一文件一写入者。** UI 绝不写 `config.json`、`status.json` 或开关；shell 绝不写
+  `state.json`、`outbound.json` 或 `outbound.meta`。不需要锁。
+- **UI 渲染数据，shell 掌握布局。** 协议知识（vless/vmess/trojan/ss、传输层、TLS/REALITY）
+  留在经过测试的 JS 渲染器里；入站、路由、DNS、固定出站和接管规则留在 shell 的模板里。
+  渲染器有意不给节点出站打 socket mark：在 Android 上，没有匹配 ip 规则的任意 `SO_MARK`
+  会丢路由（v0.6 验证：去掉 mark 之前节点的 Reality 握手失败）。模板固定的 `direct` 出站
+  携带 v0.7 旁路标记；v0.7 必须把节点 mark 与旁路规则作为同一次变更加入。
+- **应用是一次 CLI 操作。** UI 写 `outbound.meta`、再写 `outbound.json`，然后调用
+  `kernelray.sh apply <id>`。shell 写 `config.new.json`、跑 `xray -test`、原子换入、重启
+  运行中的核心并记录已应用 id。测试失败则旧配置与运行中的核心原封不动。
+- **开关同样重写配置。** 接管关闭时模板没有 tproxy 入站，直连状态的模块就不会监听一个
+  局域网对端可达的 tproxy 端口。切换开关因此重启核心。
+- **已选中不是已应用。** `state.selected` 是用户想要的；`runtime/applied` 是核心在跑的。
+  UI 必须展示差异，而不是假装一次选择改变了流量。
 
-## Consequences
+## 后果
 
-- Hand-written Xray configs are no longer supported. The README and the installed message must
-  say so; the template is the extension point for a future override mechanism.
-- `outbound.json` contains credentials and gets the same `0600` atomic-write treatment as
-  `state.json`; `pack.sh` must exclude it and `outbound.meta`, like `state.json` and
-  `config.json`.
-- The generated config depends on the applied node's host for the DNS bootstrap exception
-  (ADR 0006), which is why the meta file carries it.
-- Generation is testable in two independent pieces: the JS renderer against fixture nodes, and
-  the shell assembly against a fixture outbound.
-- ADR 0003's split still holds: the shell writes the derived `config.json` and restarts a
-  running core; this ADR only adds the UI-rendered outbound as input to that step, because the
-  shell cannot parse `state.json`.
+- 手写 Xray 配置不再受支持。README 和安装提示必须说明；模板是将来覆盖机制的扩展点。
+- `outbound.json` 含凭据，享受与 `state.json` 相同的 `0600` 原子写入待遇；`pack.sh` 必须把
+  它和 `outbound.meta` 排除，如同 `state.json` 与 `config.json`。
+- 生成的配置依赖已应用节点的主机名作为 DNS 自举例外（ADR 0006），meta 文件因此携带它。
+- 生成可以在两个独立部分里测试：JS 渲染器对固定节点，shell 拼装对固定出站。
+- ADR 0003 的划分仍然成立：shell 写派生的 `config.json` 并重启运行中的核心；本 ADR 只是把
+  UI 渲染的出站加为那一步的输入，因为 shell 解析不了 `state.json`。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **The UI writes the whole `config.json`.** Fewer files, but moves the module's config layout
-  (and the takeover invariants) into the browser, and leaves the CLI unable to re-derive the
-  config when the switch changes.
-- **Shell parses `state.json` with `awk`/`sed`.** Rejected for the same reason as in ADR 0003.
-- **Ship `jq` (or another JSON tool).** Another binary and another architecture-specific thing
-  to verify for a transformation whose input is already rendered by the UI.
-- **Keep `config.json` user-owned and patch the module parts into it.** Requires JSON-aware
-  patching without `jq`, invites tag collisions, and makes the tproxy invariants opt-out.
+- **UI 写整份 `config.json`。** 文件更少，但把模块的配置布局（以及接管的各条不变量）搬进
+  浏览器，而且开关变化时 CLI 将无法重新推导配置。
+- **shell 用 `awk`/`sed` 解析 `state.json`。** 与 ADR 0003 同理否决。
+- **随包带 `jq`（或其他 JSON 工具）。** 又一个二进制、又一个要验证架构的产物，而这次变换
+  的输入已经由 UI 渲染好了。
+- **保持 `config.json` 归用户所有、把模块的部分补进去。** 需要感知 JSON 的补丁而没有
+  `jq`，招致 tag 冲突，而且让 tproxy 不变量变成可关闭的。

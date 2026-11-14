@@ -1,48 +1,43 @@
-# 0002 — Everything lives in the module directory
+# 0002 — 一切都在模块目录里
 
-Status: accepted (supersedes the module-dir / data-dir split)
+状态：已接受（取代"模块目录 / 数据目录"分离的旧方案）
 
-## Context
+## 背景
 
-The first layout kept two roots: mechanism in `/data/adb/modules/KernelRay`, and user data
-(`config.json`, logs, runtime state) in `/data/adb/KernelRay`. That is the pattern most modules
-follow, and its motivation is real — KernelSU **replaces the module directory wholesale on
-update**, so anything the user put there is destroyed by upgrading.
+最初的布局有两个根：机构在 `/data/adb/modules/KernelRay`，用户数据（`config.json`、日志、
+运行时状态）在 `/data/adb/KernelRay`。这是大多数模块遵循的模式，动机也真实——KernelSU
+**更新时整体替换模块目录**，用户放在那里的任何东西都会被升级销毁。
 
-We measured it rather than assuming it. A marker file written into the module dir disappeared
-after a `ksud module install` + reboot, while the same file in the data dir survived.
+我们实测而不是假设。写进模块目录的标记文件在 `ksud module install` + 重启后消失了，而
+数据目录里的同一个文件活了下来。
 
-The requirement that drove this ADR is the opposite of that convenience: *nothing may be stored
-outside the module directory*. Everything the module needs at runtime — core, config, node
-store, logs, status — lives under one root, and the module leaves no residue when removed.
+驱动本 ADR 的需求与那份便利正相反：*模块目录之外什么都不许存*。模块运行时需要的一切
+——核心、配置、节点库、日志、状态——都在同一个根之下，模块移除时不留残余。
 
-## Decision
+## 决策
 
-One root: `/data/adb/modules/KernelRay`. The module writes only there.
+一个根：`/data/adb/modules/KernelRay`。模块只写这里。
 
-Consequences we accept:
+我们接受的后果：
 
-- **A module update resets `config.json`, `state.json` and the logs.** Upgrading is destructive
-  to user data by design. `customize.sh` warns about it at install time and the README says so
-  in the feature table, because an unannounced data loss is a bug.
-- **Uninstall leaves nothing behind.** No orphaned directory to clean up, no state outliving the
-  module.
-- The scripts carry a single path variable, `KR_MODDIR`, and no notion of a data dir. Fewer
-  paths is fewer places to be wrong.
+- **模块更新会重置 `config.json`、`state.json` 和日志。** 升级对用户数据是破坏性的，这是
+  设计使然。`customize.sh` 在安装时警告这一点，README 在功能表里说明，因为不声不响的数据
+  丢失是 bug。
+- **卸载不留残余。** 没有需要清理的孤儿目录，没有比模块活得久的状态。
+- 脚本只带一个路径变量 `KR_MODDIR`，没有数据目录的概念。路径越少，出错的地方越少。
 
-## Alternatives rejected
+## 被否决的替代方案
 
-- **Module dir + data dir (the previous layout).** Survives updates, but violates the storage
-  constraint: state would live somewhere other than the module directory.
-- **Module dir plus an install-time copy from the previous module dir.** KernelSU keeps the old
-  directory at `/data/adb/modules/KernelRay` while unpacking the new one into
-  `/data/adb/modules_update/`, so `customize.sh` *could* migrate user data forward and keep the
-  same path constraint. Rejected: it is a hand-rolled update protocol that silently decides
-  which of two copies wins, and it still loses edits made between install and reboot.
-- **`ksud module config`.** Also outside the module dir, and it stores strings, not a JSON
-  document with a schema.
+- **模块目录 + 数据目录（旧布局）。** 能熬过更新，但违反存储约束：状态会活在模块目录
+  之外。
+- **模块目录外加安装时从旧模块目录迁移。** KernelSU 在把新包解到
+  `/data/adb/modules_update/` 时保留旧目录 `/data/adb/modules/KernelRay`，所以
+  `customize.sh` *可以* 前移用户数据、维持同一路径约束。否决：那是一套手搓的更新协议，
+  暗中决定两份副本谁赢，而且仍然会丢安装与重启之间的改动。
+- **`ksud module config`。** 同样在模块目录之外，而且存的是字符串，不是带 schema 的 JSON
+  文档。
 
-## Notes
+## 备注
 
-Because the core binary sits in the same directory, `scripts/pack.sh` must never ship user data:
-it excludes `config.json`, `state.json`, `logs/` and `runtime/`.
+核心二进制与数据同目录，所以 `scripts/pack.sh` 绝不许打包用户数据：它排除 `config.json`、
+`state.json`、`logs/` 和 `runtime/`。

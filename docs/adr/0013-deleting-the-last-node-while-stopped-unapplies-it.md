@@ -1,79 +1,64 @@
-# 0013 — Deleting the last node while the core is stopped unapplies it
+# 0013 — 核心停止时删除最后一个节点即取消应用
 
-Status: accepted (amends ADR 0007's "deleting the applied node is refused"; adds the `unapply`
-CLI verb and the 取消应用 vocabulary; leaves ADR 0010's start gate untouched). The "tproxy
-switch is left alone" in the decision below no longer applies: there is no switch, and
-`unapply` is now the gesture that both forgets the node and takes the capture down — see
-[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md).
+状态：已接受（修订 ADR 0007 的"已应用节点拒绝删除"；新增 `unapply` CLI 动词与 取消应用
+词汇；不动 ADR 0010 的启动闸门）。下文决策中"tproxy 开关保持不动"不再适用：开关不存在了，
+`unapply` 现在是既忘掉节点又撤掉捕获的手势——见
+[ADR 0011](0011-tproxy-switch-defaults-on-and-follows-the-core-start.md)。
 
-## Context
+## 背景
 
-ADR 0007 refused deleting the applied node outright: a mis-tap would otherwise silently change
-which node carries traffic, and once takeover landed, expose it. That rule holds everywhere
-except one case, and that case is a dead end. With a single node in the store the user cannot
-empty it: the applied node is the only row, so it cannot be deleted, and the advice the UI
-gives — "switch to another node first" — needs a node the user may not have.
+ADR 0007 直接拒绝了删除已应用节点：否则一次误触会静默改变承载流量的节点，等接管落地后
+还会暴露它。那条规则处处成立，只有一个例外，而那个例外是条死路。库里只剩一个节点时用户
+无法清空：已应用节点是唯一一行，删不掉，而 UI 给的建议——"先切到别的节点"——需要一个
+用户可能没有的节点。
 
-Deleting that node is not a switch, but it is not free either. Its outbound is in
-`config.json`, `runtime/applied` names it, and the start gate (ADR 0010) only asks whether
-`runtime/applied` is non-empty. A delete that removed the store entry alone would therefore
-leave a config the core would happily run on the next Start: credentials outliving the node
-they belong to, and a node list that shows nothing while the core runs something. The takeover
-rules make it worse: `kr_stop` leaves them up on purpose (fail-closed), so a stopped core with
-the switch on has the device offline, and with no node left nothing can start to restore it.
+删除那个节点不是切换，但也不是免费的。它的出站在 `config.json` 里，`runtime/applied`
+指名它，启动闸门（ADR 0010）只问 `runtime/applied` 是否非空。只移除库条目的删除会让核心
+在下一次启动时欣然运行那份配置：凭据比它们所属的节点活得久，列表什么都没显示、核心却在
+运行某个东西。接管规则让情况更糟：`kr_stop` 有意把规则留在位上（fail-closed），所以开关
+开着、核心停止的设备处于离线状态，而没有任何节点剩下时，什么都没法启动来恢复。
 
-## Decision
+## 决策
 
-The applied node is deletable only when the core is stopped **and** it is the last node in the
-list. That delete is an unapply:
+已应用节点仅在核心停止 **且** 它是列表最后一个节点时可删除。那次删除就是一次 unapply：
 
-- `kernelray.sh unapply` refuses while the core runs (that would be a stop — a different
-  gesture with a different consequence), removes the takeover rules, removes `config.json`,
-  `runtime/applied`, `outbound.json`, `outbound.meta` and the pinned node address, and writes
-  `stopped`/`no-node`.
-- The UI calls it before writing `state.json`, the same order the delete's existing `rm` uses:
-  a failure leaves the node in the store so the delete can be retried.
-- `state.json` and the tproxy switch are left alone. The module is back to the never-applied
-  state: Start is disabled, the status hint asks for a node, and the switch waits for one
-  (ADR 0011's next-start semantics are unchanged).
+- `kernelray.sh unapply` 在核心运行时拒绝（那会是停止——一个后果不同的另一手势），移除
+  接管规则、`config.json`、`runtime/applied`、`outbound.json`、`outbound.meta` 和钉死的
+  节点地址，并写 `stopped`/`no-node`。
+- UI 在写 `state.json` 之前调用它，与删除既有 `rm` 的顺序一致：失败则节点留在库里，删除
+  可以重试。
+- `state.json` 与 tproxy 开关不动。模块回到从未应用过的状态：启动被停用，状态提示索要
+  节点，开关等待节点（ADR 0011 的下次启动语义不变）。
 
-The gate is one pure rule — `deleteGate(model, running)` — shared by the row's ✕, the row's
-edit-mode checkbox and the batch confirm. "Stopped" means a status read that says `stopped`; an
-unreadable or not-yet-read status counts as running, so a delete can never race a core that
-just started.
+闸门是一条纯规则——`deleteGate(model, running)`——由行的 ✕、行的编辑模式复选框和批量
+确认共享。"已停止"指一次读到 `stopped` 的状态读取；读不出或尚未读的状态按运行中算，所以
+删除永远无法与刚启动的核心赛跑。
 
-The unapply trigger is the resulting state, not the deleted row: a delete that empties the list
-while the core is stopped unapplies even when the applied id was already dangling (it named no
-row). That is the only gesture that can clear such a leftover, and the start gate would
-otherwise keep running a node the store no longer has.
+unapply 的触发是 resulting state，不是被删的行：核心停止时一次清空列表的删除即使已应用
+id 已经悬空（指名不存在的行）也会 unapply。这是唯一能清掉这种残留的手势，否则启动闸门会
+一直运行一个库里已经没有的节点。
 
-## Consequences
+## 后果
 
-- The node list's delete affordances now depend on the runtime: the applied row's checkbox and
-  ✕ follow the gate, the list's render signature carries the running fact, and the status poll
-  re-renders the list when that fact flips.
-- With two or more nodes the applied one still cannot be deleted; the user deletes the others
-  first, and the applied row becomes the last one.
-- The unapply takes the device from "rules up, core down, no network" to direct. That is the
-  only sane outcome, but it is a traffic change, so the applied row's confirm text says so.
-- A running core with a dangling applied id and an empty list stays as it is: unapply is
-  refused while the core runs, and no row is left to trigger it. The CLI verb is the way out.
-  Nothing in the UI reaches that state today — only a hand-edited `state.json`, or a future
-  subscription refresh, can orphan an applied id.
-- `docs/state-schema.md`, the README, `GLOSSARY.md` (取消应用, 勾选) and the CLI usage string
-  change with it.
+- 节点列表的删除手段现在依赖运行时：已应用行的复选框与 ✕ 遵循闸门，列表的渲染签名携带
+  运行中事实，状态轮询在该事实翻转时重渲染列表。
+- 有两个及以上节点时已应用的那个仍不可删；用户先删其他节点，已应用行自然变成最后一个。
+- unapply 把设备从"规则在位、核心停止、没有网络"带到直连。这是唯一合理的结局，但它是
+  流量变化，所以已应用行的确认文本会说明。
+- 运行中的核心带着悬空已应用 id、列表为空时保持原样：核心运行时 unapply 被拒绝，也没有
+  行可以触发它。CLI 动词是出路。今天 UI 没有任何路径到达那个状态——只有手改 `state.json`
+  或将来的订阅刷新能孤儿化一个已应用 id。
+- `docs/state-schema.md`、README、`GLOSSARY.md`（取消应用、勾选）与 CLI 用法字符串随之
+  变更。
 
-## Rejected alternatives
+## 被否决的替代方案
 
-- **Leave the derived files behind.** `config.json` would keep the deleted node's credentials,
-  and the next Start would run a node the store no longer has; the list would show nothing
-  applied while the core runs something.
-- **Let the delete stop a running core.** One gesture would both change which node carries
-  traffic and drop the capture — and with the switch on, that Stop is itself a network outage.
-- **Allow deleting any applied node while the core is stopped.** It is not a dead end (switch,
-  then delete), and it would produce a store with nodes and no applied node: a state no other
-  gesture creates.
-- **Auto-apply another node after the delete.** A delete would silently pick what carries
-  traffic, which ADR 0007 refused.
-- **Keep the last node deletable while the core runs.** The unapply would have to stop the core
-  first, and the "stopped" precondition is what keeps a delete from racing a live core.
+- **把派生文件留在原地。** `config.json` 会继续持有被删节点的凭据，下一次启动会运行一个
+  库里已经没有的节点；列表什么都没显示已应用、核心却在运行某个东西。
+- **让删除停掉运行中的核心。** 一个手势既改变承载流量的节点又撤掉捕获——开关开着时那次
+  停止本身就是一次断网。
+- **核心停止时允许删除任意已应用节点。** 那不是死路（先切换、再删除），而且会产出有节点
+  却无已应用节点的库：一个其他手势都造不出的状态。
+- **删除后自动应用另一个节点。** 删除会静默挑选承载流量的节点，ADR 0007 已拒绝。
+- **核心运行时保留最后一个节点可删。** unapply 得先停核心，而"已停止"前置正是让删除无法
+  与活核心赛跑的东西。
