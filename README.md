@@ -37,10 +37,11 @@
 ## 截图
 
 <div align="center">
-<img src="docs/webui.png" width="23%" alt="状态" />
-<img src="docs/webui-nodes.png" width="23%" alt="节点" />
-<img src="docs/webui-log.png" width="23%" alt="日志" />
-<img src="docs/webui-settings.png" width="23%" alt="设置" />
+<img src="screenshots/webui-status.jpg" width="23%" alt="状态页" />
+<img src="screenshots/webui-nodes.jpg" width="23%" alt="节点列表" />
+<img src="screenshots/webui-log.jpg" width="23%" alt="日志" />
+<img src="screenshots/webui-settings.jpg" width="23%" alt="设置" />
+<img src="screenshots/webui-node-detail.jpg" width="23%" alt="节点详情" />
 </div>
 
 ## License
