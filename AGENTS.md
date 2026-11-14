@@ -2,12 +2,11 @@
 
 ## Basics
 
-- Keep code file line endings as LF.
 - Never reference ADRs from user-facing docs (`README.md`): no `docs/adr/` links, no "ADR 0020". Keep any reasoning a reader needs in plain words.
 
 ## Git Commits
 
-When creating commits, follow the repository `git-commit` skill rules:
+When creating commits, follow the rules below:
 
 - Use Conventional Commits title format: `type(scope): subject`.
 - Allowed types: `feat`, `fix`, `refactor`, `perf`, `docs`, `style`, `test`, `build`, `ci`, `chore`, `revert`.
