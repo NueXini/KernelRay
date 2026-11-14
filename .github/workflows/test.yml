@@ -17,14 +17,18 @@ jobs:
       - run: |
           node --version
           node --check module/webroot/app.js
-          bash -n module/scripts/kernelray.sh
-          node tests/parse.test.js
-          node tests/outbound.test.js
-          node tests/nodelist.test.js
-          node tests/link.test.js
-          node tests/config.test.js
-          node tests/routing.test.js
-          node tests/adblock.test.js
+          bash -n module/customize.sh module/scripts/kernelray.sh \
+            module/scripts/tproxy.sh module/uninstall.sh
+          node --test tests/
+
+      # customize.sh 带 `# shellcheck shell=ash` 指令：模块脚本跑在
+      # busybox ash 里，按 ash 方言检查。-S warning 滤掉 info 级的
+      # SC2086/SC2013（受控值上的有意分词），-e SC2034,SC1091 排除
+      # 跨文件变量 API 与 source 路径的固有假阳性。
+      - run: |
+          shellcheck -s ash -S warning -e SC2034,SC1091 \
+            module/customize.sh module/scripts/kernelray.sh \
+            module/scripts/tproxy.sh module/uninstall.sh
 
       - run: |
           curl -LO https://github.com/XTLS/Xray-core/releases/latest/download/Xray-android-arm64-v8a.zip
