@@ -34,11 +34,12 @@ jobs:
           curl -LO https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
           mv geosite.dat geoip.dat module/bin/
 
-      - id: pack
-        run: echo "zip=$(scripts/pack.sh)" >> "$GITHUB_OUTPUT"
+      - run: |
+          sed -i "s/^version=.*/version=$(date -u +%y.%m.%d)/" module/module.prop
+          sed -i "s/^versionCode=.*/versionCode=$(date -u +%y%m%d)/" module/module.prop
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: KernelRay-zip
-          path: ${{ steps.pack.outputs.zip }}
+          name: KernelRay
+          path: module
           retention-days: 7
