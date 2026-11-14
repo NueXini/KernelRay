@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # 自动升级 .github/workflows 里的 action 版本（@v7.0.1 -> 更新版本）
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
