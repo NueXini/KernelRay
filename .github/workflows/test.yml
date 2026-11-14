@@ -19,7 +19,7 @@ jobs:
           node --check module/webroot/app.js
           bash -n module/customize.sh module/scripts/kernelray.sh \
             module/scripts/tproxy.sh module/uninstall.sh
-          node --test tests/
+          node --test tests/*.test.js
 
       # customize.sh 带 `# shellcheck shell=ash` 指令：模块脚本跑在
       # busybox ash 里，按 ash 方言检查。-S warning 滤掉 info 级的
