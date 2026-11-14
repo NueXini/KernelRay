@@ -12,7 +12,7 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # ubuntu-latest 自带 Node，这么小的测试不需要 setup action。
       # 解析器、节点列表模型与出站渲染器都从随包发布的

@@ -11,7 +11,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # 打包 ./module，用 KernelSU Modules 校验器预检，然后以
       # draft -> upload -> publish 的顺序发布，让 release 整体不可变。
