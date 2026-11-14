@@ -27,7 +27,7 @@ node tests/nodelist.test.js            # 45 node list + delete-gate + import-swi
 node tests/link.test.js                # 18 node-link + subscription-Base64 tests passing
 node tests/prefs.test.js               # 22 prefs tests passing
 node tests/theme.test.js               # 14 theme tests passing
-node tests/config.test.js              # 74 config tests passing（需要 bash 和 /proc）
+node tests/config.test.js              # 79 config tests passing（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 17 tproxy tests passing（需要假 iptables/ip）
 node tests/routing.test.js             # 20 routing tests passing（分流模式渲染矩阵 + routing CLI）
 node tests/adblock.test.js             # 17 ad-blocking tests passing（大陆直连去广告渲染 + 失败关闭）
@@ -36,7 +36,7 @@ node tests/adblock.test.js             # 17 ad-blocking tests passing（大陆�
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
 `theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份），测的都是要发布的文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
-特殊字符转义、单一渲染形态、apply/unapply 的失败路径和启动回滚；假核心只在回滚和 unapply 拒绝用例里
+特殊字符转义、单一渲染形态、apply/unapply 的失败路径、清空日志 CLI 和启动回滚；假核心只在回滚和 unapply 拒绝用例里
 运行，用 `/proc` 识别进程。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、
 冲突检测和启动顺序（先 `-test` 再装规则；接管装不上就不起核心）。
 

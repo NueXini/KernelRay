@@ -1267,6 +1267,21 @@ kr_tail() {
   tail -n "$_n" "$_f" 2>/dev/null || echo "(cannot read $_f)"
 }
 
+# kr_log_clear <file>: 清空日志 — truncate one log in place, so the writers already holding
+# an append fd (the core's >> and kr_log_write) keep filling the same file the WebUI tails.
+# Unlinking would hide every later line in a dead inode. A missing log dir is created first:
+# clearing a log on a fresh install is a no-op, not an error.
+kr_log_clear() { # <file>
+  _f=${1:-}
+  [ -n "$_f" ] || { echo "log clear: no file" >&2; return 2; }
+  [ -d "$KR_LOGDIR" ] || mkdir -p "$KR_LOGDIR" 2>/dev/null || {
+    echo "log clear: cannot create $KR_LOGDIR" >&2
+    return 1
+  }
+  : >"$_f" 2>/dev/null || { echo "log clear: cannot truncate $_f" >&2; return 1; }
+  return 0
+}
+
 # kr_mlog_append <tag> <message...>: one module log line from the WebUI. Node import and
 # delete never pass through the shell -- the UI writes the store straight through the
 # bridge -- so this is the UI's only way in. The tag gets the same closed-set check as
@@ -1314,10 +1329,16 @@ kr_cli() {
       esac
       ;;
     status) kr_status_kv "${1:-}" ;;
-    log) kr_tail "${1:-200}" "$KR_LOG" ;;
+    log)
+      case "${1:-}" in
+        clear) kr_log_clear "$KR_LOG" ;;
+        *) kr_tail "${1:-200}" "$KR_LOG" ;;
+      esac
+      ;;
     mlog)
       case "${1:-}" in
         append) shift; kr_mlog_append "$@" ;;
+        clear) kr_log_clear "$KR_MLOG" ;;
         *) kr_tail "${1:-200}" "$KR_MLOG" ;;
       esac
       ;;
@@ -1331,7 +1352,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|mlog [lines]|mlog append <tag> <message...>}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac

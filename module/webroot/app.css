@@ -73,6 +73,7 @@ dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; f
 dt { color: var(--muted); white-space: nowrap; }
 dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .logcard {
+  --logfooter-h: 49px;   /* the 清空日志 row under the view; .lognav sits above it */
   position: relative;
   padding: 0; overflow: hidden;
   display: flex; flex-direction: column; flex: 1; min-height: 0;
@@ -105,10 +106,18 @@ pre {
   font: 12px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* The 清空日志 button sits under the view, inside the card: a second card would be pushed
+   off screen by the page's fixed height. Its fixed height is what .lognav measures against. */
+.logfooter {
+  flex: 0 0 var(--logfooter-h);
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 12px; border-top: 1px solid var(--line);
+}
+.logfooter button { flex: 0 0 auto; padding: 6px 12px; font-size: 13px; font-weight: 500; }
 /* Floating scroll buttons over the log's bottom-right corner. They sit on the dark log
    background, so the card colour at .85 opacity keeps them readable without shouting. */
 .lognav {
-  position: absolute; right: 10px; bottom: 10px; z-index: 2;
+  position: absolute; right: 10px; bottom: calc(var(--logfooter-h) + 10px); z-index: 2;
   display: flex; flex-direction: column; gap: 8px;
 }
 .lognav[hidden] { display: none; }

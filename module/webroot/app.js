@@ -29,6 +29,8 @@ var DICT_ZH = {
   startingMsg: "正在启动…", stoppingMsg: "正在停止…",
   actionFailed: "操作失败", noLog: "（还没有日志）",
   logTabCore: "核心", logTabModule: "模块",
+  clearCoreLog: "清空核心日志", clearModuleLog: "清空模块日志",
+  clearCoreDone: "核心日志已清空", clearModuleDone: "模块日志已清空",
   stoppedHintTp: "核心未运行；开机不会自动启动，设备当前直连；点「启动」才接管。",
   stoppedHintNone: "核心未运行，也没有应用节点；先在节点列表打开一个节点并应用，核心才会启动。",
   tpRunningHint: "已接管：设备流量自动经核心转发；socks 127.0.0.1:{port} 仍然可用。",
@@ -117,6 +119,8 @@ var DICT_EN = {
   startingMsg: "Starting…", stoppingMsg: "Stopping…",
   actionFailed: "Action failed", noLog: "(no log yet)",
   logTabCore: "Core", logTabModule: "Module",
+  clearCoreLog: "Clear core log", clearModuleLog: "Clear module log",
+  clearCoreDone: "Core log cleared", clearModuleDone: "Module log cleared",
   stoppedHintTp: "The core is stopped; boot does not start it, so the device goes direct — press Start to take over.",
   stoppedHintNone: "The core is stopped and no node is applied; open a node in the list and press Apply — the core only starts with an applied node.",
   tpRunningHint: "Takeover is on: device traffic goes through the core; socks 127.0.0.1:{port} still works.",
@@ -206,6 +210,7 @@ var els = {
   conf: $("v-conf"), log: $("log"), follow: $("follow"),
   logTabCore: $("logtab-core"), logTabModule: $("logtab-module"),
   logNav: $("lognav"), logTop: $("log-top"), logBottom: $("log-bottom"),
+  clearLog: $("clear-log"),
   refresh: $("refresh"), pause: $("pause"), toast: $("toast"),
   lPid: $("l-pid"), lUp: $("l-up"), lPort: $("l-port"),
   lConf: $("l-conf"), lFollow: $("l-follow"), lPause: $("l-pause"),
@@ -254,8 +259,12 @@ var logSource = "core";
 var lastLog = { core: null, module: null };
 // The byte size the last tail was fetched at; the poll skips the tail when it is unchanged.
 var lastLogSize = { core: -1, module: -1 };
+// Bumped by 清空日志: a tail that was in flight when the file was truncated must not
+// render its stale text over the cleared view.
+var logGen = { core: 0, module: 0 };
 var lastState = "unknown";
 var busy = false;
+var clearBusy = false; // 清空日志 runs its own exec; busy is for core actions
 var pending = null; // "start" | "stop" while the action is in flight
 var lastStateObj = null;
 var lastKv = null;
@@ -284,6 +293,12 @@ var batchConfirm = false;
 // and when the settings page is left.
 var portsDirty = { socks: false, http: false };
 
+// The 清空日志 button names the log it will truncate. The tab owns that choice, so a
+// language switch and a tab switch both re-read the same label.
+function clearLogLabel() {
+  return logSource === "module" ? T.clearModuleLog : T.clearCoreLog;
+}
+
 function label(key) {
   els.start.textContent = T.start;
   els.stop.textContent = T.stop;
@@ -292,6 +307,7 @@ function label(key) {
   els.lPause.textContent = T.pause;
   els.logTabCore.textContent = T.logTabCore;
   els.logTabModule.textContent = T.logTabModule;
+  els.clearLog.textContent = clearLogLabel();
   els.lPid.textContent = T.pid;
   els.lUp.textContent = T.up;
   els.lPort.textContent = T.port;
@@ -1018,6 +1034,7 @@ function setButtons() {
   // No applied node, no start: the shell's start gate would refuse it anyway (ADR 0010).
   els.start.disabled = busy || running || !(lastKv && lastKv.node);
   els.stop.disabled = busy || !running;
+  els.clearLog.disabled = busy || clearBusy || !hasBridge;
   els.start.textContent = busy && pending === "start" ? T.startingMsg : T.start;
   els.stop.textContent = busy && pending === "stop" ? T.stoppingMsg : T.stop;
   els.iSocks.disabled = !hasBridge;
@@ -2181,12 +2198,13 @@ function refreshStatus() {
 }
 
 function refreshLog(size) {
-  // Capture the source: a tab switch while the tail is in flight must not render the old
-  // log under the new tab (its own fetch is already on the way).
+  // Capture the source and the generation: a tab switch or a 清空日志 while the tail is in
+  // flight must not render that stale text (its own fetch is already on the way).
   var source = logSource;
+  var gen = logGen[source];
   var cmd = source === "module" ? "mlog" : "log";
   return exec(CLI + " " + cmd + " " + logLines).then(function (r) {
-    if (source !== logSource) { return; }
+    if (source !== logSource || gen !== logGen[source]) { return; }
     renderLog(r.stdout || r.stderr);
     if (size !== undefined) { lastLogSize[source] = String(size); }
   }).catch(function () {});
@@ -2198,6 +2216,7 @@ function refreshLog(size) {
 function setLogSource(source) {
   if (source === logSource) { return; }
   logSource = source;
+  els.clearLog.textContent = clearLogLabel();
   els.logTabCore.classList.toggle("active", source === "core");
   els.logTabModule.classList.toggle("active", source === "module");
   els.logTabCore.setAttribute("aria-selected", source === "core" ? "true" : "false");
@@ -2209,6 +2228,35 @@ function setLogSource(source) {
   var size;
   if (lastKv) { size = source === "module" ? lastKv.mlogsize : lastKv.logsize; }
   refreshLog(size);
+}
+
+// 清空日志 is one tap with no confirm: the button names the file it will truncate and the
+// toast names the one it did. Capture the source as refreshLog does — a tab switch while the
+// shell is in flight must not redraw the other log or claim its file was cleared.
+function clearCurrentLog() {
+  if (!hasBridge || busy || clearBusy) { return; }
+  var source = logSource;
+  var cmd = (source === "module" ? "mlog" : "log") + " clear";
+  logGen[source]++; // discard any tail already in flight for this log
+  clearBusy = true;
+  setButtons();
+  exec(CLI + " " + cmd).then(function (r) {
+    if (r.errno !== 0) {
+      toast(T.actionFailed + ": " + (r.stderr || r.errno));
+      return;
+    }
+    toast(source === "module" ? T.clearModuleDone : T.clearCoreDone);
+    // The truncate takes the size N -> 0. Drop both caches so the view clears at once and
+    // the 2s poll cannot skip the new tail because it remembers the old size.
+    lastLog[source] = null;
+    lastLogSize[source] = -1;
+    if (source === logSource) { renderLog(""); refreshLog(); }
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    clearBusy = false;
+    setButtons();
+  });
 }
 
 // The three 分流模式 values the shell can write (docs/adr/0021). A value this page does not
@@ -2472,6 +2520,7 @@ els.selLogLevel.addEventListener("change", function () {
 });
 els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg); });
 els.refresh.addEventListener("click", function () { refreshPage(true); });
+els.clearLog.addEventListener("click", clearCurrentLog);
 els.logTabCore.addEventListener("click", function () { setLogSource("core"); });
 els.logTabModule.addEventListener("click", function () { setLogSource("module"); });
 // Pure navigation: an instant scrollTop and nothing else — no fetch, no checkbox moves.

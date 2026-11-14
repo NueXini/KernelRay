@@ -233,6 +233,18 @@ How many recent lines the Log page shows from whichever log is displayed, the �
 the 模块日志. A display choice only: changing it never changes what either log writes.
 _Avoid_: 日志大小, 日志上限
 
+**日志显示区 (Log view)**:
+The read-only text view on the Log page: the last 日志行数 lines of whichever log its tab
+selected. It is a view only — Follow, Pause and Refresh change what is fetched, never what
+is written.
+_Avoid_: 日志编辑框, log editor, log box
+
+**清空日志 (Clear log)**:
+Truncating the one log file the Log page currently shows — 核心日志 or 模块日志 — to zero
+bytes in place, with its writers left running. The history is unrecoverable; 日志等级,
+日志行数 and the rotated `xray.log.1` are untouched.
+_Avoid_: 清理日志, 重置日志, wipe log, reset
+
 **节点 (Node)**:
 One proxy endpoint with everything needed to reach it: address, port, protocol and its
 transport/security parameters.

@@ -1379,6 +1379,72 @@ check("mlog: append goes through the CLI dispatch, tail still works, tags are ch
   if (!/\[Node\] deleted 2 nodes$/m.test(tail)) { throw new Error("tail: " + tail); }
 });
 
+check("log clear: the CLI truncates the core log silently, with no marker line", () => {
+  const m = makeModule();
+  const log = path.join(m.dir, "logs", "xray.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, "one\ntwo\nthree\n");
+  const out = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli log clear; echo "rc=$?"');
+  eq(out.trim(), "rc=0", "a successful clear prints nothing but rc");
+  eq(fs.readFileSync(log, "utf8"), "", "the file is zero bytes");
+});
+
+check("log clear: truncates in place, so an already-open writer stays visible", () => {
+  const m = makeModule();
+  const log = path.join(m.dir, "logs", "xray.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, "old\n");
+  // An append fd opened before the clear models the core's >> redirection: if clear unlinked
+  // the file, this line would land in a dead inode and the WebUI would never see it.
+  runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; exec 3>>"$KR_LOG"; kr_cli log clear; printf "after\\n" >&3; exec 3>&-');
+  eq(fs.readFileSync(log, "utf8"), "after\n", "the open writer still lands in the visible file");
+});
+
+check("log clear: idempotent, and creates a missing log as an empty file", () => {
+  const m = makeModule();
+  const log = path.join(m.dir, "logs", "xray.log");
+  const first = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli log clear; echo "rc=$?"');
+  eq(first.trim(), "rc=0", "clearing a missing log must not fail");
+  eq(fs.readFileSync(log, "utf8"), "", "a missing log becomes an empty, readable file");
+  const second = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli log clear; echo "rc=$?"');
+  eq(second.trim(), "rc=0", "clearing twice is still success");
+  eq(fs.readFileSync(log, "utf8"), "", "the second clear changes nothing");
+});
+
+check("mlog clear: only the module log, no marker, and append still works", () => {
+  const m = makeModule();
+  const core = path.join(m.dir, "logs", "xray.log");
+  const mlog = path.join(m.dir, "logs", "kernelray.log");
+  fs.mkdirSync(path.dirname(core), { recursive: true });
+  fs.writeFileSync(core, "core line\n");
+  fs.writeFileSync(mlog, "module line\n");
+  runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli log clear');
+  eq(fs.readFileSync(core, "utf8"), "", "core log cleared");
+  eq(fs.readFileSync(mlog, "utf8"), "module line\n", "the other log is untouched");
+  runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli mlog clear');
+  eq(fs.readFileSync(mlog, "utf8"), "", "module log cleared");
+  eq(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli mlog 5'), "", "no audit line is written");
+  runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli mlog append Module "after clear"');
+  const tail = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli mlog 5');
+  if (!/\[Module\] after clear/.test(tail)) {
+    throw new Error("module log stopped accepting lines: " + tail);
+  }
+});
+
+check("log clear: numeric tails and unknown line counts are unchanged", () => {
+  const m = makeModule();
+  const log = path.join(m.dir, "logs", "xray.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, "kept\n");
+  eq(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli log 5').trim(), "kept", "log 5 still tails");
+  eq(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli log bogus').trim(), "kept",
+    "a non-numeric argument still falls back to a tail");
+  fs.writeFileSync(path.join(m.dir, "logs", "kernelray.log"), "module kept\n");
+  eq(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_cli mlog 5').trim(), "module kept",
+    "mlog 5 still tails");
+});
+
 check("status: the state revision and the rendered meta id ride along", () => {
   const m = makeModule();
   writeStatePorts(m, { socksPort: 12008, httpPort: 12009 }, { extra: { revision: 7 } });

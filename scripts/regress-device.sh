@@ -373,6 +373,35 @@ grep -qF '"domain":["geosite:category-ads-all"],"outboundTag":"block"' "$M/confi
 expect "P2-21c routing=cnadblock" "$($S status | sed -n 's/^routing=//p')" "cnadblock"
 $S routing global >/dev/null 2>&1
 
+# P2-22: 清空日志 truncates the live log in place while the core is running (no restart).
+[ "$(state)" = "running" ] || $S start >/dev/null 2>&1
+p_before=$(pid)
+printf 'before-clear\n' >> "$L"
+rm -f /tmp/kr-clear-ready /tmp/kr-clear-go
+# An append fd opened before the clear models the core's >>: unlinking the file instead
+# would send this line into a dead inode that the WebUI can no longer tail.
+( exec 3>>"$L"; : > /tmp/kr-clear-ready
+  i=0; while [ ! -f /tmp/kr-clear-go ] && [ "$i" -lt 30 ]; do sleep 1; i=$((i+1)); done
+  printf 'after-clear\n' >&3 ) &
+w=$!
+i=0; while [ ! -f /tmp/kr-clear-ready ] && [ "$i" -lt 30 ]; do sleep 1; i=$((i+1)); done
+$S log clear >/dev/null 2>&1
+expect "P2-22a core log is 0 bytes" "$(wc -c < "$L" 2>/dev/null | tr -d ' ')" "0"
+$S log 5 | grep -q "before-clear" && bad "P2-22b old lines gone" "sentinel still tailed" || ok "P2-22b old lines gone"
+expect "P2-22c no restart" "$(pid)" "$p_before"
+: > /tmp/kr-clear-go
+wait "$w"
+grep -q "after-clear" "$L" && ok "P2-22d an open writer still lands in the visible file" || \
+  bad "P2-22d an open writer still lands in the visible file" "$(tail -2 "$L" | tr '\n' ' ')"
+# The module log clears the same way and leaves no marker line behind.
+printf 'before-clear\n' >> "$KL"
+$S mlog clear >/dev/null 2>&1
+expect "P2-22e mlogsize" "$($S status log | sed -n 's/^mlogsize=//p')" "0"
+$S mlog append Module "post-clear probe" >/dev/null 2>&1
+$S mlog 5 | grep -q "post-clear probe" && ok "P2-22f module log keeps accepting lines" || \
+  bad "P2-22f module log keeps accepting lines" "no post-clear line"
+rm -f /tmp/kr-clear-ready /tmp/kr-clear-go
+
 # ---- summary ----
 echo "===== summary: $pass passed, $fail failed"
 reset_all

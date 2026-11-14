@@ -150,7 +150,7 @@ The Status page has a routing mode, and it decides *where* traffic goes, not whe
 | `tests/link.test.js` | node → share-link and subscription-Base64 tests, round-tripped through the shipped parser |
 | `tests/prefs.test.js` | Settings-page preference (theme, language, log buffer) normalise/load/save tests, run against the shipped block |
 | `tests/theme.test.js` | theme pref → `data-theme` resolution, the system-following subscription and the head-time stamp, run against the shipped `theme.js` |
-| `tests/config.test.js` | template assembly, the one render form, apply failure paths, start rollback and the 日志等级's start-time repair, run against the shipped shell + a fake core |
+| `tests/config.test.js` | template assembly, the one render form, apply failure paths, the 清空日志 CLI, start rollback and the 日志等级's start-time repair, run against the shipped shell + a fake core |
 | `tests/tproxy.test.js` | rule install/remove, conflict detection, the start order (test before rules, no core without takeover) and the absence of any switch, run against fake iptables/ip binaries |
 | `tests/routing.test.js` | 分流模式 render matrix (全局/大陆直连), the geo-data degradation and the `routing` CLI's failure paths, run against the shipped shell |
 | `docs/webui.png` | screenshot of the WebUI |
@@ -245,7 +245,7 @@ them:
   missing, conflict / failure hints with a retry, and pid, uptime, ports, core version and
   config path.
 - **Nodes** — the node list (tap a row to open its detail dialog; **Apply** there switches), per-row applied/changed markers, inline delete, edit-mode check + select-all + batch delete, and the import card.
-- **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle.
+- **Log** — the last N lines (N is a Settings preference, 200 by default), with a follow toggle, the 核心日志 / 模块日志 tabs and a **清空日志** button under the view: one tap truncates the log currently shown, without restarting the core.
 - **Settings** — a **General** card with the theme (auto / 日间 / 夜间), the UI language
   (auto / 中文 / English), the log buffer size and the 日志等级 (关闭 / 错误 / 警告 / 信息 /
   调试), and the inbound ports. Theme, language and log buffer are
@@ -330,6 +330,8 @@ cannot diverge between the two entry points.
 ```sh
 /data/adb/modules/KernelRay/scripts/kernelray.sh status   # key=value, consumed by the WebUI
 /data/adb/modules/KernelRay/scripts/kernelray.sh log 50
+/data/adb/modules/KernelRay/scripts/kernelray.sh log clear    # truncate logs/xray.log in place
+/data/adb/modules/KernelRay/scripts/kernelray.sh mlog clear   # the same for logs/kernelray.log
 /data/adb/modules/KernelRay/scripts/kernelray.sh start
 /data/adb/modules/KernelRay/scripts/kernelray.sh stop
 /data/adb/modules/KernelRay/scripts/kernelray.sh apply <node-id>
