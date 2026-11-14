@@ -1,8 +1,8 @@
 #!/system/bin/sh
-# KernelSU runs this when the module is removed. Stop the core and remove the takeover
-# rules — only the module's own KR_TP_* chains, table 19283 and rule preference 9500,
-# never another module's. KernelSU then deletes the module dir, which is also where
-# config, node store and logs live, so nothing is left behind.
+# KernelSU 在模块被移除时运行本脚本。停止核心并移除接管
+# 规则——只有模块自己的 KR_TP_* 链、表 19283 和规则 pref 9500，
+# 绝不碰其他模块的。KernelSU 随后删除模块目录，配置、节点库
+# 与日志也住在那里，所以什么都不剩。
 MODDIR=${0%/*}
 KR_MODDIR=$MODDIR
 export KR_MODDIR

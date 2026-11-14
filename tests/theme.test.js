@@ -1,11 +1,11 @@
-// Theme preference tests for the WebUI.
+// 针对 WebUI 的主题偏好测试。
 //
-// theme.js is a classic script loaded in <head> before the body paints, so it can only touch
-// `window` (matchMedia, localStorage) and `document.documentElement`. Evaluating the shipped
-// file with both stubbed is exactly what the WebView gives it, minus the painting — the same
-// "run the file we ship" contract as tests/prefs.test.js.
+// 随包的 theme.js 是在 <head> 中、body 绘制之前加载的传统脚本，因此它只能接触
+// `window`（matchMedia、localStorage）和 `document.documentElement`。在这两者都打桩
+// 的情况下求值该文件，正是 WebView 提供给它的环境，只少了绘制环节；
+// 它与 tests/prefs.test.js 一样，遵循“运行随包文件”的约定。
 //
-//   node tests/theme.test.js
+//   运行：node tests/theme.test.js
 
 "use strict";
 
@@ -49,7 +49,7 @@ const denyStore = {
   setItem() { throw new Error("denied"); }
 };
 
-// A fresh evaluation of theme.js, with the system palette and the stored blob under control.
+// 每次都重新求值 theme.js，系统配色与已存储的偏好数据都由测试控制。
 function load(opts) {
   const o = opts || {};
   const attrs = {};

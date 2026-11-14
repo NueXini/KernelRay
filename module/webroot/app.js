@@ -3,23 +3,23 @@
 
 var MOD = "/data/adb/modules/KernelRay";
 var CLI = MOD + "/scripts/kernelray.sh";
-// Config, node store and logs sit in the module dir too — one root, nothing outside it.
+// 配置、节点库和日志也都放在模块目录里——只有一个根，不写到它之外。
 var STATE = MOD + "/state.json";
 var APPLIED = MOD + "/runtime/applied";
 var OUTBOUND = MOD + "/outbound.json";
 var OUTBOUND_META = MOD + "/outbound.meta";
-// Log buffer size is a Settings-page preference; 200 is the default before prefs load.
+// 日志行数是设置页偏好；偏好加载完成之前默认为 200。
 var logLines = 200;
 var POLL_MS = 2000;
-// The 日志等级 is core intent, not a WebView preference: the select follows the shell's
-// status (runtime/loglevel) and the saved value applies at the next core start (docs/adr/0015).
+// 日志等级是核心意图，不是 WebView 偏好：下拉框跟随 shell 的
+// 状态（runtime/loglevel），保存的值在下次启动核心时生效（docs/adr/0015）。
 var LOG_LEVELS = ["none", "error", "warning", "info", "debug"];
 
-// Language and theme are Settings-page preferences, not boot-time facts: applyLang()
-// reassigns T, applyTheme() (theme.js) stamps data-theme, and every T.x read picks the
-// current dictionary because nothing captures the object.
-var langPref = "auto"; // "auto" | "zh" | "en"; resolved against navigator.language when "auto"
-var themePref = "auto"; // "auto" | "light" | "dark"; resolved against the system when "auto"
+// 语言和主题是设置页偏好，不是开机时的事实：applyLang()
+// 会重新给 T 赋值，applyTheme()（theme.js）打上 data-theme，每次读取 T.x
+// 都取当前词典，因为没有谁把对象捕获下来。
+var langPref = "auto"; // "auto" | "zh" | "en"；"auto" 时按 navigator.language 解析
+var themePref = "auto"; // "auto" | "light" | "dark"；"auto" 时按系统设置解析
 var DICT_ZH = {
   start: "启动", stop: "停止", follow: "跟随", pause: "暂停", refresh: "刷新",
   pid: "进程", up: "运行时长", port: "端口", conf: "配置",
@@ -201,7 +201,7 @@ var DICT_EN = {
   importFailedN: ", {n} line(s) failed",
   notAppliedYet: "Importing only fills the node list; with no node applied yet it also applies one, otherwise open a node's dialog and press Apply."
 };
-var T = DICT_EN; // applyLang() reassigns this before anything renders
+var T = DICT_EN; // applyLang() 会在任何渲染之前重新给它赋值
 
 var $ = function (id) { return document.getElementById(id); };
 var els = {
@@ -252,49 +252,49 @@ var pages = {
 };
 
 var hasBridge = typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
-// Which log the page shows: "core" (xray.log) or "module" (kernelray.log). A page
-// choice, not a preference: it is never persisted, so a visit starts on the core log.
+// 页面显示哪份日志："core"（xray.log）或 "module"（kernelray.log）。
+// 这是页面选择、不是偏好：它从不持久化，所以每次访问都从核心日志开始。
 var logSource = "core";
-// One cached tail per source: renderLog skips only when the same source repeats.
+// 每个来源各缓存一份 tail：只有同一来源重复时 renderLog 才跳过。
 var lastLog = { core: null, module: null };
-// The byte size the last tail was fetched at; the poll skips the tail when it is unchanged.
+// 上次拉取 tail 时的字节大小；大小不变时轮询就跳过拉取。
 var lastLogSize = { core: -1, module: -1 };
-// Bumped by 清空日志: a tail that was in flight when the file was truncated must not
-// render its stale text over the cleared view.
+// 由清空日志递增：文件被截断时仍在途的一段 tail，绝不能把它那
+// 陈旧文本渲染到已清空的视图上。
 var logGen = { core: 0, module: 0 };
 var lastState = "unknown";
 var busy = false;
-var clearBusy = false; // 清空日志 runs its own exec; busy is for core actions
-var pending = null; // "start" | "stop" while the action is in flight
+var clearBusy = false; // 清空日志自己执行一次 exec；busy 只用于核心动作
+var pending = null; // 动作在途期间为 "start" | "stop"
 var lastStateObj = null;
 var lastKv = null;
 var lastApplied = "";
 var lastMetaId = "";
 var confirmId = null;
-// Node detail dialog: the row tap opens it read-only; only its Apply button switches.
-var dialogId = "";        // node id the dialog shows; "" when closed
-var dialogBusy = false;   // an apply started from the dialog is in flight
-var dialogError = "";     // the last dialog apply failure, shown inline
+// 节点详情弹窗：点按行以只读方式打开；只有它的应用按钮会切换节点。
+var dialogId = "";        // 弹窗显示的节点 id；关闭时为 ""
+var dialogBusy = false;   // 从弹窗发起的一次应用正在进行
+var dialogError = "";     // 弹窗上一次应用失败的信息，行内显示
 var dialogMenuOpen = false;
-var dialogLink = "";      // the canonical link rendered for the current node
+var dialogLink = "";      // 为当前节点渲染出的规范链接
 var listSig = "";
-// What the dialog last rendered: the 2s poll must not rebuild it when nothing changed.
+// 弹窗上次渲染的内容：没有变化时 2s 轮询绝不能重建它。
 var dialogSig = "";
-// The runtime fact the current list was rendered with: renderStatus only re-renders the list
-// when it flips, so a 2s poll does not rebuild the toolbar under a finger.
+// 当前列表渲染所依据的运行状态事实：只有它翻转时 renderStatus 才重绘列表，
+// 这样 2s 轮询就不会在手指底下重建工具栏。
 var listRunning = null;
-// Edit-mode check set: which rows a batch delete would remove. In memory only — a check is
-// a temporary intent, not a wish like `selected` — and cleared when edit mode ends.
+// 编辑模式的勾选集合：批量删除会移除哪些行。只存在内存中——勾选是
+// 临时意图，不是像 `selected` 那样的愿望——编辑模式结束时清空。
 var editMode = false;
 var checkSet = {};
 var batchConfirm = false;
-// Port fields the user has touched since the last sync: a 2s poll must not reset a
-// field the user edited while filling in the other one. Cleared on a successful save
-// and when the settings page is left.
+// 自上次同步以来用户碰过的端口字段：2s 轮询不能把用户正在填写另一个
+// 字段时改过的值重置掉。保存成功后清空，
+// 离开设置页时也清空。
 var portsDirty = { socks: false, http: false };
 
-// The 清空日志 button names the log it will truncate. The tab owns that choice, so a
-// language switch and a tab switch both re-read the same label.
+// 清空日志按钮的名字指明它将截断哪份日志。该选择由标签页持有，
+// 因此切换语言和切换标签页都会重新读到同一个标签。
 function clearLogLabel() {
   return logSource === "module" ? T.clearModuleLog : T.clearCoreLog;
 }
@@ -362,7 +362,7 @@ function toast(msg) {
   toast._t = setTimeout(function () { els.toast.className = "toast"; }, 2600);
 }
 
-// localStorage itself can throw in a locked-down WebView; prefs survive as session-only.
+// 受限的 WebView 里 localStorage 本身也可能抛错；偏好退化为仅本次会话有效。
 function prefsStore() {
   try { return window.localStorage; } catch (e) { return null; }
 }
@@ -372,8 +372,8 @@ function resolveLang() {
   return (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
 }
 
-// Switching language has to invalidate what was rendered under the old one: the node list
-// signature does not include language, and renderLog skips unchanged text.
+// 切换语言必须让旧语言下渲染出的内容失效：节点列表的签名不包含语言，
+// 而 renderLog 会跳过未变化的文本。
 function applyLang() {
   var lang = resolveLang();
   T = lang === "zh" ? DICT_ZH : DICT_EN;
@@ -393,16 +393,16 @@ function applyLang() {
   }
 }
 
-// The selects render straight from the prefs: a language switch reassigns T and the
-// Auto option's label, so both run through here.
+// 下拉框直接按偏好渲染：切换语言会重新给 T 赋值，并改变自动选项的
+// 标签，所以两者都要经过这里。
 function renderPrefs() {
   els.selTheme.value = themePref;
   els.selLang.value = langPref;
   els.selLog.value = String(logLines);
 }
 
-// ksu.exec is callback-based: ksu.exec(cmd, optionsJson, callbackName) and the
-// injected WebView calls window[callbackName](errno, stdout, stderr).
+// 桥接的 ksu.exec 是回调式的：ksu.exec(cmd, optionsJson, callbackName)，
+// 注入的 WebView 会调用 window[callbackName](errno, stdout, stderr)。
 function exec(cmd) {
   return new Promise(function (resolve, reject) {
     if (!hasBridge) { reject(new Error("no bridge")); return; }
@@ -430,14 +430,14 @@ function parseKv(text) {
 }
 
 // ---- UI preferences ----
-// Theme, language and log-buffer size are UI prefs, not intent: state.json's `settings`
-// object carries the inbound ports and the 分流模式 is the shell's own preference
-// (docs/state-schema.md); both are wiped by every module upgrade anyway, so these live in the
-// WebView's localStorage and degrade to session-only when the manager ships a WebView with
-// storage disabled. tests/prefs.test.js runs this block.
+// 主题、语言和日志行数是 UI 偏好，不是意图：state.json 的 `settings`
+// 对象保存入站端口，分流模式则是 shell 自己的偏好（docs/state-schema.md）；
+// 两者反正每次模块升级都会被清掉，所以它们放在 WebView 的 localStorage 里，
+// 当管理器提供的 WebView 禁用了存储时退化为仅本次会话有效。
+// 本块由 tests/prefs.test.js 运行。
 //
-// The theme's own model (valid values, "auto" resolution, application) is theme.js, which
-// <head> loads before this file: one key, one validator, and the first paint already right.
+// 主题自身的模型（合法取值、"auto" 的解析、应用）在 theme.js 里，
+// 它由 <head> 在本文件之前加载：一个键、一个校验器，首屏绘制就已经正确。
 
 var PREFS_KEY = KRTheme.PREFS_KEY;
 var LANGS = ["auto", "zh", "en"];
@@ -464,18 +464,18 @@ function prefsSave(store, prefs) {
   try {
     var p = prefsNormalize(prefs);
     store.setItem(PREFS_KEY, JSON.stringify({ v: 1, theme: p.theme, lang: p.lang, logLines: p.logLines }));
-  } catch (e) { /* no storage: the choice lasts for this session only */ }
+  } catch (e) { /* 没有存储：该选择仅在本次会话内有效 */ }
 }
 // ---- end UI preferences ----
 
 // ---- inbound port settings ----
-// The local socks/http inbound ports are core intent, not UI prefs: the shell reads them
-// from state.json's `settings` when it renders config.json (ADR 0009), so saving goes
-// through state.json + the shell's render/restart path, like a node apply. tests/prefs.test.js
-// runs this block too.
+// 本地 socks/http 入站端口是核心意图，不是 UI 偏好：shell 渲染 config.json 时
+// 从 state.json 的 `settings` 读取它们（ADR 0009），所以保存要
+// 走 state.json + shell 的渲染/重启路径，与应用节点一样。
+// 本块同样由 tests/prefs.test.js 运行。
 
 var PORT_DEFAULTS = { socks: 10808, http: 10809 };
-var TP_PORT = 10810; // the tproxy inbound the shell owns; a local inbound must not take it
+var TP_PORT = 10810; // 由 shell 占用的 tproxy 入站；本地入站不能占用它
 
 function portVal(raw) {
   var n = Number(raw);
@@ -483,15 +483,15 @@ function portVal(raw) {
   return n >= 1 && n <= 65535 ? n : 0;
 }
 
-// Per-field fallback: a missing or invalid port leaves that inbound on its default, so a
-// hand-edited state.json can never knock both inbounds out. The same rule the shell applies.
+// 逐字段回退：某个端口缺失或非法时，该入站保留默认值，因此
+// 手工改过的 state.json 也绝不会让两个入站同时失效。这与 shell 的规则一致。
 function portsNormalize(raw) {
   var s = raw && typeof raw === "object" ? portVal(raw.socksPort) : 0;
   var h = raw && typeof raw === "object" ? portVal(raw.httpPort) : 0;
   return { socks: s || PORT_DEFAULTS.socks, http: h || PORT_DEFAULTS.http };
 }
 
-// "" = acceptable; otherwise the i18n key of why the save is refused.
+// 返回 "" 表示可接受；否则返回拒绝保存原因对应的 i18n 键。
 function portsValidate(socks, http) {
   var s = portVal(socks), h = portVal(http);
   if (!s || !h) { return "portRange"; }
@@ -502,9 +502,9 @@ function portsValidate(socks, http) {
 // ---- end inbound port settings ----
 
 // ---- node parsing ----
-// Share link → node. Lives here rather than in the shell: there is no jq on the device and
-// URI/JSON/base64 handling in awk would be a liability. tests/parse.test.js extracts this
-// block from the shipped file, so keep the markers.
+// 分享链接 → 节点。放在这里而不是 shell 里：设备上没有 jq，
+// 用 awk 处理 URI/JSON/base64 会是负担。
+// 测试 tests/parse.test.js 会从发布文件中抽取这一块，所以保留分区标记。
 
 function parseFail(msg) { return { ok: false, error: msg }; }
 
@@ -542,10 +542,10 @@ function portOf(raw) {
   return p > 0 && p < 65536 ? p : 0;
 }
 
-// `new URL()` was the obvious way to split these links, and it is the wrong dependency: userinfo
-// handling for a non-special scheme is exactly the sort of thing a WebView can differ on, and
-// when it does, every vless/trojan link fails at once with "missing uuid". Splitting
-// scheme://[userinfo@]host:port[?query][#frag] by hand is a dozen lines and predictable.
+// 用 `new URL()` 拆分这些链接看似自然，却是错误的依赖：
+// 对非特殊 scheme 的 userinfo 处理，正是各 WebView 容易有差异的地方，
+// 一旦有差异，所有 vless/trojan 链接会一起以 "missing uuid" 失败。
+// 手工拆分 scheme://[userinfo@]host:port[?query][#frag] 只要十几行，而且行为可预测。
 function splitUri(link) {
   var m = /^([a-z0-9+.-]+):\/\/([\s\S]*)$/i.exec(String(link || "").trim());
   if (!m) { return null; }
@@ -570,8 +570,8 @@ function setIf(obj, key, val) {
   if (val !== null && val !== undefined && String(val) !== "") { obj[key] = String(val); }
 }
 
-// Link `type=` values are the v2ray/Xray `network` values, except that some clients write
-// `http` for HTTP/2. Anything unrecognised is kept verbatim rather than guessed at.
+// 链接里的 `type=` 取值就是 v2ray/Xray 的 `network` 取值，只是有些客户端
+// 会把 HTTP/2 写成 `http`。无法识别的值原样保留，绝不猜测。
 function transportOf(raw) {
   var t = String(raw || "").toLowerCase();
   if (!t) { return "tcp"; }
@@ -615,8 +615,8 @@ function parseVless(link) {
   return { ok: true, node: node };
 }
 
-// vmess:// carries base64(JSON) — v2rayN's object, not a URI. The newer `vmess://uuid@host`
-// form is a different spec and is reported as unsupported instead of mis-parsed.
+// 形如 vmess:// 的链接承载 base64(JSON)——v2rayN 的对象，而不是 URI。
+// 较新的 `vmess://uuid@host` 形式属于另一套规范，会报不支持而不是被误解析。
 function parseVmess(link) {
   var body = link.slice("vmess://".length).split("#")[0];
   var txt = b64text(body).trim();
@@ -646,7 +646,7 @@ function parseVmess(link) {
 function parseTrojan(link) {
   var u = splitUri(link);
   if (!u) { return parseFail("链接格式不对"); }
-  // `trojan://user:pass@host` appears in the wild; the password is the part after the colon.
+  // 实际中存在 `trojan://user:pass@host` 这种写法；冒号后面的部分才是 password。
   var raw = u.userinfo;
   var c = raw.indexOf(":");
   var pw = decodeName(c >= 0 && raw.slice(c + 1) ? raw.slice(c + 1) : raw);
@@ -662,9 +662,9 @@ function parseTrojan(link) {
   return { ok: true, node: node };
 }
 
-// ss:// is two formats in one: SIP002 puts base64(method:password) in the userinfo, the
-// legacy form base64s the whole method:password@host:port. A plain `method:password`
-// userinfo is also legal and must not be fed to atob.
+// 两种格式合在 ss:// 里：SIP002 把 base64(method:password) 放进 userinfo，
+// 旧式则把整个 method:password@host:port 做 base64。纯 `method:password`
+// 形式的 userinfo 也合法，绝不能交给 atob。
 function parseSs(link) {
   var rest = link.slice("ss://".length);
   var hash = "", qs = "";
@@ -719,11 +719,11 @@ function parseLink(link) {
   return parseFail("不支持的协议：" + scheme);
 }
 
-// Identity decides deduplication: protocol + host + port + credential + sni + ws host. Name,
-// transport and the remaining TLS parameters are presentation, not identity. The sni and the
-// transport host are identity because a CDN-fronted address routes by them: two links that
-// share address, port and credential but differ there reach different servers (see
-// docs/state-schema.md).
+// 身份决定去重：协议 + 主机 + 端口 + 凭证 + sni + ws host。名称、
+// 传输方式和其余 TLS 参数只是展示，不属于身份。sni 和
+// 传输 host 属于身份，因为前置 CDN 的地址靠它们路由：
+// 地址、端口和凭证相同却只在这两处不同的两条链接会到达不同的服务器
+// （见 docs/state-schema.md）。
 function identityOf(node) {
   var cred;
   if (node.protocol === "ss") { cred = [node.method, node.password]; }
@@ -751,8 +751,8 @@ function idOf(node) {
   return hash32(ident, 0x811c9dc5) + hash32(ident, 0x1b873593);
 }
 
-// A whole base64 blob (what airports hand out) is only decoded when the input has no link on
-// any line, so a single malformed line can never turn the whole paste into garbage.
+// 整段 base64 数据块（机场分发的那种）只在输入中任何一行都没有链接时才解码，
+// 这样单独一行格式错误也绝不会把整次粘贴变成垃圾。
 function parseInput(text) {
   var lines = String(text || "").split(/\r?\n/);
   var hasLink = lines.some(function (x) { return x.indexOf("://") >= 0; });
@@ -778,16 +778,16 @@ function parseInput(text) {
 // ---- end node parsing ----
 
 // ---- outbound rendering ----
-// state.json's selected node → the one Xray outbound the shell splices into the config
-// template. The shell cannot parse nested JSON (there is no jq on the device), so the
-// protocol knowledge lives here and tests/outbound.test.js runs this exact block.
+// 由 state.json 的当前节点推导出 shell 拼接进配置模板的那一条 Xray 出站。
+// 由于 shell 无法解析嵌套 JSON（设备上没有 jq），协议知识放在这里，
+// 测试 tests/outbound.test.js 运行的正是这一块。
 //
-// The node outbound carries the "__KERNELRAY_MARK__" sockopt placeholder, never a real
-// mark: on Android a SO_MARK with no matching ip rule loses routing (the node's Reality
-// handshake failed on v0.6 until the mark was removed). The shell replaces the
-// placeholder with the bypass mark, which is what keeps mark and rules together
-// (docs/adr/0008); there is no other value it can become (docs/adr/0011). The template's
-// fixed direct outbound keeps its literal mark because an unused outbound creates no socket.
+// 节点出站携带 "__KERNELRAY_MARK__" sockopt 占位符，绝不是真实
+// 真实 mark 在 Android 上若没有匹配的 ip rule 就会丢路由：v0.6 时
+// 节点的 Reality 握手一直失败，直到把这个 mark 移除。shell 会把
+// 占位符替换成旁路标记，这才是让 mark 与规则成对共存的做法
+// （docs/adr/0008）；它不可能变成别的值（docs/adr/0011）。模板里
+// 固定的 direct 出站保留字面 mark，因为未使用的出站不会创建 socket。
 
 function tlsSettingsOf(n) {
   var t = {};
@@ -838,8 +838,8 @@ function streamSettingsOf(n) {
     if (n.host) { hu.host = String(n.host); }
     if (Object.keys(hu).length) { s.httpupgradeSettings = hu; }
   }
-  // Replaced by the shell with the bypass mark; never a real mark here, because the
-  // renderer is a pure function of the node and the mark belongs to the rules.
+  // 由 shell 替换为旁路标记；这里绝不使用真实 mark，因为
+  // 渲染器是节点的纯函数，而 mark 属于规则。
   s.sockopt = { mark: "__KERNELRAY_MARK__" };
   return s;
 }
@@ -874,11 +874,11 @@ function outboundOf(n) {
 // ---- end outbound rendering ----
 
 // ---- node links ----
-// A stored node → the share link the detail dialog copies. Derived, not stored: the node
-// fields are the source of truth, and tests/link.test.js round-trips linkOf() through the
-// parser. The outer Base64 is the one-line subscription form; for vmess the link itself is
-// already base64 JSON, so that form is double-encoded on purpose. Base64 is an encoding, not
-// encryption. Keep the markers: the test harness extracts this block.
+// 由存储的节点推导出节点详情弹窗复制的分享链接。推导而非存储：
+// 节点字段才是事实来源，tests/link.test.js 会把 linkOf() 经解析器往返一遍。
+// 外层 Base64 是单行订阅形式；vmess 的链接本身就是 base64 JSON，
+// 所以那种形式是有意的双重编码。Base64 是编码，不是加密。
+// 保留分区标记：测试框架会抽取这一块。
 
 function plainHost(addr) {
   return String(addr == null ? "" : addr).replace(/^\[|\]$/g, "");
@@ -898,8 +898,8 @@ function utf8Bytes(s) {
   return out;
 }
 
-// Chunked: a per-byte string concat allocates once per byte and gets slow on a large
-// state.json. 8 KiB keeps String.fromCharCode.apply well inside the argument limit.
+// 分块处理：逐字节拼接字符串会每字节分配一次，state.json 一大就慢。
+// 取 8 KiB 让 String.fromCharCode.apply 稳稳落在参数上限之内。
 function bytesToBase64(bytes) {
   var chunk = 0x2000;
   var bin = "";
@@ -913,8 +913,8 @@ function b64encodeText(s) {
   return bytesToBase64(utf8Bytes(s));
 }
 
-// SIP002's userinfo is URL-safe Base64 without padding; the outer subscription form above
-// keeps the standard alphabet and padding.
+// 在 SIP002 里，userinfo 是去掉填充的 URL-safe Base64；上面的外层订阅形式
+// 保留标准字母表和填充。
 function b64urlText(s) {
   return b64encodeText(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -1031,7 +1031,7 @@ function uptime(sec) {
 
 function setButtons() {
   var running = lastState === "running";
-  // No applied node, no start: the shell's start gate would refuse it anyway (ADR 0010).
+  // 没有已应用节点就不启动：shell 的启动闸门本来也会拒绝（ADR 0010）。
   els.start.disabled = busy || running || !(lastKv && lastKv.node);
   els.stop.disabled = busy || !running;
   els.clearLog.disabled = busy || clearBusy || !hasBridge;
@@ -1044,20 +1044,20 @@ function setButtons() {
   if (dialogId) { renderDialog(); }
 }
 
-// The delete gate and the unapply decision need the live fact, and only a status read that
-// says "stopped" proves the core is down: an unknown or unreadable status counts as running.
+// 删除门槛与取消应用决策都需要实时事实，且只有状态读出来是 "stopped"
+// 才能证明核心已停：未知或读不出的状态一律按运行中处理。
 function coreRunning() {
   return !(lastKv && lastKv.state === "stopped");
 }
 
-// Why a delete of the applied row was refused: a list with another node in it is not a dead
-// end (switch, then delete); a running core is.
+// 已应用行拒绝删除的原因：列表里还有别的节点就不是死路（先切换再删除）；
+// 核心正在运行才是。
 function deleteRefusal(model) {
   return model.rows.length > 1 ? T.deleteApplied : T.deleteRunning;
 }
 
-// Edit mode may check the applied row only when the delete gate allows deleting it, so the
-// batch and the row's ✕ agree.
+// 编辑模式只有在删除门槛允许时才能勾选已应用行，这样批量删除与行上的 ✕
+// 保持一致。
 function canCheckNode(node) {
   if (!(lastApplied && lastApplied === node.id)) { return true; }
   return deleteGate(nodeListModel(lastStateObj, lastApplied), coreRunning());
@@ -1072,8 +1072,8 @@ function findNodeById(state, id) {
   return null;
 }
 
-// IPv6 addresses are stored without brackets (that is what Xray wants), so the display has to
-// put them back — otherwise "2001:db8::1:443" is unreadable.
+// 存储的 IPv6 地址不带方括号（Xray 要求如此），显示时必须补回去，
+// 否则 "2001:db8::1:443" 根本没法读。
 function hostPort(n) {
   var a = String(n.address || "");
   if (a.indexOf(":") >= 0) { a = "[" + a + "]"; }
@@ -1081,9 +1081,9 @@ function hostPort(n) {
 }
 
 // ---- node list model ----
-// state.json + runtime/applied → the rows the Nodes page shows. Pure and free of DOM so
-// tests/nodelist.test.js can run it without a browser. Subscription nodes are out of scope
-// for this version: the list renders the manual store only.
+// 由 state.json 与 runtime/applied 推导出节点页显示的行。纯函数、无 DOM，
+// 使 tests/nodelist.test.js 无需浏览器即可运行。本版本不涉及订阅节点：
+// 列表只渲染手工节点库。
 function nodeListModel(state, appliedId) {
   var rows = [];
   var selectedId = state && typeof state.selected === "string" ? state.selected : "";
@@ -1104,7 +1104,7 @@ function nodeListModel(state, appliedId) {
       dirty: !!n.dirty
     };
     row.unapplied = row.selected && !row.applied;
-    // Tapping the applied node does no core work unless a re-import changed its fields.
+    // 点按已应用节点不会动核心，除非重新导入改动了它的字段。
     row.noop = row.applied && !row.dirty;
     if (row.applied) { appliedKnown = true; }
     if (row.selected) { selectedKnown = true; }
@@ -1116,19 +1116,19 @@ function nodeListModel(state, appliedId) {
   };
 }
 
-// The delete gate: the applied node is deletable only when the core is stopped and it is the
-// last row, so the delete empties the store. One rule for both gestures (the row's ✕ and the
-// edit-mode batch). `running` means "not provably stopped": the caller counts an unreadable
-// status as running, so a delete can never race a core that just started.
+// 删除门槛：已应用节点只有在核心已停止、且它是最后一行时才可删除，
+// 这样删除会清空节点库。行的 ✕ 与编辑模式批量删除共用一条规则。
+// `running` 表示"无法证明确已停止"：调用方把读不出的状态算作运行中，
+// 因此删除绝不会与刚启动的核心竞态。
 function deleteGate(model, running) {
   return !running && model.rows.length === 1 && model.rows[0].applied;
 }
 
-// Whether deleting `ids` must also unapply (remove config.json, runtime/applied, the rendered
-// outbound and the takeover rules). The trigger is the resulting state, not the deleted row:
-// an emptied list with a stopped core has nothing left to run, and a dangling applied id (one
-// with no row) would otherwise keep its credentials in config.json while the start gate still
-// lets the next start run it (ADR 0013).
+// 删除 `ids` 时是否还要取消应用（移除 config.json、runtime/applied、渲染出的
+// 出站和接管规则）。触发条件是删除后的状态，而不是被删的那一行：
+// 核心已停止且列表被清空时已经无处可运行；悬空的已应用 id（没有
+// 对应行的 id）否则会把凭证留在 config.json 里，而启动闸门仍会
+// 让下次启动带着它运行（ADR 0013）。
 function emptiesList(model, ids) {
   if (model.rows.length === 0) { return false; }
   var gone = {};
@@ -1143,10 +1143,10 @@ function willUnapply(model, ids, running) {
   return !running && emptiesList(model, ids);
 }
 
-// The edit-mode check set → what a batch delete may act on. Pure so tests/nodelist.test.js
-// can run it: the applied row joins only when the caller's delete gate allows deleting it
-// (the ✕ refuses it in exactly the same cases), and check ids that no longer have a row (a
-// stale set after a refresh) are simply ignored.
+// 编辑模式的勾选集合 → 批量删除可以作用于哪些行。纯函数，便于
+// 让 tests/nodelist.test.js 无需浏览器运行；只有调用方的删除门槛允许时，
+// 已应用行才加入（✕ 在完全相同的情形下拒绝），已没有对应行的勾选 id
+// （刷新后的陈旧集合）直接忽略。
 function batchModel(model, checks, allowApplied) {
   var set = checks || {};
   var checkable = [];
@@ -1162,9 +1162,9 @@ function batchModel(model, checks, allowApplied) {
     allChecked: checkable.length > 0 && checked.length === checkable.length
   };
 }
-// The detail dialog's button state: applied + clean is the only no-op tap (it may still
-// re-sync `selected` after a failed switch); a dirty applied node is re-applied, and a
-// selected-but-unapplied node is a retry. Pure so tests/nodelist.test.js can run it.
+// 节点详情弹窗的按钮状态：已应用且干净是唯一无操作的点按（切换失败后
+// 它仍可能重新同步 `selected`）；已应用但有改动则重新应用，当前节点却
+// 未应用则是重试。纯函数，便于 tests/nodelist.test.js 运行。
 function nodeDialogModel(node, appliedId, selectedId) {
   var id = node && node.id !== null && node.id !== undefined ? String(node.id) : "";
   var applied = id !== "" && appliedId !== null && appliedId !== undefined &&
@@ -1222,8 +1222,8 @@ function rowSig(row) {
     row.dirty ? 1 : 0].join("|");
 }
 
-// Every row is built with createElement/textContent: node names come from imported links and
-// must never reach innerHTML.
+// 每一行都用 createElement/textContent 构建：节点名来自导入的链接，
+// 绝不能进入 innerHTML。
 function renderRow(row, allowDelete) {
   var el = document.createElement("div");
   el.className = "nrow" + (row.applied ? " applied" : "") +
@@ -1270,15 +1270,15 @@ function renderRow(row, allowDelete) {
     el.setAttribute("role", "button");
     el.tabIndex = 0;
   } else {
-    // In edit mode the whole row is the check toggle; the applied row's box follows the same
-    // delete gate as the ✕. The detail dialog waits outside edit mode.
+    // 编辑模式下整行都是勾选开关；已应用行的复选框遵循与 ✕ 相同的
+    // 删除门槛。节点详情弹窗只在编辑模式之外打开。
     var check = document.createElement("input");
     check.type = "checkbox";
     check.className = "ncheck";
     check.setAttribute("data-action", "check");
     check.setAttribute("aria-label", row.node.name || row.id);
-    // A check left over from before the gate closed (the core started elsewhere) must not
-    // show as checked on a box that is now disabled; batchModel ignores it either way.
+    // 门槛关闭前留下的勾选（核心在别处启动了）不能显示为已勾选，
+    // 因为该复选框现已禁用；batchModel 无论如何都会忽略它。
     check.checked = !!checkSet[row.id] && !(row.applied && !allowDelete);
     if (row.applied && !allowDelete) { check.disabled = true; }
     el.insertBefore(check, el.firstChild);
@@ -1303,8 +1303,8 @@ function renderRow(row, allowDelete) {
   return el;
 }
 
-// The edit-mode toolbar: select-all, the batch delete and its inline confirm. Built with
-// createElement/textContent like every row; the count comes from the check set.
+// 编辑模式工具栏：全选、批量删除以及行内确认。与每一行一样，
+// 它用 createElement/textContent 构建；数量取自勾选集合。
 function renderBatchBar(model, bm, unapplies) {
   var bar = els.nToolbar;
   if (!editMode || model.empty) {
@@ -1359,7 +1359,7 @@ function renderNodeList() {
   listRunning = running;
   var gate = deleteGate(model, running);
   var bm = batchModel(model, checkSet, gate);
-  // The gate follows the runtime, so a Stop/Start has to invalidate the list too.
+  // 门槛跟随运行状态，所以停止/启动也必须让列表失效重绘。
   var sig = [String(state && state.schema), lastApplied, confirmId || "",
     editMode ? "edit" : "", batchConfirm ? "batch" : "", gate ? "gate" : ""];
   bm.checkedIds.forEach(function (id) { sig.push(id); });
@@ -1370,8 +1370,8 @@ function renderNodeList() {
     els.nList.textContent = "";
     model.rows.forEach(function (row) { els.nList.appendChild(renderRow(row, gate)); });
     if (model.empty) {
-      // An empty list must still offer the one gesture that fills it, not just the + in
-      // the card header: a first-time user looks at the middle of the page.
+      // 空列表也必须提供能填满它的手势，而不只是卡片标题里的 +：
+      // 初次使用的用户会看向页面中间。
       var addBtn = document.createElement("button");
       addBtn.type = "button";
       addBtn.className = "primary nempty";
@@ -1390,8 +1390,8 @@ function renderNodeList() {
   if (dialogId) { renderDialog(); }
 }
 
-// selected is written before outbound.meta/outbound.json/CLI: a crash or a failed apply then
-// leaves the honest "selected B, applied A" state instead of a config newer than the pointer.
+// 先写 selected，再写 outbound.meta/outbound.json/CLI：这样崩溃或应用失败
+// 留下的是诚实的"selected B, applied A"状态，而不是比指针更新的配置。
 function writeSelected(id) {
   if (!lastStateObj || lastStateObj.selected === id) { return Promise.resolve(false); }
   lastStateObj.selected = id;
@@ -1404,7 +1404,7 @@ function switchTo(n, opts) {
   var done = typeof opts.done === "function" ? opts.done : null;
   function finish(err) {
     if (!done) { return; }
-    try { done(err || null); } catch (e) { /* a dialog callback must not break the apply chain */ }
+    try { done(err || null); } catch (e) { /* 弹窗回调不能中断应用链路 */ }
   }
   function fail(msg) {
     if (!opts.fromDialog) { toast(msg); }
@@ -1421,7 +1421,7 @@ function switchTo(n, opts) {
     return;
   }
 
-  // Already the applied node: no core work. A failed switch may still point selected here.
+  // 已经是已应用节点：无需动核心。切换失败时 selected 仍可能指向这里。
   if (lastApplied && lastApplied === n.id && !n.dirty) {
     busy = true;
     setButtons();
@@ -1466,8 +1466,8 @@ function switchTo(n, opts) {
       throw new Error((r.stderr || "").trim() || ("exit " + r.errno));
     }
     if (n.dirty) {
-      // Clear the flag only if the node still renders to the exact outbound that was just
-      // applied; a newer edit must stay marked as not applied.
+      // 只有当节点仍渲染出与刚应用时完全相同的出站，才清除该标记；
+      // 更新的编辑必须继续保持未应用标记。
       var cur = findNodeById(lastStateObj, n.id);
       var current = "";
       if (cur) {
@@ -1493,17 +1493,17 @@ function switchTo(n, opts) {
 }
 
 // ---- node detail dialog ----
-// The row tap opens this read-only: it shows the node's fields and the canonical link, but
-// only the Apply button writes `selected` or touches the core. The dialog holds no route or
-// history entry, like the add dialog.
+// 点按行以只读方式打开它：显示节点字段与规范链接，但只有应用按钮
+// 会写 `selected` 或触碰核心。与添加弹窗一样，它不持有路由或
+// 历史记录条目。
 
 function currentDialogNode() {
   return dialogId ? findNodeById(lastStateObj, dialogId) : null;
 }
 
-// Opening a dialog must freeze the page behind it: touch scrolling on the overlay would
-// otherwise drag the node list underneath. body.dialog-open (CSS) hides the overflow; the
-// class also keeps the scroll position, unlike resetting body scrollTop.
+// 打开弹窗必须冻结背后的页面：否则遮罩上的触摸滚动会拖动底下的节点列表。
+// 用 body.dialog-open（CSS）隐藏溢出；这个类还能保留滚动位置，
+// 不像重置 body scrollTop 那样。
 function syncDialogScrollLock() {
   document.body.classList.toggle("dialog-open",
     Boolean(dialogId || !els.overlay.hidden));
@@ -1580,8 +1580,8 @@ function renderDialog() {
   var selectedId = lastStateObj && typeof lastStateObj.selected === "string"
     ? lastStateObj.selected : "";
   var model = nodeDialogModel(node, lastApplied, selectedId);
-  // renderNodeList and setButtons both reach this on every 2s poll. Redraw only when a fact
-  // the dialog shows changed; a language switch resets dialogSig.
+  // 每次 2s 轮询，renderNodeList 与 setButtons 都会走到这里。只在弹窗
+  // 展示的某个事实变化时才重绘；切换语言会重置 dialogSig。
   var sig = [
     String(node.id), JSON.stringify(node), lastApplied || "", selectedId,
     model.applied ? 1 : 0, model.selected ? 1 : 0, model.dirty ? 1 : 0,
@@ -1601,7 +1601,7 @@ function renderDialog() {
 
   els.ndInfo.textContent = "";
   addInfoRow(els.ndInfo, T.fieldProtocol, node.protocol);
-  // ss has no transport/security in its link model; showing defaults would invent fields.
+  // 在 ss 的链接模型里没有传输/安全字段；显示默认值等于凭空造出字段。
   if (node.protocol !== "ss") {
     addInfoRow(els.ndInfo, T.fieldTransport, node.transport || "tcp");
     addInfoRow(els.ndInfo, T.fieldSecurity, node.security || "none");
@@ -1745,7 +1745,7 @@ function copyText(text) {
         return p.catch(function () { return legacyCopy(text); });
       }
     }
-  } catch (e) { /* fall through to the textarea */ }
+  } catch (e) { /* 继续走 textarea 的回退路径 */ }
   return legacyCopy(text);
 }
 
@@ -1780,11 +1780,11 @@ function askDelete(n) {
   renderNodeList();
 }
 
-// One deletion path for one id or many: filter the manual store, clear the selected pointer
-// when it named a deleted node, drop the rendered outbound when it belonged to one, then
-// persist. The rm runs before the write: a failed rm must leave the node in the store so the
-// removal can be retried. A delete that empties the list while the core is stopped is an
-// unapply (ADR 0013) and it goes first for the same reason.
+// 单个或多个 id 共用一条删除路径：过滤手工节点库，若被删节点是当前节点
+// 就清掉 selected 指针，渲染出的出站若属于被删节点就丢弃，然后持久化。
+// 先执行 rm 再写入：rm 失败必须让节点留在库里，以便删除可以重试。
+// 核心已停止时清空列表的删除就是一次取消应用（ADR 0013），出于同样
+// 的原因它也最先执行。
 function deleteNodes(ids) {
   var state = lastStateObj;
   var unapply = willUnapply(nodeListModel(state, lastApplied), ids, coreRunning());
@@ -1850,8 +1850,8 @@ function confirmBatchDelete() {
     renderNodeList();
     return;
   }
-  // The check set never holds the applied row unless the gate allows it, but a refresh
-  // between check and confirm must not let it sneak in.
+  // 除非门槛允许，勾选集合里不会有已应用行；但勾选与确认之间的一次
+  // 刷新也不能让它混进来。
   if (!gate && lastApplied && ids.indexOf(lastApplied) >= 0) {
     batchConfirm = false;
     renderNodeList();
@@ -1872,11 +1872,11 @@ function confirmBatchDelete() {
   });
 }
 
-// state.json is the intent; runtime/applied is the node the current config was built from.
-// Read state, the applied id and the rendered outbound's meta in one exec; the list must show
-// "selected but not applied" after a failed switch instead of pretending it already switched.
-// The status poll carries the state revision, the applied id and the meta id: when none moved,
-// the whole file is already in lastStateObj and there is nothing to read or render.
+// 意图写在 state.json；runtime/applied 指向当前配置由之生成的节点。
+// 一次 exec 里同时读取状态、已应用 id 与渲染出站的 meta；切换失败后列表必须
+// 显示"已选中未应用"，而不是假装已经切换成功。
+// 状态轮询带着 state revision、已应用 id 和 meta id：三者都没动时，
+// 整个文件已经在 lastStateObj 里，无需再读、也无需重绘。
 function refreshNodes(kv) {
   var known = lastStateObj;
   if (kv && known && kv.revision !== undefined && known.revision !== undefined &&
@@ -1902,11 +1902,11 @@ function refreshNodes(kv) {
 
 // ---- import switch rule ----
 
-// An import leaves the store usable only if something is applied, and the first import is the
-// moment the user wants the node they just pasted to run. The node to switch to is the pointer
-// they already set when it still resolves (a failed switch leaves it there), else the first node
-// the list can show. "" means "switch nothing": a node is already applied. Pure, so the import
-// tests can run it without a browser.
+// 只有存在已应用节点，一次导入之后节点库才是可用的；首次导入正是用户
+// 希望刚粘贴的节点跑起来的时刻。要切换到的节点是已设好且仍能解析的指针
+// （切换失败会把它留在那里），否则取列表能显示的第一个节点。
+// "" 表示"什么都不切换"：已经有已应用节点。纯函数，便于导入测试
+// 在无需浏览器的情况下运行。
 function applyAfterImport(state, appliedId) {
   if (appliedId) { return ""; }
   var manual = state && Array.isArray(state.manual) ? state.manual : [];
@@ -1914,7 +1914,7 @@ function applyAfterImport(state, appliedId) {
   var first = "";
   for (var i = 0; i < manual.length; i++) {
     var n = manual[i];
-    // The same filter as nodeListModel: a node without an id has no row to mark as applied.
+    // 与 nodeListModel 相同的过滤：没有 id 的节点没有可标记为已应用的行。
     if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") {
       continue;
     }
@@ -1929,9 +1929,9 @@ function applyAfterImport(state, appliedId) {
 
 // ---- node import UI ----
 
-// Re-importing a node updates it in place and keeps its id, so the selection and any
-// reference to it survive; only a genuinely new identity is appended. One index over the
-// store keeps an import of N nodes O(N) instead of scanning the list per node.
+// 重新导入会原地更新节点并保留其 id，因此当前节点与所有指向它的引用
+// 都能存活；只有真正新的身份才追加。对节点库建一份索引，
+// 使导入 N 个节点是 O(N)，而不是每节点都扫一遍列表。
 function mergeNodes(state, nodes) {
   if (!state.schema) { state.schema = 1; }
   if (!Array.isArray(state.manual)) { state.manual = []; }
@@ -1951,8 +1951,8 @@ function mergeNodes(state, nodes) {
       var keepId = existing.id || idOf(n);
       Object.keys(n).forEach(function (k) { if (k !== "id") { existing[k] = n[k]; } });
       existing.id = keepId;
-      // Same id, possibly new credentials/transport: the applied config is now stale.
-      // The list marks it until the next successful apply clears the flag.
+      // 同一个 id，凭证/传输可能变了：已应用的配置就此过时。
+      // 列表会一直标记它，直到下一次成功应用清除该标记。
       existing.dirty = true;
       updated++;
     } else {
@@ -1967,7 +1967,7 @@ function mergeNodes(state, nodes) {
 
 function writeFile(path, text, mode) {
   var b64 = bytesToBase64(new TextEncoder().encode(text));
-  // tmp + mv so a half-written file is impossible; these files hold credentials, hence 0600.
+  // 用 tmp + mv，杜绝写了一半的文件；这些文件含凭证，所以权限是 0600。
   var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + path + ".tmp && chmod " + mode +
     " " + path + ".tmp && mv " + path + ".tmp " + path;
   return exec(cmd).then(function (r) {
@@ -2002,8 +2002,8 @@ function previewLine(text, cls) {
   return row;
 }
 
-// A partial failure leaves the dialog open over the user's text: the imported rows are
-// done, and the failed ones are listed here so they can be fixed and retried.
+// 部分失败时弹窗仍盖在用户输入之上：导入成功的行已经完成，
+// 失败的行列在这里，便于修改后重试。
 function renderFailedRows(rows) {
   els.iPreview.textContent = "";
   rows.forEach(function (r) {
@@ -2012,16 +2012,16 @@ function renderFailedRows(rows) {
   });
 }
 
-// The import/delete lines the module log carries for UI-side store changes: the shell
-// never sees them -- the UI writes the store straight through the bridge -- so
-// `mlog append` is the one way in. Best effort: a failed log line must never touch the
-// operation's own result. Single-quoted: the messages are digits, spaces and parens.
+// 模块日志里由 UI 侧节点库改动写下的导入/删除行：shell 看不到它们——
+// 页面直接经桥接写节点库——因此 `mlog append` 是唯一入口。
+// 尽力而为：一行日志写失败绝不能影响操作本身的结果。用单引号：
+// 消息只含数字、空格和括号。
 function logNodeLine(message) {
   exec(CLI + " mlog append Node '" + message + "'").catch(function () {});
 }
 
-// The log line matches the toast's numbers: all-new rows read (3 new), a mix reads
-// (2 updated, 1 failed), and no suffix segment when nothing failed and nothing updated.
+// 日志行与 toast 的数字一致：全是新增时读作 (3 new)，
+// 混合时读作 (2 updated, 1 failed)；既无失败也无更新时不带后缀段。
 function importLogLine(added, updated, failed) {
   var msg = "imported " + (added + updated) + " nodes";
   var bits = [];
@@ -2032,9 +2032,9 @@ function importLogLine(added, updated, failed) {
   return msg;
 }
 
-// One gesture: parse the input and merge the parseable rows into the store. With no node
-// applied yet the same gesture also switches the node applyAfterImport names (ADR 0012);
-// with one already applied nothing but the store changes.
+// 一个手势：解析输入，把可解析的行合并进节点库。还没有已应用节点时，
+// 同一手势也会切换到 applyAfterImport 指定的节点（ADR 0012）；
+// 已经有已应用节点时，只有节点库发生变化。
 function doImport() {
   if (busy || !hasBridge) { return; }
   var rows = parseInput(els.iText.value);
@@ -2059,8 +2059,8 @@ function doImport() {
     var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
     state.revision = (Number(state.revision) || 0) + 1;
     return writeState(state).then(function () {
-      // The page must hold what was just written: switchTo reads lastStateObj, and a stale copy
-      // would leave a re-imported node marked dirty after its own apply succeeded.
+      // 页面必须持有刚写入的内容：switchTo 会读 lastStateObj，若拿着旧副本，
+      // 重新导入的节点在自身应用成功后仍会被标记为有改动。
       lastStateObj = state;
       nextId = applyAfterImport(state, lastApplied);
       logNodeLine(importLogLine(res.added, res.updated, bad.length));
@@ -2071,8 +2071,8 @@ function doImport() {
         closeAdd();
         refreshPage();
       } else {
-        // The text stays for editing; re-importing is safe because mergeNodes updates
-        // by identity instead of duplicating.
+        // 文本保留以便编辑；重新导入是安全的，因为 mergeNodes 按身份更新，
+        // 而不是复制出重复项。
         toast(msg + T.importFailedN.replace("{n}", String(bad.length)));
         renderFailedRows(bad);
       }
@@ -2084,7 +2084,7 @@ function doImport() {
     busy = false;
     setButtons();
     els.iApply.disabled = !els.iText.value.trim();
-    // After busy clears: switchTo refuses to run while another action holds the page.
+    // 在 busy 清除之后：switchTo 在另一个操作占用页面时会拒绝运行。
     if (!nextId) { return; }
     var node = findNodeById(lastStateObj, nextId);
     nextId = "";
@@ -2092,7 +2092,7 @@ function doImport() {
   });
 }
 
-// The running hints mention the socks port; the shell now reports the configured one.
+// 运行提示里提到 socks 端口；shell 现在报告的是已配置的那个。
 function hintText(t, kv) {
   return String(t || "").replace("{port}", kv && kv.socks ? String(kv.socks) : String(PORT_DEFAULTS.socks));
 }
@@ -2117,19 +2117,19 @@ function renderStatus(kv) {
   els.port.textContent = kv.socks ? "socks " + kv.socks + " · http " + kv.http : "–";
   els.conf.textContent = kv.conf || "–";
   if (state === "running") {
-    // A running core always has the rules (启动即接管, docs/adr/0011): a start whose takeover
-    // could not be enforced is refused, so this is the only hint a running core can get.
+    // 运行中的核心一定带着接管规则（启动即接管，docs/adr/0011）：无法落实
+    // 接管的启动会被拒绝，所以这是运行中的核心唯一可能得到的提示。
     els.hint.textContent = hintText(T.tpRunningHint, kv);
   } else {
-    // No boot start means a stopped core leaves the device direct, and that is the one thing
-    // the hint has to name (docs/adr/0018).
+    // 开机不自动启动，意味着核心停止时设备保持直连，而提示必须点明这一点
+    // （见 docs/adr/0018）。
     els.hint.textContent = kv.node ? T.stoppedHintTp : T.stoppedHintNone;
   }
 
-  // The status card is failure-only: the switch that used to live in Settings is gone
-  // (docs/adr/0011), so a failure is the only thing this card ever has to say. A conflict or
-  // a rule failure leaves the core down and the device direct; the retry runs the same start
-  // the button does.
+  // 状态卡片只用于失败：设置页里曾经有过的开关已经移除
+  // （docs/adr/0011），所以失败是这张卡片唯一需要说的事。冲突或
+  // 接管规则失败会让核心停机、设备保持直连；重试执行的就是按钮
+  // 那次启动。
   var tpFailed = phase === "failed/conflict" || phase === "failed/rules";
   els.tpCard.hidden = !tpFailed;
   if (tpFailed) {
@@ -2137,10 +2137,10 @@ function renderStatus(kv) {
   }
   els.tpRetry.hidden = !tpFailed || busy;
 
-  // The 分流模式 follows the preference (kv.route). The card sits on the Status page, next to
-  // the state the mode changes, and the hint under it is warning-only: 全局 needs no geo data,
-  // 大陆直连 degrades to 全局 without it (ADR 0014) and 大陆直连去广告 refuses to start
-  // (ADR 0021), so a normal mode says nothing at all and only a missing file has a line.
+  // 分流模式取自偏好（kv.route）。卡片放在状态页，紧挨着它改变的状态；
+  // 它下方的提示只用于告警：全局不需要地理数据，缺数据时大陆直连
+  // 退化为全局（ADR 0014），大陆直连去广告则拒绝启动（ADR 0021）；
+  // 因此正常模式什么都不说，只有缺文件时才出现这一行。
   var routeMode = routeValue(kv.route);
   els.selRoute.value = routeMode;
   var routeHint = "";
@@ -2152,15 +2152,15 @@ function renderStatus(kv) {
   els.setRouteHint.className = routeHint ? "hint warn" : "hint";
   els.setRouteHint.hidden = !routeHint;
 
-  // The 日志等级 comes from the shell, not localStorage: the select shows the saved
-  // preference, and the hint appears only while a running core still carries the old level
-  // (it applies at the next start, docs/adr/0015).
+  // 日志等级来自 shell，而不是 localStorage：下拉框显示已保存的
+  // 偏好，只有运行中的核心仍带着旧等级时才出现提示
+  // （下次启动生效，docs/adr/0015）。
   var logLevel = LOG_LEVELS.indexOf(kv.loglevel) >= 0 ? kv.loglevel : "warning";
   els.selLogLevel.value = logLevel;
   els.setLogLevelHint.hidden = kv.loglevelpending !== "1";
 
   setButtons();
-  // The delete gate depends on the runtime, so a Stop or Start has to re-evaluate the list.
+  // 删除门槛取决于运行状态，所以停止或启动都要重新判定列表。
   if (coreRunning() !== listRunning) { renderNodeList(); }
 }
 
@@ -2173,16 +2173,16 @@ function renderLog(text) {
   updateLogNav();
 }
 
-// The floating scroll buttons exist only while the log actually overflows: a short log
-// gets no buttons. A hidden page has no layout (both measures read 0), so the same check
-// also covers being on another tab; renderLog re-evaluates it whenever the text changes.
+// 浮动滚动按钮只在日志确实溢出时存在：日志短就没有按钮。
+// 隐藏的页面没有布局（两个测量值都是 0），因此同一检查也覆盖了
+// 停在别的标签页的情况；文本变化时 renderLog 会重新判定。
 function updateLogNav() {
   els.logNav.hidden = els.log.scrollHeight <= els.log.clientHeight;
 }
 
 function refreshStatus() {
-  // The page-specific extra: log sizes on the log page, the rendered meta id on the node
-  // page, so neither has to read state.json again.
+  // 按页面附加的参数：日志页带上日志大小，节点页带上渲染出的 meta id，
+  // 这样两者都不必再读一次 state.json。
   var page = currentRoute === "log" ? " log" : (currentRoute === "nodes" ? " nodes" : "");
   var cmd = CLI + " status" + page;
   return exec(cmd).then(function (r) {
@@ -2194,12 +2194,12 @@ function refreshStatus() {
     var kv = parseKv(r.stdout);
     renderStatus(kv);
     return kv;
-  }).catch(function () { return null; /* bridge error already reported at boot */ });
+  }).catch(function () { return null; /* 桥接错误已在启动时报告 */ });
 }
 
 function refreshLog(size) {
-  // Capture the source and the generation: a tab switch or a 清空日志 while the tail is in
-  // flight must not render that stale text (its own fetch is already on the way).
+  // 记下来源和代号：tail 在途时切换标签或清空日志，都不能把那段
+  // 陈旧文本渲染出来（它自己的拉取已经在路上）。
   var source = logSource;
   var gen = logGen[source];
   var cmd = source === "module" ? "mlog" : "log";
@@ -2210,9 +2210,9 @@ function refreshLog(size) {
   }).catch(function () {});
 }
 
-// Switching tabs only changes which tail the next fetch reads: Follow, Pause and the
-// 日志行数 all carry over. The cache entry is dropped so the redraw is not suppressed,
-// and the empty page holds until the fetch answers.
+// 切换标签只改变下一次拉取读哪个 tail：跟随、暂停和日志行数
+// 都沿用原来的设置。丢弃缓存项，避免重绘被跳过；
+// 页面先空着，直到拉取返回。
 function setLogSource(source) {
   if (source === logSource) { return; }
   logSource = source;
@@ -2223,21 +2223,21 @@ function setLogSource(source) {
   els.logTabModule.setAttribute("aria-selected", source === "module" ? "true" : "false");
   lastLog[source] = null;
   renderLog("");
-  // The status poll already told us the new source's size; passing it keeps the next poll
-  // from fetching the same tail twice.
+  // 状态轮询已经给出新来源的大小；把它传进去，避免下一次轮询
+  // 把同一段 tail 再取一遍。
   var size;
   if (lastKv) { size = source === "module" ? lastKv.mlogsize : lastKv.logsize; }
   refreshLog(size);
 }
 
-// 清空日志 is one tap with no confirm: the button names the file it will truncate and the
-// toast names the one it did. Capture the source as refreshLog does — a tab switch while the
-// shell is in flight must not redraw the other log or claim its file was cleared.
+// 清空日志是无需确认的一次点按：按钮写出它将截断的文件，
+// 提示 toast 写出实际已清空的文件。像 refreshLog 那样记下来源——
+// 切换标签发生在 shell 在途时，既不能重绘另一个日志，也不能声称它已被清空。
 function clearCurrentLog() {
   if (!hasBridge || busy || clearBusy) { return; }
   var source = logSource;
   var cmd = (source === "module" ? "mlog" : "log") + " clear";
-  logGen[source]++; // discard any tail already in flight for this log
+  logGen[source]++; // 丢弃该日志尚在途的 tail
   clearBusy = true;
   setButtons();
   exec(CLI + " " + cmd).then(function (r) {
@@ -2246,8 +2246,8 @@ function clearCurrentLog() {
       return;
     }
     toast(source === "module" ? T.clearModuleDone : T.clearCoreDone);
-    // The truncate takes the size N -> 0. Drop both caches so the view clears at once and
-    // the 2s poll cannot skip the new tail because it remembers the old size.
+    // 截断使大小从 N 变成 0。两个缓存都丢掉，视图立刻清空，
+    // 而 2s 轮询也不会因为记着旧大小而跳过新的 tail。
     lastLog[source] = null;
     lastLogSize[source] = -1;
     if (source === logSource) { renderLog(""); refreshLog(); }
@@ -2259,17 +2259,17 @@ function clearCurrentLog() {
   });
 }
 
-// The three 分流模式 values the shell can write (docs/adr/0021). A value this page does not
-// know reads as 全局, the absent-file mode, so a hand-edited runtime/route can never leave the
-// select blank. 全局 is no longer the default: the installer writes `cnadblock`.
+// 三种分流模式取值对应 shell 能写入的值（docs/adr/0021）。本页不认识的值
+// 一律读作全局，即无文件时的模式，这样手改 runtime/route 也绝不会
+// 让下拉框空白。全局已不再是默认值：安装器写入的是 `cnadblock`。
 var ROUTE_MODES = ["global", "cn", "cnadblock"];
 function routeValue(v) { return ROUTE_MODES.indexOf(v) >= 0 ? v : "global"; }
 
-// The Settings page shows the effective ports (state.json's, defaults applied), so the
-// user sees what the shell would render even if the file was last written by hand.
-// The status poll already carries them through the shell's own per-field fallback, so this
-// page no longer reads and parses state.json every 2s. A field the user is editing is left
-// alone: a 2s poll must not clobber typing.
+// 设置页显示生效的端口（state.json 的取值，已套用默认值），让用户
+// 看到的正是 shell 会渲染的结果，即使文件上次是手工写的。
+// 状态轮询已经通过 shell 自己的逐字段回退带上了端口，所以本页
+// 不再每 2s 读取并解析 state.json。用户正在编辑的字段保持不动：
+// 而 2s 轮询也绝不能覆盖正在输入的内容。
 function refreshSettings() {
   var kv = lastKv;
   var p = portsNormalize(kv ? { socksPort: kv.socks, httpPort: kv.http } : null);
@@ -2281,9 +2281,9 @@ function refreshSettings() {
   }
 }
 
-// One gesture: validate, write state.json's settings (intent first), then let the shell
-// render, test and restart. A failed render or restart leaves the old config running and
-// surfaces the CLI's error, like a failed node apply.
+// 一个手势：先校验并写入 state.json 的 settings（意图优先），再让 shell
+// 渲染、校验并重启。渲染或重启失败时旧配置继续运行，并把 CLI 的
+// 错误显示出来，与应用节点失败时一样。
 function doSavePorts() {
   if (busy || !hasBridge) { return; }
   var err = portsValidate(els.iSocks.value, els.iHttp.value);
@@ -2308,7 +2308,7 @@ function doSavePorts() {
     }).then(function (r) {
       if (r.errno !== 0) { toast(T.actionFailed + ": " + (r.stderr || r.errno)); }
       else {
-        // The saved values are the effective ones now; let the poll sync the fields again.
+        // 保存的值现在就是生效值；让轮询再同步一次字段即可。
         portsDirty.socks = false;
         portsDirty.http = false;
         toast(T.portsSaved);
@@ -2324,9 +2324,9 @@ function doSavePorts() {
 }
 
 // ---- navigation ----
-// Hash routes are the only navigation state: a reload lands on the same tab and
-// a link can deep-link into one. Taps replace rather than push, so a long-lived
-// WebView does not accumulate history for every tab switch.
+// 用 hash 路由作为唯一的导航状态：刷新会回到同一个标签页，链接也能
+// 直接深链到某个标签页。点按用 replace 而不是 push，
+// 这样长期存活的 WebView 不会为每次切换标签都堆出一条历史记录。
 var DEFAULT_ROUTE = "status";
 var currentRoute = null;
 var scrollByRoute = { status: 0, nodes: 0, log: 0, settings: 0 };
@@ -2343,9 +2343,9 @@ function routeHash(route) { return "#/" + route; }
 
 function showRoute(route, opts) {
   route = routeOf(route);
-  // The check set is a temporary intent: leaving the node page via the tab bar discards
-  // it rather than carrying it across. The add dialog overlays without a route change.
-  // Typed-but-unsaved ports are the same: leaving the page discards them.
+  // 勾选集合只是临时意图：经标签栏离开节点页时丢弃它，而不是带到别处。
+  // 添加弹窗以遮罩形式出现，不改变路由。已输入但未保存的端口同理：
+  // 离开页面就丢弃。
   if (route !== "settings") {
     portsDirty.socks = false;
     portsDirty.http = false;
@@ -2367,14 +2367,14 @@ function showRoute(route, opts) {
     if (active) { tab.setAttribute("aria-current", "page"); }
     else { tab.removeAttribute("aria-current"); }
   });
-  // Hidden pages have no layout, so restore the scroll after the chosen page exists.
+  // 隐藏页面没有布局，所以要等选中的页面存在之后再恢复滚动位置。
   var y = scrollByRoute[route] || 0;
   window.scrollTo(0, y);
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(function () { window.scrollTo(0, y); });
   }
-  // Entering the log page with Follow on should land on the newest lines even
-  // when the text itself did not change since the last visit.
+  // 即使文本自上次访问以来没有变化，带着"跟随"进入日志页也应落在
+  // 最新几行。
   if (route === "log") { updateLogNav(); }
   if (route === "log" && els.follow.checked) {
     var toBottom = function () { els.log.scrollTop = els.log.scrollHeight; };
@@ -2384,8 +2384,8 @@ function showRoute(route, opts) {
   if (!opts || opts.refresh !== false) { refreshPage(); }
 }
 
-// The add dialog holds no route and no history entry: the back gesture stays with the
-// tab bar. Opening resets it because closing discards whatever was typed.
+// 添加弹窗不持有路由，也不产生历史记录：返回手势始终属于标签栏。
+// 打开时重置内容，因为关闭会丢弃已输入的一切。
 function openAdd() {
   if (dialogId || dialogBusy) { return; }
   els.iText.value = "";
@@ -2407,7 +2407,7 @@ function go(route) {
   if (route === currentRoute) { refreshPage(); return; }
   var hash = routeHash(route);
   var replaced = false;
-  try { history.replaceState(null, "", hash); replaced = true; } catch (e) { /* fall back below */ }
+  try { history.replaceState(null, "", hash); replaced = true; } catch (e) { /* 走下面的回退路径 */ }
   if (replaced) { showRoute(route, { refresh: true }); }
   else { location.hash = hash; }
 }
@@ -2416,7 +2416,7 @@ function initNav() {
   var start = routeOf(location.hash);
   var hash = routeHash(start);
   if (location.hash !== hash) {
-    try { history.replaceState(null, "", hash); } catch (e) { /* routeOf still handles the odd hash */ }
+    try { history.replaceState(null, "", hash); } catch (e) { /* 异常的 hash 仍由 routeOf 处理 */ }
   }
   showRoute(start, { refresh: false });
   tabs.forEach(function (tab) {
@@ -2436,10 +2436,10 @@ function initNav() {
   });
 }
 
-// The pause checkbox only freezes the 2s poll, not the log itself: a manual fetch
-// (Refresh button) still goes through while paused.
-// One poll at a time: a slow bridge must not stack shells. A request that arrives while one
-// is in flight is coalesced into a single follow-up (manual wins).
+// 暂停复选框只冻结 2s 轮询，并不冻结日志本身：暂停期间手动拉取
+// （刷新按钮）仍然会执行。
+// 一次只跑一个轮询：桥接变慢也不能把 shell 堆起来。轮询在途时到达的
+// 请求合并成一次后续轮询（手动优先）。
 var pollInFlight = false;
 var pollQueued = false;
 
@@ -2453,7 +2453,7 @@ function refreshPage(manual) {
     page = status.then(function (kv) { return refreshNodes(kv); });
   } else if (currentRoute === "log") {
     if (els.pause.checked && !manual) {
-      // Paused: the status still updates the badge; the log waits for Refresh.
+      // 已暂停：状态仍会更新徽标；日志等待刷新按钮。
     } else if (manual) {
       page = refreshLog();
     } else {
@@ -2500,8 +2500,8 @@ els.tpRetry.addEventListener("click", function () { run("start", T.startingMsg);
 els.selRoute.addEventListener("change", function () {
   var target = routeValue(els.selRoute.value);
   if (lastKv && lastKv.route === target) { return; }
-  // A change made while another action holds the page is not sent: put the select back where
-  // the shell says it is, instead of leaving it lying until the next poll.
+  // 另一个操作占用页面时做出的改动不会发出去：把下拉框放回 shell 报告的
+  // 位置，而不是让它一直错着等到下一次轮询。
   if (busy) {
     els.selRoute.value = routeValue(lastKv && lastKv.route);
     return;
@@ -2513,8 +2513,8 @@ els.selLogLevel.addEventListener("change", function () {
   if (LOG_LEVELS.indexOf(target) < 0) { return; }
   var current = lastKv && LOG_LEVELS.indexOf(lastKv.loglevel) >= 0 ? lastKv.loglevel : "warning";
   if (target === current) { return; }
-  // Same rule as the 分流模式 select: a change made while another action holds the page is
-  // not sent; put the select back where the shell says it is.
+  // 与分流模式下拉框同一条规则：另一个操作占用页面时做出的改动
+  // 不会发出去；把下拉框放回 shell 报告的位置。
   if (busy) { els.selLogLevel.value = current; return; }
   run("loglevel " + target, T.logLevelToast);
 });
@@ -2523,7 +2523,7 @@ els.refresh.addEventListener("click", function () { refreshPage(true); });
 els.clearLog.addEventListener("click", clearCurrentLog);
 els.logTabCore.addEventListener("click", function () { setLogSource("core"); });
 els.logTabModule.addEventListener("click", function () { setLogSource("module"); });
-// Pure navigation: an instant scrollTop and nothing else — no fetch, no checkbox moves.
+// 纯导航：只是一次即时 scrollTop，别无其他——不拉取、不动复选框。
 els.logTop.addEventListener("click", function () { els.log.scrollTop = 0; });
 els.logBottom.addEventListener("click", function () { els.log.scrollTop = els.log.scrollHeight; });
 window.addEventListener("resize", updateLogNav);
@@ -2535,8 +2535,8 @@ els.nList.addEventListener("click", function (e) {
   if (!row) { return; }
   var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
   if (!node) { return; }
-  // In edit mode the whole row is the check toggle; the applied row is excluded unless the
-  // delete gate allows deleting it, and the node detail dialog waits outside edit mode.
+  // 编辑模式下整行都是勾选开关；除非删除门槛允许，已应用行被排除，
+  // 节点详情弹窗只在编辑模式之外打开。
   if (editMode) {
     if (!canCheckNode(node)) { return; }
     if (checkSet[node.id]) { delete checkSet[node.id]; } else { checkSet[node.id] = true; }
@@ -2634,8 +2634,8 @@ document.addEventListener("keydown", function (e) {
 els.iText.addEventListener("input", function () {
   els.iApply.disabled = busy || !els.iText.value.trim();
 });
-// A theme change repaints through the CSS variables alone, so nothing has to be re-rendered —
-// unlike a language switch, which invalidates every rendered string.
+// 主题切换只靠 CSS 变量重绘，无需重新渲染任何东西——
+// 语言切换不同，它会让所有已渲染字符串失效。
 els.selTheme.addEventListener("change", function () {
   var v = els.selTheme.value;
   if (THEMES.indexOf(v) < 0 || v === themePref) { return; }
@@ -2669,8 +2669,8 @@ els.portsSave.addEventListener("click", doSavePorts);
 els.iSocks.addEventListener("input", function () { portsDirty.socks = true; });
 els.iHttp.addEventListener("input", function () { portsDirty.http = true; });
 
-// Poll only while the page is actually visible; the WebView freezes timers in
-// the background and a stale interval would otherwise pile up on resume.
+// 只在页面确实可见时轮询；WebView 在后台会冻结定时器，
+// 否则恢复时陈旧的 interval 会堆积起来。
 var timer = null;
 function startPolling() {
   if (timer || !hasBridge) { return; }

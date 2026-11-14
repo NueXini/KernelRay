@@ -1,12 +1,12 @@
-// TPROXY takeover tests.
+// 关于 TPROXY 接管的测试。
 //
-// The rule installer, conflict detection and start path in module/scripts/tproxy.sh run
-// against fake iptables/ip6tables/ip/settings binaries that log their arguments, so the
-// install/remove/conflict/fail-closed semantics are tested without an Android device.
+// 接管规则安装、冲突检测与启动路径都出自 module/scripts/tproxy.sh，对着会记录参数的
+// 假 iptables/ip6tables/ip/settings 二进制运行，因此无需 Android 设备就能检验
+// 安装/移除/冲突/失败关闭的语义。
 //
 //   node tests/tproxy.test.js
 //
-// Requires bash (Git Bash on Windows).
+// 需要 bash（Windows 上是 Git Bash）。
 
 "use strict";
 
@@ -30,9 +30,9 @@ const fixture = {
   }
 };
 
-// iptables/ip6tables: log everything; behave per the FAKE_* knobs. -nL (the
-// "is the chain there" probe) fails while FAKE_IPT_NOCHAIN is set, so an install
-// actually emits its rules; -N KR_TP_OUTPUT fails while FAKE_IPT_FAIL_N is set.
+// 假的 iptables/ip6tables：记录一切调用；行为由 FAKE_* 开关决定。
+// 设置 FAKE_IPT_NOCHAIN 时 -nL（「链是否存在」的探测）会失败，于是安装
+// 真的会发出规则；设置 FAKE_IPT_FAIL_N 时 -N KR_TP_OUTPUT 会失败。
 const fakeIpt = [
   "#!/bin/sh",
   'printf "%s\\n" "$(basename "$0") $*" >>"$FAKE_LOG"',
@@ -49,9 +49,9 @@ const fakeIpt = [
   ""
 ].join("\n");
 
-// ip: log; `ip link show` prints $FAKE_IP_LINK when set; the rest succeeds.
-// ip: log; `ip link show` prints $FAKE_IP_LINK; `ip [-6] route show …` prints
-// $FAKE_IP_DEF (the default route kr_tp_routes copies into the bypass table).
+// 假的 ip：记录调用；设置了 $FAKE_IP_LINK 时 `ip link show` 会打印它，其余调用成功。
+// 假的 ip：记录调用；`ip link show` 打印 $FAKE_IP_LINK，`ip [-6] route show …`
+// 会打印 $FAKE_IP_DEF（kr_tp_routes 复制进旁路表的那条默认路由）。
 const fakeIp = [
   "#!/bin/sh",
   'printf "%s\\n" "$(basename "$0") $*" >>"$FAKE_LOG"',
@@ -72,15 +72,15 @@ const fakeSettings = [
   ""
 ].join("\n");
 
-// No network in these tests: the node-host resolve (kr_tp_pin_node) must fail fast instead
-// of waiting out busybox wget's -T and ping's -W2. FAKE_WGET_JSON, when set, is the DoH answer
-// the stub prints; without it the stub fails like an unreachable network. The stub is
-// named "busybox" because the resolve calls $KR_BUSYBOX (overridden to the stub) wget.
+// 这些测试里没有网络：节点主机名的解析（kr_tp_pin_node）必须快速失败，而不是
+// 耗在 busybox wget 的 -T 和 ping 的 -W2 上。设置 FAKE_WGET_JSON 时，它就是桩
+// 打印的 DoH 应答；不设置时桩像网络不可达一样失败。桩之所以叫 "busybox"，
+// 是因为解析调用的是 $KR_BUSYBOX（被改指向这个桩）wget。
 const fakeWget = [
   "#!/bin/sh",
   'printf "%s\\n" "$(basename "$0") $*" >>"$FAKE_LOG"',
-  // The resolve wraps the ask in `busybox timeout 4 busybox wget ...`; play the wrapper
-  // by re-execing with the inner argv, so the logged ask line is the inner one.
+  // 解析把请求包在 `busybox timeout 4 busybox wget ...` 里；这里用内部的 argv
+  // 重新执行来扮演那层包装，于是日志里记下的请求行就是内部那条。
   'if [ "$1" = timeout ]; then shift 2; exec "$0" "$@"; fi',
   '[ -n "$FAKE_WGET_JSON" ] && { printf "%s\\n" "$FAKE_WGET_JSON"; exit 0; }',
   "exit 1",
@@ -93,8 +93,8 @@ const fakePing = [
   ""
 ].join("\n");
 
-// -version prints, -test passes, `run -c` stays up so a start can reach "running". Every
-// invocation lands in $FAKE_LOG, so a test can assert what ran before what.
+// `-version` 输出版本，`-test` 通过，`run -c` 保持存活，让启动能到达 "running"。
+// 每次调用都记入 $FAKE_LOG，测试因此可以断言什么先跑、什么后跑。
 const fakeCore = [
   "#!/bin/sh",
   'printf "core %s\\n" "$*" >>"$FAKE_LOG"',
@@ -134,7 +134,7 @@ function shPath(p) {
   return "/" + p[0].toLowerCase() + p.slice(2).replace(/\\/g, "/");
 }
 
-// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+// 桩目录以 Windows 格式前置；msys bash 会自行转换 PATH。
 function posixPathEnv(extraDir) {
   return process.platform === "win32"
     ? extraDir + ";" + process.env.PATH
@@ -180,7 +180,7 @@ function runShell(m, body, extraEnv) {
       FAKE_LOG: shPath(path.join(m.dir, "iptables.log")),
       FAKE_IP_DEF: "default via 10.0.2.2 dev wlan0",
       PATH: posixPathEnv(path.join(m.dir, "stubs")),
-      // The fake core never binds the socks port, so a start waits for its deadline.
+      // 假核心从不绑定 socks 端口，所以启动会一直等到截止时间。
       KR_START_POLLS: "8",
       KR_START_STEP: "0.05"
     }, extraEnv || {}),
@@ -189,7 +189,7 @@ function runShell(m, body, extraEnv) {
   });
 }
 
-// Like runShell but tolerates a non-zero exit (kr_tp_conflict returns 1 on "no conflict").
+// 与 runShell 类似，但容忍非零退出（kr_tp_conflict 在「无冲突」时返回 1）。
 function runAllow(m, body, extraEnv) {
   try { return { status: 0, stdout: runShell(m, body, extraEnv) }; }
   catch (e) { return { status: e.status, stdout: e.stdout || "", stderr: e.stderr || "" }; }
@@ -209,10 +209,10 @@ function fakeLog(m) {
 const BODY_INSTALL = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_install';
 const BODY_REMOVE = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_remove';
 const BODY_CONFLICT = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_conflict';
-// The boot path end to end: the gate, the rules (engage) and the config the start runs.
+// 完整走一遍启动路径：闸门、接管规则（engage）以及启动所运行的配置。
 const BODY_BOOT = '. "$KR_TEST_SCRIPT"; kr_dirs; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 
-// ---- install ----------------------------------------------------------------------------
+// ---- 规则安装 ----------------------------------------------------------------------------
 
 check("install: both families get the full rule set and the policy routing", () => {
   const m = makeModule();
@@ -229,8 +229,8 @@ check("install: both families get the full rule set and the policy routing", () 
       (ipt === "ip6tables" ? "::1/128" : "127.0.0.0/8") + " -p tcp -j TPROXY")) {
       throw new Error(ipt + ": tcp TPROXY rule missing");
     }
-    // A local inbound (socks/http on loopback) answers from 127/8 to 127/8; the source
-    // TPROXY rule would steal that SYN-ACK unless the destination return comes first.
+    // 本地入站（环回上的 socks/http）从 127/8 应答到 127/8；除非目的地址的 RETURN
+    // 排在前面，否则源地址 TPROXY 规则会把那个 SYN-ACK 抢走。
     const loopback = ipt === "ip6tables" ? "::1/128" : "127.0.0.0/8";
     const localReturn = ipt + " -t mangle -A KR_TP_PREROUTING -d " + loopback + " -j RETURN";
     if (!log.includes(localReturn)) {
@@ -254,7 +254,7 @@ check("install: both families get the full rule set and the policy routing", () 
       throw new Error(ipt + ": PREROUTING hook missing");
     }
   }
-  // DNS to a LAN resolver is captured: port 53 is marked before the private ranges.
+  // 发往局域网解析器的 DNS 会被捕获：端口 53 的标记排在私有网段之前。
   const out = log.split("\n").filter((l) => l.includes("iptables -t mangle -A KR_TP_OUTPUT"));
   const dns53 = out.findIndex((l) => l.includes("--dport 53"));
   const lan = out.findIndex((l) => l.includes("192.168.0.0/16"));
@@ -314,7 +314,7 @@ check("install: a failing rule aborts and removes everything again", () => {
   if (!log.includes("ip rule del pref 9500")) { throw new Error("rollback must drop the policy rule"); }
 });
 
-// ---- remove -----------------------------------------------------------------------------
+// ---- 规则移除 -----------------------------------------------------------------------------
 
 check("remove: tolerant when nothing was ever installed", () => {
   const m = makeModule();
@@ -325,7 +325,7 @@ check("remove: tolerant when nothing was ever installed", () => {
   }
 });
 
-// ---- conflict ---------------------------------------------------------------------------
+// ---- 冲突检测 ---------------------------------------------------------------------------
 
 const TUN_UP = "5: tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500\n" +
   "    link/none";
@@ -365,19 +365,19 @@ check("conflict: a foreign TPROXY rule refuses takeover, our own do not", () => 
   }
 });
 
-// ---- the start path (启动即接管, ADR 0011) ------------------------------------------------
+// ---- 启动路径 (启动即接管, ADR 0011) ------------------------------------------------
 //
-// These run the whole start path (gate -> prepare -> config -> rules -> fork), because that is
-// where the ordering is the contract: the conflict check and the pin come first (while the
-// network is still direct), then the config and its `xray -test`, and only then the rules -- so
-// a config the core rejects leaves the device direct instead of offline. The assertions run
-// before the core is stopped, so status.json still describes the start.
+// 这些测试跑完整的启动路径（闸门 -> prepare -> 配置 -> 接管规则 -> fork），因为顺序
+// 正是这里的契约：冲突检查与节点地址钉死排在最前（此时网络仍是直连），然后是配置
+// 与它的 `xray -test`，最后才装接管规则 —— 被核心拒绝的配置于是让设备保持直连，
+// 而不是断网。断言在核心被停止之前执行，所以 status.json 里描述的仍是
+// 这次启动。
 
 function withBoot(m, env, fn) {
   try {
     return fn(runAllow(m, BODY_BOOT, env));
   } finally {
-    try { runShell(m, '. "$KR_TEST_SCRIPT"; kr_stop'); } catch (e) { /* best effort */ }
+    try { runShell(m, '. "$KR_TEST_SCRIPT"; kr_stop'); } catch (e) { /* 尽力而为 */ }
   }
 }
 
@@ -387,8 +387,8 @@ function status(m) {
 
 check("start: no usable outbound installs no rules and refuses the start", () => {
   const m = makeModule();
-  // A stale config from the previous session: with no rendered outbound there is nothing it
-  // could describe, so it must not be run (ADR 0010) -- and nothing may install rules.
+  // 上次会话留下的陈旧配置：背后没有渲染出的节点出站，它什么也描述不了，所以绝不能
+  // 被运行（ADR 0010）—— 也不能装上任何接管规则。
   fs.writeFileSync(m.config, JSON.stringify({ sentinel: true }));
   fs.writeFileSync(m.applied, ID + "\n");
   fs.rmSync(m.outbound, { force: true });
@@ -433,8 +433,8 @@ check("start: a failed rule install leaves the tested config on disk and the dev
   const m = makeModule();
   writeApplied(m);
   withBoot(m, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_FAIL_N: "1" }, () => {
-    // The config was rendered and passed -test before the rules were attempted: it is the
-    // one form there is, and a core that never starts cannot loop on it.
+    // 在尝试装接管规则之前，配置已经渲染并通过 -test：它就是唯一的那种形态，
+    // 而一个从未启动的核心也不可能围着它打环。
     const cfg = JSON.parse(fs.readFileSync(m.config, "utf8"));
     eq(cfg.inbounds.length, 3, "the takeover config is already on disk");
     eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
@@ -492,7 +492,7 @@ check("start: a rejected config installs no rules at all", () => {
   });
 });
 
-// ---- there is no switch (ADR 0011) --------------------------------------------------------
+// ---- 不存在开关 (ADR 0011) --------------------------------------------------------
 
 check("switch: no switch API survives, and a leftover file is removed by a start", () => {
   const m = makeModule();
@@ -505,8 +505,8 @@ check("switch: no switch API survives, and a leftover file is removed by a start
   if (gone.stdout.includes("STILL-THERE")) {
     throw new Error("the switch API is gone: " + gone.stdout);
   }
-  // kr_cleanup_legacy deletes what an older version left behind, so no stale preference or
-  // form can influence a start it no longer has a reader for (docs/adr/0011).
+  // 清理函数 kr_cleanup_legacy 会删除旧版本留下的东西，于是任何已经没有读取者的
+  // 陈旧偏好或形态都影响不了一次启动（docs/adr/0011）。
   withBoot(m, {}, () => {
     for (const leftover of ["tproxy", "config.form"]) {
       if (fs.existsSync(path.join(m.dir, "runtime", leftover))) {
@@ -527,7 +527,7 @@ check("switch: tproxy status reports the rules only, and status.json has no tpro
   });
 });
 
-// ---- the node pin (ADR 0008) -------------------------------------------------------------
+// ---- 节点地址钉死 (ADR 0008) -------------------------------------------------------------
 check("pin: the DoH answer via wget lands in runtime/nodeip, with the ask on record", () => {
   const m = makeModule();
   writeApplied(m);
@@ -536,15 +536,15 @@ check("pin: the DoH answer via wget lands in runtime/nodeip, with the ask on rec
     { FAKE_WGET_JSON: '{"Status":0,"Answer":[{"type":1,"data":"203.0.113.9"}]}' });
   eq(fs.readFileSync(nodeip, "utf8").trim(), "203.0.113.9", "nodeip content");
 
-  // The module log records the pin; the resolve path itself stayed silent because its
-  // stdout is the return value.
+  // 模块日志记录下这次钉死；解析路径本身保持沉默，因为它的 stdout
+  // 就是返回值。
   const log = fs.readFileSync(m.log, "utf8");
   if (!log.includes("pinned node address 203.0.113.9")) {
     throw new Error("the pin is not logged: " + log);
   }
 
-  // The ask's shape is load-bearing: type=A matches the DNS module's UseIPv4, and the
-  // verification is off on purpose (docs/adr/0008) -- neither may regress silently.
+  // 请求的形状是承重的：type=A 对应 DNS 模块的 UseIPv4，证书校验被有意关掉
+  // （docs/adr/0008）—— 两者都不许悄无声息地退化。
   const ask = fakeLog(m).split("\n").find((l) => l.includes("wget -q"));
   if (!ask) { throw new Error("busybox wget was never called"); }
   for (const part of ["--no-check-certificate", "name=n.example.com", "type=A"]) {
@@ -567,10 +567,10 @@ check("pin: a failed DoH ask logs the fallback and answers nothing", () => {
   }
 });
 
-// ---- report -----------------------------------------------------------------------------
+// ---- 结果报告 -----------------------------------------------------------------------------
 
 dirs.forEach((d) => {
-  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* Windows can hold a file */ }
+  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* Windows 可能占用文件 */ }
 });
 
 if (failures.length) {

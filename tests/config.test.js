@@ -1,14 +1,14 @@
-// Config-assembly tests.
+// 核心配置组装测试。
 //
-// The shell is the only thing that turns the template + outbound.json into config.json.
-// This harness sources the shipped kernelray.sh against a throwaway module dir and a fake
-// core, so it can test rendering, the applied-id bookkeeping and apply's failure paths
-// without an Android device or a real Xray binary.
+// 只有 shell 会把配置模板 + outbound.json 拼成 config.json。
+// 这套测试在临时的模块目录和假核心上 source 随包提供的 kernelray.sh，因此
+// 无需 Android 设备或真正的 Xray 核心，就能检验渲染、已应用 id 的记录以及
+// 应用节点的失败路径。
 //
 //   node tests/config.test.js
 //
-// Requires bash (Git Bash on Windows). The fake core only runs for the rollback test,
-// which uses /proc to identify the process; there is no real Xray or iptables here.
+// 需要 bash（Windows 上是 Git Bash）。假核心只在回滚测试里真正运行，那次测试用 /proc
+// 识别进程；这里没有真正的 Xray 或 iptables。
 
 "use strict";
 
@@ -58,11 +58,11 @@ const fakeCore = [
   ""
 ].join("\n");
 
-// A fake core that stays up only for a config built from the "old" node outbound
-// (address old.example.com). It lets the rollback tests exercise the "candidate tests
-// but exits right after start" path while a real config is running.
-// A fake core that stays up for any config: the start-path tests need a live pid, and /proc is
-// what kr_running checks.
+// 一个只为由「旧」节点出站（地址 old.example.com）生成的配置保持存活的假核心。它让
+// 回滚测试能在一份真实配置正在运行时，演练「候选配置能过测试、但启动后立刻退出」
+// 这条路径。
+// 一个对任意配置都保持存活的假核心：启动路径测试需要一个活着的 pid，而 /proc
+// 正是 kr_running 检查的地方。
 const aliveCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -116,7 +116,7 @@ function eq(actual, expected, what) {
   }
 }
 
-// Git Bash wants /c/Users/... where Node sees C:\Users\...
+// 在 Git Bash 里路径是 /c/Users/...，而 Node 看到的是 C:\Users\...
 function shPath(p) {
   if (process.platform !== "win32") { return p; }
   return "/" + p[0].toLowerCase() + p.slice(2).replace(/\\/g, "/");
@@ -128,20 +128,20 @@ function makeModule(core) {
   fs.copyFileSync(template, path.join(dir, "config.example.json"));
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), core || fakeCore, "utf8");
-  // Git Bash's [ -x ] takes a shebang as executable magic, so a missing exec bit only
-  // bites on Linux CI; the real device installs the binary executable (tproxy.test.js
-  // does the same).
+  // 在 Git Bash 里 [ -x ] 把 shebang 当作可执行魔数，所以缺少执行位只会在 Linux CI
+  // 上出问题；真实设备上安装的二进制本来就是可执行的（tproxy.test.js 也
+  // 同样处理）。
   fs.chmodSync(path.join(dir, "bin", "xray"), 0o755);
   fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
-  // kernelray.sh sources the takeover helpers from $KR_MODDIR/scripts, so the fixture
-  // needs the real tproxy.sh for the takeover render paths.
+  // 由于 kernelray.sh 从 $KR_MODDIR/scripts 加载接管辅助函数，夹具里必须放进
+  // 真正的 tproxy.sh 才能走接管的渲染路径。
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
-  // Every start takes over (docs/adr/0011), so every start needs a kernel that says yes:
-  // the stubs below are on PATH for every run unless a test brings its own (the rule-cache
-  // tests do). Without them a start is refused with failed/rules, which is the point of the
-  // start path but not what most of these tests are about.
+  // 每次启动都是一次接管（docs/adr/0011），所以每次启动都需要内核回答「规则在位」：
+  // 下面这些桩程序在每次运行里都位于 PATH 上，除非某个测试自带一套（规则缓存
+  // 测试就自带）。没有它们，启动会以 failed/rules 被拒绝，这正是启动路径要检验的，
+  // 却不是这里大多数测试的重点。
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   const chainless = [
@@ -193,9 +193,9 @@ function runShell(dir, body, args, extraEnv) {
       KR_TEST_SCRIPT: shPath(script),
       KR_BUSYBOX: shPath(path.join(stubs, "busybox")),
       PATH: fs.existsSync(stubs) ? posixPathEnv(stubs) : process.env.PATH,
-      // The fake cores never bind the socks port, so a start has to wait for its deadline:
-      // shorten it instead of paying 1.5 s per start. A core that exits is still caught on
-      // the first poll, which is what the rollback tests rely on.
+      // 假核心从不绑定 socks 端口，所以启动必须等到截止时间：这里把它缩短，免得每次启动
+      // 都付 1.5 s 的代价。会退出的核心仍在第一次轮询就被发现，回滚测试正是依赖
+      // 这一点。
       KR_START_POLLS: "8",
       KR_START_STEP: "0.05"
     }, extraEnv || {}),
@@ -204,16 +204,16 @@ function runShell(dir, body, args, extraEnv) {
   });
 }
 
-// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+// 桩目录以 Windows 格式前置；msys bash 会自行转换 PATH。
 function posixPathEnv(extraDir) {
   return process.platform === "win32"
     ? extraDir + ";" + process.env.PATH
     : extraDir + ":" + process.env.PATH;
 }
 
-// A fake iptables/ip6tables pair that logs each call and answers the chain probe with
-// <present>. The rule-cache tests use it to prove the status poll does (or does not) ask
-// the kernel.
+// 一对假的 iptables/ip6tables：记录每次调用，并用 <present> 回答
+// 「链是否存在」的探测。规则缓存测试用它证明状态轮询会不会去
+// 询问内核。
 function makeIptablesStub(m, present) {
   const dir = path.join(m.dir, "stub-bin");
   fs.mkdirSync(dir, { recursive: true });
@@ -248,7 +248,7 @@ function runFail(dir, body, args, extraEnv) {
   throw new Error("expected the shell command to fail");
 }
 
-// Like runShell but tolerates a non-zero exit (a predicate that answers "no" is not a bug).
+// 与 runShell 类似，但容忍非零退出（谓词回答「否」并不是错误）。
 function runAllow(dir, body, args, extraEnv) {
   try {
     return { status: 0, stdout: runShell(dir, body, args, extraEnv), stderr: "" };
@@ -263,8 +263,8 @@ function writeOutbound(m, opts) {
   fs.writeFileSync(m.meta, "id=" + (o.id || ID) + "\nhost=n.example.com\n");
 }
 
-// The UI serialises state.json pretty-printed; the shell's extraction relies on that
-// shape (every settings key on its own line).
+// 界面把 state.json 序列化成带缩进的形式；shell 的提取逻辑依赖这种
+// 形状（每个 settings 键独占一行）。
 function writeStatePorts(m, settings, opts) {
   const o = opts || {};
   const state = Object.assign({ schema: 1, revision: 1, manual: [],
@@ -288,7 +288,7 @@ const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 const BODY_CLI = '. "$KR_TEST_SCRIPT"; kr_cli "$@"';
 const BODY_SETTING_PORT = '. "$KR_TEST_SCRIPT"; kr_setting_port "$1" "$2"';
 
-// ---- template rendering -----------------------------------------------------------------
+// ---- 配置模板渲染 -----------------------------------------------------------------
 
 check("template: valid JSON with the quoted outbound placeholder", () => {
   const t = JSON.parse(fs.readFileSync(template, "utf8"));
@@ -344,7 +344,7 @@ check("render: a pretty-printed outbound file also works", () => {
   eq(cfg.outbounds[0].settings.servers[0].password, fixture.settings.servers[0].password, "outbound");
 });
 
-// ---- the one form -----------------------------------------------------------------------
+// ---- 唯一的形态 -----------------------------------------------------------------------
 
 check("render: tproxy inbound, dns module and routing are spliced in", () => {
   const m = makeModule();
@@ -364,9 +364,9 @@ check("render: tproxy inbound, dns module and routing are spliced in", () => {
   eq(cfg.outbounds.length, 4, "proxy + direct + block + dns-out");
   eq(cfg.outbounds[3], { tag: "dns-out", protocol: "dns", settings: {} }, "dns-out");
   eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "node outbound carries the bypass mark");
-  // The dns tag is not cosmetic: the rules below route on inboundTag:["dns"], and without
-  // it the core tags the module's upstream queries xray.system.<uuid> -- they then fall to
-  // port 53 -> dns-out and the module ends up asking itself (ADR 0006).
+  // 这个 dns 标签不是装饰：下面的分流规则按 inboundTag:["dns"] 匹配；没有它，
+  // 核心会把模块自己的上游查询标记为 xray.system.<uuid> —— 这些查询随后落到
+  // 端口 53 -> dns-out，模块最终变成自己问自己（ADR 0006）。
   eq(cfg.dns, { tag: "dns", servers: ["https://1.1.1.1/dns-query"], queryStrategy: "UseIPv4" }, "dns upstream: A-only, so apps never leak over v6");
   eq(cfg.routing.rules[0], {
     inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct"
@@ -404,8 +404,8 @@ check("render: an IPv6 node literal produces no bootstrap domain rule", () => {
 
 check("render: an outbound without the mark placeholder is refused", () => {
   const m = makeModule();
-  // A stale renderer could write an unmarked outbound; under takeover its packets
-  // would be captured back into the core: a routing loop. The render must fail.
+  // 旧版渲染器可能写出一条没有标记的节点出站；在接管之下它的数据包会被重新捕获回
+  // 核心，形成路由环路。这样的渲染必须失败。
   fs.writeFileSync(m.outbound, JSON.stringify(fixture).replace(
     /,"sockopt":\{"mark":"__KERNELRAY_MARK__"\}/, ""));
   fs.writeFileSync(m.meta, "id=" + ID + "\nhost=n.example.com\n");
@@ -424,7 +424,7 @@ check("render: there is one form, so the form machinery is gone", () => {
   if (gone.stdout.includes("STILL-THERE")) {
     throw new Error("the form machinery is gone: " + gone.stdout);
   }
-  // Every render carries the takeover blocks: there is no second form to ask for.
+  // 每次渲染都带上接管各块：不存在第二种可供选择的形态。
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.inbounds.length, 3, "the tproxy inbound is always there");
   eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "the mark is always live");
@@ -439,7 +439,7 @@ check("a template without the placeholder is refused", () => {
   }
 });
 
-// ---- inbound ports ---------------------------------------------------------------------
+// ---- 入站端口 ---------------------------------------------------------------------
 
 check("render: the inbound ports come from state.json's settings", () => {
   const m = makeModule();
@@ -585,7 +585,7 @@ check("start: a saved log level is re-rendered before the core runs", () => {
   runShell(m.dir, BODY_APPLY, [ID]);
   runShell(m.dir, BODY_START);
   runShell(m.dir, BODY_CLI, ["loglevel", "debug"]);
-  // The running config is still the old one: the state the UI warns about.
+  // 运行中的配置仍是旧的那份：正是 UI 警告用户会出现的那个状态。
   eq(readJson(m.config).log.loglevel, "warning", "config untouched before the next start");
   const pending = runShell(m.dir, BODY_CLI, ["status"]);
   if (!/^loglevel=debug$/m.test(pending) || !/^loglevelpending=1$/m.test(pending)) {
@@ -625,8 +625,8 @@ check("ensure: a deleted config is rebuilt from the applied outbound", () => {
 
 check("ensure: an applied id whose outbound is gone is refused, not taken from disk", () => {
   const m = makeModule();
-  // The guard that used to be the form comparison: a config on disk with no rendered
-  // outbound behind it describes nothing, so it must not be run (ADR 0010).
+  // 这里曾是「形态比对」的守卫：磁盘上那份配置背后没有渲染出的节点出站，它什么也
+  // 描述不了，因此绝不能被运行（ADR 0010）。
   fs.writeFileSync(m.meta, "id=" + OTHER_ID + "\nhost=n.example.com\n");
   fs.writeFileSync(m.applied, ID + "\n");
   fs.writeFileSync(m.config, '{"sentinel":true}\n');
@@ -640,9 +640,9 @@ check("ensure: an applied id whose outbound is gone is refused, not taken from d
 
 check("ensure: a failed switch keeps the applied node's config, it does not render the other node", () => {
   const m = makeModule(aliveCore);
-  writeOutbound(m, { id: OTHER_ID });   // the node the user tried
+  writeOutbound(m, { id: OTHER_ID });   // 用户尝试的那个节点
   fs.writeFileSync(m.applied, ID + "\n");
-  // What the rollback left behind: this node's config.
+  // 回滚留下的东西：这个节点的核心配置。
   const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
   fs.writeFileSync(m.config, cfg);
   runShell(m.dir, BODY_ENSURE);
@@ -740,8 +740,8 @@ check("apply: an invalid id is refused before anything is read", () => {
 check("apply: a candidate that tests but does not start is rolled back", () => {
   const m = makeModule(loopingCore);
   try {
-    // The core runs the "old" node's config; the candidate (the fixture node) tests
-    // but exits right after start, so the swap must restore the previous config.
+    // 核心运行的是「旧」节点的核心配置；候选配置（夹具节点）能通过测试，却在启动后
+    // 立刻退出，因此换入操作必须恢复先前的配置。
     const oldFixture = JSON.parse(JSON.stringify(fixture));
     oldFixture.settings.servers[0].address = "old.example.com";
     fs.writeFileSync(m.outbound, JSON.stringify(oldFixture));
@@ -763,7 +763,7 @@ check("apply: a candidate that tests but does not start is rolled back", () => {
     eq(st.state, "running", "restored core is running");
     eq(st.node, OTHER_ID, "the applied node after rollback");
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
 });
 
@@ -777,8 +777,8 @@ check("apply: a failed start with no previous config leaves the core stopped wit
     fs.writeFileSync(m.applied, OTHER_ID + "\n");
     runShell(m.dir, BODY_START);
     eq(readJson(m.status).state, "running", "the old node's core did start");
-    // The previous config disappears while the core is up, so the swap has nothing to
-    // roll back to: the core must go down, not fall back to anything.
+    // 核心还在运行时先前那份配置消失了，换入操作便无物可回滚：核心必须停下来，
+    // 而不是退回到任何别的东西。
     fs.unlinkSync(m.config);
 
     writeOutbound(m);
@@ -792,7 +792,7 @@ check("apply: a failed start with no previous config leaves the core stopped wit
     eq(st.state, "stopped", "state");
     eq(st.phase, "no-node", "phase");
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
 });
 
@@ -842,11 +842,11 @@ check("unapply: a running core is refused and keeps its config and applied id", 
     eq(fs.readFileSync(m.applied, "utf8").trim(), OTHER_ID, "applied id kept");
     eq(readJson(m.status).state, "running", "status untouched");
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
 });
 
-// ---- status bookkeeping -----------------------------------------------------------------
+// ---- 状态簿记 -----------------------------------------------------------------
 
 check("status: status.json records the applied id", () => {
   const m = makeModule();
@@ -885,8 +885,8 @@ check("status: a stopped core is not reported as crashed", () => {
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_START);
   runShell(m.dir, BODY_STOP);
-  // A stop leaves the rules up (fail-closed, docs/adr/0004): the cache still says present,
-  // because the capture really is still there.
+  // 停止核心会把接管规则留在位上（失败关闭，docs/adr/0004）：缓存里仍然写着
+  // 值 present，因为捕获确实还在。
   if (!/^present=1$/m.test(fs.readFileSync(m.rules, "utf8"))) {
     throw new Error("a stop leaves the capture up, so the cache must say present");
   }
@@ -901,17 +901,17 @@ check("status: status.json records the boot that wrote it", () => {
   eq(readJson(m.status).boot, "boot-x", "boot");
 });
 
-// procfs files report stat size 0, so a [ -s ] guard makes kr_boot_id empty on a real
-// device even though the file has a value. Only Linux CI can exercise the real file.
+// 由于 procfs 文件上报的 stat 大小是 0，[ -s ] 守卫在真实设备上会让 kr_boot_id
+// 变成空值，尽管文件里确实有内容。只有 Linux CI 能跑到真实文件。
 check("status: kr_boot_id reads a procfs file whose stat size is zero", () => {
-  if (!fs.existsSync("/proc/sys/kernel/random/boot_id")) { return; } // Git Bash has no procfs
+  if (!fs.existsSync("/proc/sys/kernel/random/boot_id")) { return; } // 这里（Git Bash）没有 procfs
   const m = makeModule();
   const out = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_boot_id').trim();
   if (!out) { throw new Error("kr_boot_id returned empty for a procfs boot id"); }
 });
 
-// Nothing rewrites status.json at boot any more (docs/adr/0018), so the file a reboot leaves
-// behind is the normal case, not an edge case: its phase is the past, not the present.
+// 开机时已没有任何东西会重写 status.json（docs/adr/0018），所以重启后留下的那份文件是
+// 常态而非边缘情况：它的 phase 属于过去，不是现在。
 check("status: a status.json from an earlier boot reads as idle, not as its old phase", () => {
   const m = makeModule();
   fs.writeFileSync(m.applied, ID + "\n");
@@ -943,7 +943,7 @@ check("status: a pidfile written by this boot is still evidence of a crash", () 
   }
 });
 
-// ---- rule-presence cache (docs/adr/0019) -------------------------------------------------
+// ---- 规则在位缓存 (docs/adr/0019) -------------------------------------------------
 
 check("status: a valid rule cache answers present without asking iptables", () => {
   const m = makeModule();
@@ -961,7 +961,7 @@ check("status: a valid rule cache answers present without asking iptables", () =
 check("status: a stale rule cache forces one real check and is repaired", () => {
   const m = makeModule();
   writeRulesCache(m, "the-previous-boot", 1);
-  const stub = makeIptablesStub(m, false); // the kernel says the rules are gone
+  const stub = makeIptablesStub(m, false); // 内核说规则已消失
   const body = '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv';
   const first = runShell(m.dir, body, [], { PATH: stub.path });
   if (!/^rules=absent$/m.test(first)) { throw new Error(first); }
@@ -994,7 +994,7 @@ check("status: a missing rule cache is answered by one check and written back", 
 
 check("rules cache: install records present=1 and remove records present=0", () => {
   const m = makeModule();
-  const stub = makeIptablesStub(m, true); // already present: install returns early
+  const stub = makeIptablesStub(m, true); // 规则已在位：安装提前返回
   const env = { PATH: stub.path };
   runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_tp_install',
@@ -1033,15 +1033,15 @@ check("status: the poll never runs the core", () => {
   }
 });
 
-// ---- start-path repair ------------------------------------------------------------------
+// ---- 启动路径修补 ------------------------------------------------------------------
 
 check("start: a config written before 启动即接管 is re-rendered in the one form", () => {
   const m = makeModule(aliveCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
-  // What an older version left behind: an idle config with no tproxy inbound and mark 0.
-  // Running it under the rules would capture nothing; running it without them would leave
-  // a local-only core. The start re-renders instead (docs/adr/0011).
+  // 旧版本留下的东西：一份没有 tproxy 入站、标记也为 0 的直连运行配置。在规则之下
+  // 运行它什么也捕获不到；不带规则运行它又会留下一个只有本地入站的核心。启动路径
+  // 改为重新渲染（docs/adr/0011）。
   fs.writeFileSync(m.config, JSON.stringify({ sentinel: "stale" }));
   runShell(m.dir, BODY_START);
   const after = fs.readFileSync(m.config, "utf8");
@@ -1067,14 +1067,14 @@ check("start: a config that already matches this start is left alone", () => {
   runShell(m.dir, BODY_STOP);
 });
 
-// ---- start readiness and process discovery ----------------------------------------------
+// ---- 启动就绪与进程发现 ----------------------------------------------
 
 check("start readiness: the socks port is read from config.json, not from state.json", () => {
   const m = makeModule(aliveCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
-  // The applied config carries 18080; state.json then says 10808. A ports edit that was
-  // never applied must not make a start wait for a port nothing listens on.
+  // 已应用的核心配置带着 18080；state.json 随后写成 10808。一次从未被应用的端口修改，
+  // 不该让启动去等一个没有任何东西监听的端口。
   writeStatePorts(m, { socksPort: 18080, httpPort: 10809 });
   fs.writeFileSync(m.config, runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" }));
   writeStatePorts(m, { socksPort: 10808, httpPort: 10809 });
@@ -1093,10 +1093,10 @@ check("start readiness: /proc/net/tcp parsing finds a listener on 127.0.0.1", ()
     " 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000 100 0 0 10 0";
   fs.writeFileSync(net, [
     "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
-    line("0100007F:46A0", "0A"), // 18080 listening
-    line("00000000:46A0", "0A"), // 18080 on a wildcard address: not our inbound
-    line("0100007F:2A38", "01"), // 10808 established, not listening
-    line("0100007F:2A38", "0A"), // 10808 listening
+    line("0100007F:46A0", "0A"), // 18080 正在监听
+    line("00000000:46A0", "0A"), // 通配地址上的 18080：不是我们的入站
+    line("0100007F:2A38", "01"), // 10808 已建立连接，未在监听
+    line("0100007F:2A38", "0A"), // 10808 正在监听
     ""
   ].join("\n"));
   const env = { KR_NET_TCP: shPath(net) };
@@ -1115,7 +1115,7 @@ check("start readiness: a core that exits is reported before the deadline", () =
   runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" });
   const cfg = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" });
   fs.writeFileSync(m.config, cfg);
-  // A 200 x 1 s deadline: passing this test means the death was noticed, not waited out.
+  // 200 x 1 s 的截止时间：通过这个测试意味着进程死亡是被察觉到的，而不是等出来的。
   const r = runAllow(m.dir, '. "$KR_TEST_SCRIPT"; kr_core_wait_ready "$1"', ["999999"],
     { KR_START_POLLS: "200", KR_START_STEP: "1" });
   eq(r.status, 1, "a dead pid is not ready");
@@ -1126,7 +1126,7 @@ check("start readiness: a live core that never listens still counts as started",
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
   fs.writeFileSync(m.config, runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { TP: "0" }));
-  // The fake core is alive and silent: the deadline is the answer, slow is not failed.
+  // 假核心活着且不监听：截止时间才是答案，慢并不等于失败。
   const out = runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; sleep 5 & p=$!; kr_core_wait_ready "$p"; echo "rc=$?"; kill $p 2>/dev/null',
     null, { KR_START_POLLS: "2", KR_START_STEP: "0.01" });
@@ -1135,9 +1135,9 @@ check("start readiness: a live core that never listens still counts as started",
 
 check("core pids: a process running the core with our config is found, one without is not", () => {
   const m = makeModule(aliveCore);
-  // The cores are started from inside the harness shell, the way kr_start starts them:
-  // argv[0] is the binary path (which carries `xray`), then `run -c <config>`. A process
-  // spawned by Node is not in Git Bash's /proc table, so the scan would find nothing there.
+  // 核心进程由测试用的 harness shell 内部启动，与 kr_start 启动它们的方式一致：
+  // 其中 argv[0] 是二进制路径（带有 `xray`），随后是 `run -c <config>`。由 Node
+  // 派生出的进程不在 Git Bash 的 /proc 表里，所以扫描在那里什么也找不到。
   const body = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray";' +
     ' "$KR_MODDIR/bin/xray" run -c "$1" & p1=$!;' +
     ' "$KR_MODDIR/bin/xray" run -c "$2" & p2=$!;' +
@@ -1203,9 +1203,9 @@ check("core probe: a core that does not execute is remembered as unusable", () =
   eq(fs.readFileSync(counter, "utf8").trim().split("\n").length, 1, "one probe, one process");
 });
 
-// ---- one render, one test (docs/adr/0017) ------------------------------------------------
+// ---- 一次渲染，一次测试 (docs/adr/0017) ------------------------------------------------
 
-// A core that records every `-test`, so a test can count how many a gesture costs.
+// 一个会记录每一次 `-test` 的核心，这样测试就能数清一次手势要花几次。
 const countingCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -1253,7 +1253,7 @@ check("switch: one config test, and the start it triggers adds none", () => {
       "the config carries the new node");
     eq(fs.readFileSync(m.applied, "utf8").trim(), OTHER_ID, "applied id");
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
 });
 
@@ -1267,13 +1267,13 @@ check("apply: the bytes already on disk are neither tested nor restarted", () =>
     runShell(m.dir, BODY_APPLY, [ID], env);
     runShell(m.dir, BODY_START, [], env);
     const pid = fs.readFileSync(pidFile, "utf8").trim();
-    // Same node, same bytes: no test, no stop, no start -- the traffic gap is zero.
+    // 同一节点、同样的字节：不测试、不停止、不启动 —— 流量中断为零。
     runShell(m.dir, BODY_APPLY, [ID], env);
     eq(testCount(log), 1, "no second test");
     eq(fs.readFileSync(pidFile, "utf8").trim(), pid, "the same core process, never restarted");
     eq(readJson(m.status).state, "running", "still running");
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
 });
 
@@ -1283,7 +1283,7 @@ check("ports: saving the ports that are already rendered restarts nothing", () =
   const env = { FAKE_TEST_LOG: shPath(log) };
   const pidFile = path.join(m.dir, "runtime", "xray.pid");
   try {
-    // The template's own defaults: saving them changes no byte.
+    // 配置模板自带的默认值：保存它们不改变任何一个字节。
     writeStatePorts(m, { socksPort: 10808, httpPort: 10809 });
     writeOutbound(m);
     runShell(m.dir, BODY_APPLY, [ID], env);
@@ -1293,7 +1293,7 @@ check("ports: saving the ports that are already rendered restarts nothing", () =
     eq(testCount(log), 1, "no test");
     eq(fs.readFileSync(pidFile, "utf8").trim(), pid, "no restart");
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
 });
 
@@ -1301,8 +1301,8 @@ check("ensure: a failed switch whose config fails xray -test is refused, not run
   const m = makeModule();
   writeOutbound(m, { id: OTHER_ID });
   fs.writeFileSync(m.applied, ID + "\n");
-  // The rollback left bytes behind that nothing vouches for (no config.tested): they go
-  // through the same test gate, and a rejection refuses the start rather than running them.
+  // 回滚留下的那串字节没有任何东西为它背书（没有 config.tested）：它们同样要过
+  // 测试闸门，一旦被拒绝就拒绝启动，而不是把它们跑起来。
   fs.writeFileSync(m.config, '{"sentinel":true}\n');
   const r = runFail(m.dir, BODY_ENSURE, [], { FAKE_XRAY_FAIL: "1" });
   if (!/config test failed/.test(r.stderr)) {
@@ -1311,7 +1311,7 @@ check("ensure: a failed switch whose config fails xray -test is refused, not run
   eq(readJson(m.config), { sentinel: true }, "the config is not silently rewritten");
 });
 
-// ---- poll and log hygiene ---------------------------------------------------------------
+// ---- 轮询与日志处理 ---------------------------------------------------------------
 
 check("ports: kr_setting_port keeps the caller's positional parameters", () => {
   const m = makeModule();
@@ -1344,7 +1344,7 @@ check("kr_log: the tag rides the line and an unknown tag is refused", () => {
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[Core\] started pid 42$/m.test(mlog)) {
     throw new Error("file line: " + JSON.stringify(mlog));
   }
-  // A word outside the closed set fails fast and appends nothing.
+  // 封闭集合之外的词会立刻失败，且不追加任何内容。
   const bad = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_log Bogus "x" 2>/dev/null; echo "rc=$?"');
   if (!/rc=2/.test(bad)) { throw new Error("unknown tag rc: " + bad); }
   eq(fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8"), mlog,
@@ -1360,7 +1360,7 @@ check("mlog append: lands in the module log, flattened to one line", () => {
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[Node\] imported 3 nodes \(3 new\)$/m.test(mlog)) {
     throw new Error("file line: " + JSON.stringify(mlog));
   }
-  // A UI string with a newline must not split the line format.
+  // 带换行的界面字符串不能把行格式拆成两行。
   runShell(m.dir, '. "$KR_TEST_SCRIPT"; m=$(printf "two\\nlines"); kr_mlog_append Node "$m"');
   const lines = fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8").trim().split("\n");
   eq(lines.length, 2, "a newline in the message must not add a line");
@@ -1394,8 +1394,8 @@ check("log clear: truncates in place, so an already-open writer stays visible", 
   const log = path.join(m.dir, "logs", "xray.log");
   fs.mkdirSync(path.dirname(log), { recursive: true });
   fs.writeFileSync(log, "old\n");
-  // An append fd opened before the clear models the core's >> redirection: if clear unlinked
-  // the file, this line would land in a dead inode and the WebUI would never see it.
+  // 在清空之前打开的追加 fd 模拟核心的 >> 重定向：如果清空操作把文件解除链接，
+  // 这一行就会落进一个失效的 inode，WebUI 永远看不到它。
   runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; exec 3>>"$KR_LOG"; kr_cli log clear; printf "after\\n" >&3; exec 3>&-');
   eq(fs.readFileSync(log, "utf8"), "after\n", "the open writer still lands in the visible file");
@@ -1466,7 +1466,7 @@ check("log: a start rotates the core log over the cap", () => {
   try {
     runShell(m.dir, BODY_START, [], { KR_LOG_MAX: "8" });
   } finally {
-    try { runShell(m.dir, BODY_STOP); } catch (e) { /* best effort */ }
+    try { runShell(m.dir, BODY_STOP); } catch (e) { /* 尽力而为 */ }
   }
   eq(fs.readFileSync(log + ".1", "utf8").length, 64, "the old log moved aside");
 });
@@ -1484,14 +1484,14 @@ check("render: a template without the inbound port placeholders is refused", () 
   }
 });
 
-// ---- the installer's environment ----------------------------------------------------------
+// ---- 安装器的环境 ----------------------------------------------------------
 
 check("probe: no external commands needed (the installer's busybox-only PATH)", () => {
   const m = makeModule(aliveCore);
-  // customize.sh runs with PATH set to the busybox dir alone, where `timeout` and `head` do
-  // not exist. A probe that shells out reports a working core as unusable and aborts the
-  // install -- this test pins the "builtins only" property. (PATH is emptied for the probe
-  // only: the harness still needs its own PATH to start bash.)
+  // 安装脚本 customize.sh 运行时 PATH 只含 busybox 目录，那里没有 `timeout` 和 `head`。
+  // 一个会调用外部命令的探测会把能用的核心误报成不可用，并让安装中止 —— 本测试
+  // 钉住「只用内建命令」这条性质。（只为探测清空 PATH：harness 自己仍需 PATH
+  // 来启动 bash。）
   const out = runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; PATH= kr_core_works && kr_core_version');
   if (!/Xray 0\.0\.0/.test(out)) { throw new Error("expected the version, got: " + out); }
@@ -1499,18 +1499,18 @@ check("probe: no external commands needed (the installer's busybox-only PATH)", 
 
 check("probe: its status is not its last command's (busybox printf returns 1 once)", () => {
   const m = makeModule(aliveCore);
-  // The busybox ash in KernelSU returns 1 from the *first* printf of a session; a probe that
-  // ends on a bare `printf` would report a working core as unusable, inside the installer.
+  // 在 KernelSU 里，busybox ash 的一次会话中 *第一个* printf 会返回 1；探测若以裸
+  // `printf` 结尾，就会在安装器里把能用的核心误报成不可用。
   const out = runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; printf() { builtin printf "$@"; return 1; };' +
     ' kr_core_works && echo works; kr_core_probe >/dev/null && echo probed');
   eq(out.trim().split("\n").join("|"), "works|probed", "both calls succeed despite printf");
 });
 
-// ---- report -----------------------------------------------------------------------------
+// ---- 结果报告 -----------------------------------------------------------------------------
 
 dirs.forEach((d) => {
-  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* Windows can hold a file */ }
+  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* Windows 可能占用文件 */ }
 });
 
 if (failures.length) {

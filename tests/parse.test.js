@@ -1,10 +1,10 @@
-// Parser tests for the WebUI.
+// 针对 WebUI 解析器的测试。
 //
-// The parser lives inside module/webroot/app.js (the WebUI is hand-written, no build step), so
-// this harness extracts the marked block from the shipped file and runs it. That way the tests
-// exercise exactly what ships — there is no second copy to drift.
+// 解析器位于 module/webroot/app.js 中（WebUI 是手写的，没有构建步骤），因此本测试框架从
+// 随包发布的文件里抽取带标记的代码块并运行它。这样测试运行的正是随包发布的代码——
+// 不存在会与之漂移的第二份副本。
 //
-//   node tests/parse.test.js
+//   运行：node tests/parse.test.js
 
 "use strict";
 
@@ -49,7 +49,7 @@ function eq(actual, expected, what) {
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64");
 const b64url = (s) => b64(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-// ---- vless ------------------------------------------------------------------------------
+// ---- vless 节点 ------------------------------------------------------------------------------
 
 const REAL_VLESS =
   "vless://da0b1cdf-81a5-340c-a0c7-c35c22923cbd@sfy1.as-tyo1-bgp1.windows-update.xyz:24171" +
@@ -109,7 +109,7 @@ check("vless: missing uuid is rejected", () => {
   if (!/uuid/.test(r.error)) { throw new Error("unhelpful error: " + r.error); }
 });
 
-// ---- vmess ------------------------------------------------------------------------------
+// ---- vmess 节点 ------------------------------------------------------------------------------
 
 const vmessJson = (over) => b64(JSON.stringify(Object.assign({
   v: "2", ps: "VM-1", add: "b.example.com", port: "8443",
@@ -150,7 +150,7 @@ check("vmess: the new vmess:// URI form is refused, not mis-parsed", () => {
   eq(r.ok, false, "ok");
 });
 
-// ---- trojan -----------------------------------------------------------------------------
+// ---- trojan 节点 -----------------------------------------------------------------------------
 
 check("trojan: percent-encoded password, ws, tls by default", () => {
   const r = P.parseLink("trojan://p%40ss%3Aword@c.example.com:443?sni=c.example.com&type=ws&path=%2Ftj#TJ%201");
@@ -173,8 +173,8 @@ check("trojan: user:pass userinfo yields the password part", () => {
   eq(r.node.password, "real-pass", "password");
 });
 
-// The vless/trojan paths must not depend on `new URL()`: when a WebView disagrees about
-// userinfo for non-special schemes, every such link fails at once (this actually happened).
+// 解析 vless/trojan 时绝不能依赖 `new URL()`：当 WebView 对非特殊 scheme 的 userinfo
+// 处理不一致时，所有这类分享链接会一并解析失败（这事真的发生过）。
 check("vless/trojan survive a URL implementation that drops userinfo", () => {
   const RealURL = global.URL;
   global.URL = function (s) { return new RealURL(s.replace(/^[a-z0-9+.-]+:\/\/[^@]*@/i, "x://")); };
@@ -190,7 +190,7 @@ check("vless/trojan survive a URL implementation that drops userinfo", () => {
   }
 });
 
-// ---- ss ---------------------------------------------------------------------------------
+// ---- ss 节点 ---------------------------------------------------------------------------------
 
 check("ss: SIP002 (base64 userinfo)", () => {
   const r = P.parseLink("ss://" + b64("aes-256-gcm:secret") + "@d.example.com:8388#SS1");
@@ -227,7 +227,7 @@ check("ss: SIP003 plugin link is refused", () => {
   if (!/plugin/.test(r.error)) { throw new Error("unhelpful error: " + r.error); }
 });
 
-// ---- input handling ---------------------------------------------------------------------
+// ---- 输入处理 ---------------------------------------------------------------------
 
 check("input: unknown protocols and junk are reported per line, not swallowed", () => {
   const rows = P.parseInput(
@@ -259,7 +259,7 @@ check("input: blank lines and comments are skipped", () => {
   eq(rows[0].line, 5, "line number preserved");
 });
 
-// ---- identity / dedupe ------------------------------------------------------------------
+// ---- 身份标识 / 去重 ------------------------------------------------------------------
 
 check("identity: renaming does not change the id, so re-import updates in place", () => {
   const a = P.idOf(P.parseLink(REAL_VLESS).node);
@@ -328,7 +328,7 @@ check("input: a duplicate inside one paste is flagged against its first line", (
   eq(rows[0].node.id, rows[1].node.id, "duplicates share an id");
 });
 
-// ---- report -----------------------------------------------------------------------------
+// ---- 结果汇总 -----------------------------------------------------------------------------
 
 if (failures.length) {
   console.error("\n" + failures.length + " failing, " + pass + " passing\n");

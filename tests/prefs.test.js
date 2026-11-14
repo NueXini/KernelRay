@@ -1,11 +1,11 @@
-// UI preference tests for the WebUI's Settings page.
+// 针对 WebUI 设置页的界面偏好测试。
 //
-// The prefs model lives inside module/webroot/app.js; this harness extracts the marked block
-// from the shipped file, exactly like tests/parse.test.js does for the parser. Normalising,
-// loading and saving prefs is pure logic over a storage handle, so it can be tested without
-// a browser or a WebView.
+// 偏好模型位于 module/webroot/app.js 中；本测试框架从随包文件里抽出带标记的
+// 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。偏好的规范化、
+// 加载与保存都是针对存储句柄的纯逻辑，因此无需浏览器或 WebView
+// 即可测试。
 //
-//   node tests/prefs.test.js
+//   运行：node tests/prefs.test.js
 
 "use strict";
 
@@ -15,9 +15,9 @@ const path = require("path");
 const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
 const js = fs.readFileSync(jsPath, "utf8");
 
-// The prefs block takes its key and its theme validation from theme.js, which <head> loads
-// before app.js on the device. Load it here the same way, with the DOM stubbed out, so the
-// test runs the shipped file and not a copy of its rules.
+// 偏好代码块从 theme.js 取得键名与主题校验；设备上 <head> 先于 app.js 加载它。
+// 这里也按同样方式、在 DOM 打桩后加载 theme.js，让测试运行的是随包文件本身，
+// 而不是那些规则的一份副本。
 const themePath = path.join(__dirname, "..", "module", "webroot", "theme.js");
 global.window = {
   matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
@@ -41,7 +41,7 @@ const P = new Function(block + "\nreturn {" +
   " PREFS_KEY: PREFS_KEY, LANGS: LANGS, THEMES: THEMES, LOG_LINE_STEPS: LOG_LINE_STEPS" +
 "};")();
 
-// The inbound-port block follows the same extraction contract.
+// 入站端口代码块遵循同样的抽取约定。
 const PORTS_START = "// ---- inbound port settings ----";
 const PORTS_END = "// ---- end inbound port settings ----";
 const pfrom = js.indexOf(PORTS_START);
@@ -75,7 +75,7 @@ function eq(actual, expected, what) {
   }
 }
 
-// A storage handle that behaves like localStorage; throws on every access when asked to.
+// 一个行为类似 localStorage 的存储句柄；需要时可让每次访问都抛异常。
 function memStore() {
   const m = new Map();
   return {

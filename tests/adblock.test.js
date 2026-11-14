@@ -1,15 +1,15 @@
-// 大陆直连去广告 (Direct-CN-Adblock) tests.
+// 大陆直连去广告 (Direct-CN-Adblock) 测试。
 //
-// The third 分流模式 (docs/adr/0021): `runtime/route` holds `cnadblock`, and the render is
-// 大陆直连's rules plus two ad parts -- the DNS module's `hosts` sink and a `block` routing
-// rule. This harness sources the shipped shell against a throwaway module dir, a fake core and
-// fake geo data, so the render matrix (全局 / 大陆直连 / 大陆直连去广告 × takeover/idle), the
-// no-degrade rule and the fail-closed start are covered without an Android device or the real
-// .dat files.
+// 第三种分流模式（docs/adr/0021）：`runtime/route` 存 `cnadblock`，渲染结果是
+// 大陆直连的分流规则再加两块去广告部分 —— DNS 模块的 `hosts` 沉没端与一条
+// `block` 分流规则。这套测试在临时模块目录、假核心与假的地理数据上 source
+// 随包 shell，因此无需 Android 设备或真正的 .dat 文件，就能覆盖渲染矩阵
+// （全局 / 大陆直连 / 大陆直连去广告 × 接管/直连运行）、不降级规则以及
+// 失败关闭的启动。
 //
 //   node tests/adblock.test.js
 //
-// Requires bash (Git Bash on Windows).
+// 需要 bash（Windows 上是 Git Bash）。
 
 "use strict";
 
@@ -34,8 +34,8 @@ const fixture = {
   }
 };
 
-// -version prints; -test fails only when FAKE_XRAY_FAIL is set; `run -c` stays up unless
-// FAKE_START_FAIL says otherwise.
+// `-version` 输出版本；只有设置 FAKE_XRAY_FAIL 时 `-test` 才失败；
+// 除非 FAKE_START_FAIL 另有指示，`run -c` 会保持存活。
 const fakeCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -52,9 +52,9 @@ const fakeCore = [
   ""
 ].join("\n");
 
-// What the real core does with a category it cannot load: a config that names `geosite:` or
-// `geoip:` fails -test when the matching .dat is gone, and nothing else fails. That is the one
-// behaviour the fail-closed path depends on, so the fake reproduces exactly it.
+// 真正的核心遇到无法加载的分类时是这样：配置里写了 `geosite:` 或 `geoip:`，
+// 而对应的 .dat 不在了，`-test` 就失败，别的都不失败。这是失败关闭路径
+// 唯一依赖的行为，所以假核心精确地复现它。
 const geoAwareCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -71,7 +71,7 @@ const geoAwareCore = [
   ""
 ].join("\n");
 
-// Tests fine, dies on a config that carries the ad parts: the switch's rollback path.
+// 测试能通过，遇到带去广告部分的配置就死亡：用于走切换的回滚路径。
 const adAwareCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -111,7 +111,7 @@ function shPath(p) {
   return "/" + p[0].toLowerCase() + p.slice(2).replace(/\\/g, "/");
 }
 
-// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+// 桩目录以 Windows 格式前置；msys bash 会自行转换 PATH。
 function posixPathEnv(extraDir) {
   return process.platform === "win32"
     ? extraDir + ";" + process.env.PATH
@@ -130,7 +130,7 @@ function makeModule(core) {
     path.join(dir, "scripts", "tproxy.sh"));
   fs.writeFileSync(path.join(dir, "bin", "geosite.dat"), "geosite\n");
   fs.writeFileSync(path.join(dir, "bin", "geoip.dat"), "geoip\n");
-  // Every start takes over (docs/adr/0011), so a start needs a kernel that says yes.
+  // 每次启动都是一次接管（docs/adr/0011），所以启动需要内核回答「规则在位」。
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   const chainless = [
@@ -230,7 +230,7 @@ const CN_AD_TAKEOVER = [
   { ip: ["geoip:cn"], outboundTag: "direct" }
 ];
 
-// ---- rendering --------------------------------------------------------------------------
+// ---- 渲染 --------------------------------------------------------------------------
 
 check("render: 大陆直连去广告 adds the DNS sink and the block rule to 大陆直连", () => {
   const m = makeModule();
@@ -238,8 +238,8 @@ check("render: 大陆直连去广告 adds the DNS sink and the block rule to 大
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
 
-  // The DNS module is the load-bearing half: taken-over traffic carries no domain, so only the
-  // resolver can refuse an ad domain (docs/adr/0021).
+  // 这里承重的是 DNS 模块：被接管的流量不带域名，只有解析器能拒绝广告域名
+  // （docs/adr/0021）。
   eq(cfg.dns.servers.length, 3, "the domestic split survives");
   eq(cfg.dns.hosts, { "geosite:category-ads-all": "#3" }, "the ad sink is the only hosts entry");
   eq(cfg.dns.tag, "dns", "the tag its routing rules match");
@@ -255,7 +255,7 @@ check("render: the ad parts are not optional -- there is one form", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
-  // KR_TAKEOVER is not an input any more: the dns module and the ad sink are always authored.
+  // 环境变量 KR_TAKEOVER 已不再是输入：dns 模块与广告沉没端始终会被写出。
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { KR_TAKEOVER: "0" }));
   eq(cfg.dns.hosts, { "geosite:category-ads-all": "#3" }, "the sink is there");
   eq(cfg.inbounds.length, 3, "tproxy inbound present");
@@ -293,15 +293,15 @@ check("render: no degrade -- missing geo data still renders the ad parts", () =>
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
   fs.unlinkSync(m.geosite);
-  // 大陆直连 falls back to the global form here; 大陆直连去广告 must not, or its name would
-  // describe a config it is not running (docs/adr/0021). The refusal happens at -test instead.
+  // 这里大陆直连会降级为全局形态；大陆直连去广告绝不能这样，否则它的名字描述的就是
+  // 一份它其实没在运行的配置（docs/adr/0021）。拒绝改在 -test 处发生。
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.routing.rules, CN_AD_TAKEOVER, "the ad parts are still there");
   eq(cfg.routing.domainStrategy, "IPIfNonMatch", "still the geo strategy");
   eq(runShell(m.dir, BODY_MODE).trim(), "cnadblock", "the preference is untouched by a render");
 });
 
-// ---- the preference ---------------------------------------------------------------------
+// ---- 偏好 ---------------------------------------------------------------------
 
 check("pref: cnadblock round-trips through runtime/route, and junk reads as 全局", () => {
   const m = makeModule();
@@ -326,8 +326,8 @@ check("cli: routing status reports cnadblock as its own effective mode, even wit
     ["mode=cnadblock", "effective=cnadblock", "geodata=ok"], "with data");
 
   fs.unlinkSync(m.geosite);
-  // The one place this mode differs from 大陆直连 in the status: it is never degraded, so the
-  // effective mode is the preference and the missing data is reported beside it.
+  // 这个模式在状态里唯一区别于大陆直连的地方：它从不降级，所以有效模式就是偏好，
+  // 缺失的数据则并列报告在旁边。
   eq(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_route_status').trim().split("\n"),
     ["mode=cnadblock", "effective=cnadblock", "geodata=missing"], "without data");
 
@@ -408,7 +408,7 @@ check("cli: an unknown mode is a usage error", () => {
   }
 });
 
-// ---- the install default ----------------------------------------------------------------
+// ---- 安装默认值 ----------------------------------------------------------------
 
 check("default: the installer writes cnadblock when the preference is unset", () => {
   const m = makeModule();
@@ -424,7 +424,7 @@ check("default: an existing choice survives, and missing geo data keeps 全局",
   runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_route_default');
   eq(runShell(m.dir, BODY_MODE).trim(), "cn", "a user's mode is not overwritten");
 
-  // A default the core cannot start with is worse than one that does less (docs/adr/0021).
+  // 一个核心根本无法用它启动的默认值，比一个功能少些的默认值更糟（docs/adr/0021）。
   const n = makeModule();
   fs.unlinkSync(n.geosite);
   runShell(n.dir, '. "$KR_TEST_SCRIPT"; kr_route_default');
@@ -436,7 +436,7 @@ check("default: an existing choice survives, and missing geo data keeps 全局",
   }
 });
 
-// ---- fail-closed ------------------------------------------------------------------------
+// ---- 失败关闭 ------------------------------------------------------------------------
 
 check("start: cnadblock runs with the data present", () => {
   const m = makeModule(geoAwareCore);
@@ -453,9 +453,9 @@ check("start: data gone under cnadblock refuses the start and says why", () => {
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_SET, ["cnadblock"]);
-  // The config on disk is already the tested cnadblock form, so the tested marker alone would
-  // let the start through and the core would die on its own without the sentence this mode
-  // owes the user. That is the case this covers.
+  // 磁盘上的配置已经是测试过的 cnadblock 形态，光凭「已测试」标记就会放行启动，
+  // 核心随后自己死掉，而这个模式本该给用户的一句话也就没了。本测试覆盖的正是
+  // 这一种情况。
   runShell(m.dir, BODY_START);
   runShell(m.dir, BODY_STOP);
   fs.unlinkSync(m.geosite);
@@ -474,10 +474,10 @@ check("start: data gone under cnadblock refuses the start and says why", () => {
   }
 });
 
-// ---- done -------------------------------------------------------------------------------
+// ---- 完成 -------------------------------------------------------------------------------
 
 dirs.forEach(function (d) {
-  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* windows */ }
+  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* Windows 可能占用文件 */ }
 });
 
 if (failures.length) {

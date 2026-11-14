@@ -5,7 +5,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write # create the release and upload the ZIP
+  contents: write # 创建 release 并上传 ZIP
 
 jobs:
   release:
@@ -13,9 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Zips ./module, prechecks it with the KernelSU Modules validator, then publishes
-      # draft -> upload -> publish so the release becomes immutable as a whole.
-      # Pin the action to a full commit SHA (a branch can be moved; this step runs with `contents: write`).
+      # 打包 ./module，用 KernelSU Modules 校验器预检，然后以
+      # draft -> upload -> publish 的顺序发布，让 release 整体不可变。
+      # 把 action 钉死在完整 commit SHA 上（分支可以被移动；本步骤带着
+      # `contents: write` 运行）。
       - uses: KernelSU-Modules/tools/actions/module-release@e0ac1a6193e698beac3c2fc47dec88d180efca8a
         id: release
         with:
@@ -23,8 +24,8 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate-release-notes: true
 
-      # Pass step outputs through env: — never interpolate ${{ }} expressions into a shell script
-      # (the asset name contains the module.prop version, i.e. author-controlled text).
+      # 步骤输出经 env: 传递——绝不把 ${{ }} 表达式插值进 shell 脚本
+      #（资产名含 module.prop 的版本，即作者可控文本）。
       - env:
           ASSET_NAME: ${{ steps.release.outputs.asset-name }}
           SHA256: ${{ steps.release.outputs.sha256 }}

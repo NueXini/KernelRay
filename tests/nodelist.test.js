@@ -1,13 +1,13 @@
-// Node list, delete-gate, import-switch and detail-dialog state tests for the WebUI.
+// 针对 WebUI 节点列表、删除门控、导入时切换与节点详情弹窗状态的测试。
 //
-// Both blocks live inside module/webroot/app.js; this harness extracts the marked blocks from
-// the shipped file, exactly like tests/parse.test.js does for the parser. The list is a pure
-// state.json + runtime/applied → rows mapping, the delete gate and the unapply decision are
-// pure functions of those rows plus the core's running fact, and the import switch rule is a
-// pure state.json + runtime/applied → id decision, and the dialog button state is a pure
-// node + pointers mapping, so all of them run without a browser.
+// 两个代码块都位于 module/webroot/app.js 中；本测试框架从随包发布的文件里抽取带标记的
+// 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。节点列表是
+// 纯映射：state.json + runtime/applied → 行；删除门控与取消应用决策是这些行
+// 加上核心是否在运行这一事实的纯函数；导入切换规则则是纯的
+// 决策：由 state.json + runtime/applied 得出 id；弹窗按钮状态是纯的节点 + 指针映射，
+// 因此它们都无需浏览器即可运行。
 //
-//   node tests/nodelist.test.js
+//   运行：node tests/nodelist.test.js
 
 "use strict";
 
@@ -64,7 +64,7 @@ function state(manual, selected, extra) {
   }, extra || {});
 }
 
-// Compact projection of the rows, so a failure shows what actually changed.
+// 把各行压缩成概要，这样失败时能看出究竟是什么发生了变化。
 function rows(model) {
   return model.rows.map(function (row) {
     return [row.id, row.applied, row.selected, row.dirty, row.unapplied, row.noop];
@@ -149,7 +149,7 @@ check("applied comparison uses the string form of the id", () => {
   eq(model.rows[0].noop, true);
 });
 
-// ---- batch check set (edit mode) ----
+// ---- 批量勾选集合（编辑模式） ----
 
 function batch(model, checks, allowApplied) {
   const bm = L.batchModel(model, checks, allowApplied);
@@ -192,7 +192,7 @@ check("batch: the delete gate lets the applied last row join", () => {
   eq(batch(model, { a: true }, true), [["a"], ["a"], true]);
 });
 
-// ---- the delete gate (ADR 0013) ----
+// ---- 删除门控（ADR 0013） ----
 
 check("gate: the applied node is deletable when it is the last row and the core is stopped", () => {
   const model = L.nodeListModel(state([node("a")], "a"), "a");
@@ -220,7 +220,7 @@ check("gate: an empty list has nothing to delete", () => {
   eq(L.deleteGate(model, false), false);
 });
 
-// ---- the unapply decision ----
+// ---- 取消应用决策 ----
 
 check("unapply: deleting the whole list while the core is stopped", () => {
   const model = L.nodeListModel(state([node("a")], "a"), "a");
@@ -252,7 +252,7 @@ check("unapply: an already empty list has nothing to unapply", () => {
   eq(L.willUnapply(model, [], false), false);
 });
 
-// ---- the import switch rule (ADR 0012) ----
+// ---- 导入切换规则（ADR 0012） ----
 
 check("import into a store with nothing applied switches the first node", () => {
   eq(L.applyAfterImport(state([node("a"), node("b")], ""), ""), "a");
@@ -290,7 +290,7 @@ check("a malformed store switches nothing", () => {
   eq(L.applyAfterImport({ schema: 1, manual: "nope" }, ""), "");
 });
 
-// ---- the node detail dialog's button state ----
+// ---- 节点详情弹窗的按钮状态 ----
 
 check("dialog: an applied clean node is a no-op tap", () => {
   const m = L.nodeDialogModel(node("a"), "a", "a");

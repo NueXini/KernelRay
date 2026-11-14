@@ -1,16 +1,16 @@
 # shellcheck shell=ash
-# TPROXY takeover: the rules that make device traffic enter the core, the conflict
-# checks that refuse to share them with a foreign VPN, and the persisted switch.
-# Sourced by kernelray.sh, which provides the kr_* helpers and paths.
+# TPROXY 接管：让设备流量进入核心的规则、拒绝与外来 VPN 共享的
+# 冲突检查、以及持久化的偏好。
+# 由 kernelray.sh source，后者提供 kr_* 助手与路径。
 #
-# Implements docs/adr/0004 (module-owned, fail-closed takeover), docs/adr/0006
-# (DNS through the core's DNS module), docs/adr/0008 (namespace values) and
-# docs/adr/0011 (启动即接管: every core start takes over, there is no switch) and
-# docs/adr/0014 (geo data ships in the module; the 分流模式 is a shell-owned preference applied
-# at once). The namespace — capture fwmark 19283, bypass fwmark 19282, routing
-# tables 19283/19282, ip rule preferences 9500/9400, the KR_TP_* chains and tproxy port
-# 10810 — is exclusive to this module: only those are ever installed or removed, never
-# another module's rules.
+# 落实 docs/adr/0004（模块持有、fail-closed 的接管）、docs/adr/0006
+#（DNS 经核心的 DNS 模块）、docs/adr/0008（命名空间取值）与
+# docs/adr/0011（启动即接管：每次核心启动都接管，不存在开关）与
+# docs/adr/0014（geo 数据随模块内置；分流模式 是 shell 持有的、立即
+# 生效的偏好）。命名空间——捕获 fwmark 19283、旁路 fwmark 19282、路由
+# 表 19283/19282、ip rule pref 9500/9400、KR_TP_* 链与 tproxy 端口
+# 10810——为本模块独占：装与拆的永远只有这些，绝不碰
+# 其他模块的规则。
 
 KR_TP_PORT=10810
 KR_MARK=19283
@@ -20,27 +20,26 @@ KR_BYPASS=19282
 KR_BYPASS_TABLE=19282
 KR_BYPASS_PREF=9400
 KR_NODEIP=$KR_RUNDIR/nodeip
-# The last real kernel answer to "are the takeover rules installed", stamped with the boot
-# that produced it. The 2s status poll reads it instead of calling iptables twice; the
-# safety-critical form readers still ask the kernel (docs/adr/0019).
+# "接管规则装了吗"的最后一次真实内核应答，并盖上产生它的开机戳。
+# 2s 状态轮询读它，而不调两次 iptables；安全攸关的形态读者仍询问
+# 内核（docs/adr/0019）。
 KR_TP_RULES=$KR_RUNDIR/rules
 KR_TPLOG=$KR_LOGDIR/kernelray.log
-# 分流模式 (docs/adr/0014): the shell's preference, and unlike the 日志等级 it applies at
-# once. Presence of the file means 大陆直连; absence means 全局, which is what every earlier
-# version did. The two domestic resolvers are what the cn mode resolves mainland domains
-# with.
+# 分流模式（docs/adr/0014）：shell 的偏好，与 日志等级 不同，它立即
+# 生效。文件存在即 大陆直连；不存在即 全局，即之前每个版本的行为。
+# cn 模式就是用这两个国内解析器解析大陆域名的。
 KR_ROUTE=$KR_RUNDIR/route
 KR_CN_DNS1=223.5.5.5
 KR_CN_DNS2=119.29.29.29
-# Ali DoH's JSON API. An IP literal, so asking it needs no lookup of its own.
+# Ali DoH 的 JSON API。是 IP 字面量，询问它不需要自己先解析。
 KR_DOH_RESOLVE=https://223.5.5.5/resolve
-# KernelSU's busybox carries the wget applet, but PATH carries neither wget nor curl --
-# KernelSU symlinks only busybox/ksud/resetprop into /data/adb/ksu/bin -- so the ask
-# names the binary outright. Overridable so a test can stub it.
+# KernelSU 的 busybox 带 wget applet，但 PATH 里既没有 wget 也没有 curl——
+# KernelSU 只把 busybox/ksud/resetprop 链接进 /data/adb/ksu/bin——所以询问
+# 直接点名二进制。可覆盖，便于测试打桩。
 KR_BUSYBOX=${KR_BUSYBOX:-/data/adb/ksu/bin/busybox}
 
-# Tagged passthrough to kr_log; the tproxy-side lines share it. Routing lines call
-# kr_log directly with their own tag.
+# 通往 kr_log 的带标签透传；tproxy 侧的行共用它。Routing 行直接
+# 用自己的标签调 kr_log。
 kr_tp_log() { kr_log "$@"; }
 
 kr_tp_rules_present() {
@@ -49,11 +48,11 @@ kr_tp_rules_present() {
   return 0
 }
 
-# Rule-presence cache (docs/adr/0019): the last real kernel answer, stamped with the boot
-# that produced it, so the status poll does not ask iptables twice every 2s. Advisory only:
-# kr_conf_accept_ondisk and the start path still call kr_tp_rules_present. A
-# missing or stale cache is repaired by one real check and written back; after a reboot the
-# boot id differs and the first poll checks again.
+# 规则存在性缓存（docs/adr/0019）：最后一次真实内核应答，盖上产生它的
+# 开机戳，状态轮询因此不必每 2s 问两遍 iptables。仅供参考：
+# kr_conf_accept_ondisk 与启动路径仍调用 kr_tp_rules_present。缺失
+# 或陈旧的缓存由一次真实检查修复并写回；重启后 boot id 变了，
+# 第一次轮询会重新检查。
 kr_tp_rules_cache_write() { # <0|1> [boot-id]
   _cb=${2:-$(kr_boot_id)}
   [ -d "$KR_RUNDIR" ] || mkdir -p "$KR_RUNDIR" 2>/dev/null
@@ -70,7 +69,7 @@ kr_tp_rules_cache_write() { # <0|1> [boot-id]
   return 0
 }
 
-kr_tp_rules_cache() { # [boot-id]; sets KR_TP_RULES_CACHED=1|0 when the cache is usable
+kr_tp_rules_cache() { # [boot-id]；缓存可用时设置 KR_TP_RULES_CACHED=1|0
   KR_TP_RULES_CACHED=""
   [ -s "$KR_TP_RULES" ] || return 1
   _cc_boot=""
@@ -90,9 +89,9 @@ kr_tp_rules_cache() { # [boot-id]; sets KR_TP_RULES_CACHED=1|0 when the cache is
   return 1
 }
 
-# The status poll's view: the cache when it is usable, otherwise one real check written
-# back. Never used by the safety-critical form readers.
-kr_tp_rules_status() { # [boot-id]; sets KR_TP_RULES_STATE=present|absent
+# 状态轮询的视角：缓存可用时用缓存，否则一次真实检查并写回。
+# 安全攸关的形态读者绝不使用它。
+kr_tp_rules_status() { # [boot-id]；设置 KR_TP_RULES_STATE=present|absent
   _ts_boot=${1:-}
   if kr_tp_rules_cache "$_ts_boot"; then
     if [ "$KR_TP_RULES_CACHED" = 1 ]; then
@@ -102,8 +101,8 @@ kr_tp_rules_status() { # [boot-id]; sets KR_TP_RULES_STATE=present|absent
     fi
     return 0
   fi
-  # If an install/remove writes while the kernel is being asked, that answer is newer than
-  # this one: the before/after comparison drops the stale write-back.
+  # 若安装/移除在询问内核期间写入，那个答案比这次的更新：前后比较
+  # 丢弃陈旧的写回。
   _ts_before=$(cat "$KR_TP_RULES" 2>/dev/null)
   if kr_tp_rules_present; then
     KR_TP_RULES_STATE=present
@@ -117,9 +116,9 @@ kr_tp_rules_status() { # [boot-id]; sets KR_TP_RULES_STATE=present|absent
   return 0
 }
 
-# 冲突 detection (docs/adr/0004): a foreign VPN/TUN, an always-on VPN setting or a
-# foreign -j TPROXY rule. Heuristic by nature; the docs still say only one
-# transparent proxy may be active. Prints the reason and returns 0 on conflict.
+# 冲突检测（docs/adr/0004）：外来 VPN/TUN、始终开启的 VPN 设置或
+# 外来的 -j TPROXY 规则。本质上是启发式的；文档仍然写明同一
+# 时刻只能有一个透明代理。冲突时打印原因并返回 0。
 kr_tp_conflict() {
   _links=$(ip link show 2>/dev/null) || _links=""
   printf '%s\n' "$_links" | grep -q '^[0-9][0-9]*: \(tun[0-9]*\|wg[0-9]*\):.*<.*UP.*>' && {
@@ -144,11 +143,11 @@ kr_tp_conflict() {
   return 1
 }
 
-# One family's rules: <iptables|ip6tables>. The core's own sockets carry the bypass
-# mark and return first; DNS to port 53 is marked with the capture mark before the
-# bypass ranges so a LAN resolver is captured too (docs/adr/0006); DHCP is bypassed
-# before everything, since a proxied DHCP reply never assigns an address.
-kr_tp_ipt_rules() { # <binary>
+# 一个地址族的规则：<iptables|ip6tables>。核心自己的 socket 带旁路
+# mark、最先返回；发往端口 53 的 DNS 在旁路段之前就用捕获 mark 标记，
+# 让局域网解析器也被捕获（docs/adr/0006）；DHCP 在一切之前旁路，
+# 因为被代理的 DHCP 应答永远分不到地址。
+kr_tp_ipt_rules() { # <二进制>
   _i=$1
   if [ "$_i" = ip6tables ]; then
     $_i -t mangle -N KR_TP_OUTPUT 2>/dev/null || return 1
@@ -169,14 +168,14 @@ kr_tp_ipt_rules() { # <binary>
 
     $_i -t mangle -N KR_TP_PREROUTING 2>/dev/null || return 1
     $_i -t mangle -F KR_TP_PREROUTING || return 1
-    # Deliver to the listener only the packets of LOCAL clients — every captured packet
-    # originates from a local source. Everything else on lo is the core's own transparent
-    # reply (SYN-ACK, DNS answer, whose source is the ORIGINAL destination): it carries the
-    # tproxy-mark inherited from the captured SYN and must flow to normal local delivery —
-    # capturing it would steal every answer back into the core and hang every handshake.
-    # A packet DESTINED to loopback is the same case from the other end: the core's own
-    # socks/http listeners answer a local client from 127/8 to 127/8, and the source-based
-    # TPROXY below would otherwise steal that SYN-ACK and hang every local proxy connection.
+    # 只把本地客户端的包交给监听——每个被捕获的包都源自本地源。
+    # lo 上的其余一切都是核心自己的透明应答（SYN-ACK、DNS 应答，其
+    # 源是 ORIGINAL 目的地）：它带着从被捕获 SYN 继承的 tproxy mark，
+    # 必须流向正常本地投递——捕获它会把每条应答劫回核心，让所有
+    # 握手挂死。
+    # 目的地为环回的包是同一情形的另一端：核心自己的
+    # socks/http 监听从 127/8 应答到 127/8 的本地客户端，下面按源
+    # 匹配的 TPROXY 否则会劫走那个 SYN-ACK，挂死每条本地代理连接。
     $_i -t mangle -A KR_TP_PREROUTING ! -i lo -j RETURN || return 1
     $_i -t mangle -A KR_TP_PREROUTING -d ::1/128 -j RETURN || return 1
     $_i -t mangle -A KR_TP_PREROUTING -d ::ffff:127.0.0.0/104 -j RETURN || return 1
@@ -214,8 +213,8 @@ kr_tp_ipt_rules() { # <binary>
     $_i -t mangle -N KR_TP_PREROUTING 2>/dev/null || return 1
     $_i -t mangle -F KR_TP_PREROUTING || return 1
     $_i -t mangle -A KR_TP_PREROUTING ! -i lo -j RETURN || return 1
-    # A loopback destination is a local inbound (socks/http), not captured traffic; the
-    # source-based TPROXY below would steal its SYN-ACK and hang the local connection.
+    # 环回目的地是本地入站（socks/http），不是被捕获流量；下面按源
+    # 匹配的 TPROXY 会劫走它的 SYN-ACK，挂死本地连接。
     $_i -t mangle -A KR_TP_PREROUTING -d 127.0.0.0/8 -j RETURN || return 1
     $_i -t mangle -A KR_TP_PREROUTING -s 127.0.0.0/8 -p tcp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_PREROUTING -s 127.0.0.0/8 -p udp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
@@ -226,7 +225,7 @@ kr_tp_ipt_rules() { # <binary>
     done
   fi
 
-  # The wildcard tproxy listener must not be an open proxy on the LAN (docs/adr/0004).
+  # 通配 tproxy 监听绝不能是局域网上的开放代理（docs/adr/0004）。
   $_i -t filter -N KR_TP_INPUT 2>/dev/null || return 1
   $_i -t filter -F KR_TP_INPUT || return 1
   $_i -t filter -A KR_TP_INPUT ! -i lo -p tcp --dport $KR_TP_PORT -j DROP || return 1
@@ -242,10 +241,10 @@ kr_tp_ipt_rules() { # <binary>
   return 0
 }
 
-# The device's own addresses (one per line). A tproxy reply goes back to the original
-# client address — the device itself — which is not in any fixed bypass range on a
-# public-IP device; without this, the reply is captured and loops.
-kr_tp_own_addrs() { # <iptables|ip6tables> on stdout
+# 设备自身的地址（每行一个）。tproxy 应答要回到原始客户端地址
+# ——设备自己——而它不在公网 IP 设备的任何固定旁路段里；
+# 没有这条规则，应答会被捕获并环回。
+kr_tp_own_addrs() { # <iptables|ip6tables>，stdout 输出
   if [ "$1" = ip6tables ]; then
     ip -6 addr show scope global 2>/dev/null | grep -oE 'inet6 [0-9a-fA-F:]+/[0-9]+' | awk '{print $2}'
   else
@@ -254,20 +253,19 @@ kr_tp_own_addrs() { # <iptables|ip6tables> on stdout
 }
 
 kr_tp_routes() {
-  # Capture path: packets marked by the OUTPUT chain are rerouted over lo into the
-  # tproxy listener.
+  # 捕获路径：OUTPUT 链标记的包经 lo 重路由进 tproxy 监听。
   ip rule del pref $KR_RULE_PREF 2>/dev/null
   ip rule add pref $KR_RULE_PREF fwmark $KR_MARK lookup $KR_TABLE || return 1
   ip route replace local 0.0.0.0/0 dev lo table $KR_TABLE || return 1
   ip -6 rule del pref $KR_RULE_PREF 2>/dev/null
   ip -6 rule add pref $KR_RULE_PREF fwmark $KR_MARK lookup $KR_TABLE || return 1
   ip -6 route replace local ::/0 dev lo table $KR_TABLE || return 1
-  # Bypass path: the core's own sockets carry $KR_BYPASS and must NOT enter the capture
-  # table (that would loop them back into the core). Android routes the default through
-  # a per-network table selected by netd's marks, so the bypass table gets a copy of the
-  # current default route. A later network switch is recovered by toggling takeover.
-  # It also needs local delivery: tproxy replies go back to the device's own address,
-  # and a default-only table would ship them to the gateway and lose them.
+  # 旁路路径：核心自己的 socket 带 $KR_BYPASS，绝不能进捕获表
+  #（那会把它们环回进核心）。Android 经 netd 的 mark 选择的逐网络
+  # 表路由默认路由，所以旁路表拿到当前默认路由的一份副本。
+  # 之后切换网络由再次接管恢复。
+  # 它还需要本地投递：tproxy 应答回到设备自己的地址，
+  # 只有默认路由的表会把它们发给网关并丢失。
   _def4=$(ip route show table all 2>/dev/null | grep -m1 '^default ')
   if [ -z "$_def4" ]; then
     kr_tp_log TProxy "no ipv4 default route; cannot build the bypass path"
@@ -301,9 +299,9 @@ kr_tp_routes() {
   return 0
 }
 
-# Re-add a default route (from `ip route show table all`) into the bypass table: strip
-# the foreign table id and RA/expiry decorations, keep via/dev.
-kr_tp_copy_route() { # <4|6> <route line>
+# 把一条默认路由（来自 `ip route show table all`）补进旁路表：剥掉
+# 外来表 id 和 RA/过期装饰，保留 via/dev。
+kr_tp_copy_route() { # <4|6> <路由行>
   _r=${2#default }
   _via=$(printf '%s\n' "$_r" | sed -n 's/.*via \([^ ]*\).*/\1/p')
   _dev=$(printf '%s\n' "$_r" | sed -n 's/.*dev \([^ ]*\).*/\1/p')
@@ -314,8 +312,8 @@ kr_tp_copy_route() { # <4|6> <route line>
   fi
 }
 
-# Install the whole takeover namespace, both families. Any failure removes everything
-# again: a half-capture is a silent leak, not a smaller feature (docs/adr/0004).
+# 安装整套接管命名空间，两个地址族。任何失败都会把一切再次移除：
+# 半次捕获是静默泄漏，不是更小的功能（docs/adr/0004）。
 kr_tp_install() {
   if kr_tp_rules_present; then
     kr_tp_log TProxy "takeover rules already present"
@@ -343,8 +341,8 @@ kr_tp_install() {
   return 0
 }
 
-# Remove exactly our namespace. Every call is tolerant: uninstall and the failure
-# paths rely on this succeeding even when nothing was ever installed.
+# 只移除我们自己的命名空间。每次调用都是容忍的：卸载与失败路径
+# 依赖它在什么都没装过时也能成功。
 kr_tp_remove() {
   for _i in iptables ip6tables; do
     "$_i" -t mangle -D PREROUTING -j KR_TP_PREROUTING 2>/dev/null
@@ -369,33 +367,33 @@ kr_tp_remove() {
   return 0
 }
 
-# JSON-escape a value the shell splices into a generated block (today: the node host).
+# JSON 转义 shell 要拼进生成块的值（目前：节点主机名）。
 kr_tp_json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
-# Resolve the applied node's host. Only safe while the rules are OFF (direct network);
-# the result is pinned into the core DNS module's hosts so the node connection never
-# depends on an upstream resolver (the bootstrap deadlock, see docs/adr/0008). The
-# system resolver is exactly what a polluted network poisons, so the first ask is the
-# fixed DoH endpoint via $KR_BUSYBOX wget (A records only, matching the DNS module's
-# UseIPv4); KernelSU's busybox ships the applet, PATH ships neither wget nor curl.
-# TLS verification is off
-# (--no-check-certificate): Android's busybox has no CA store to verify against, and an
-# unverified ask over a fixed IP beats falling back to the resolver that pollution
-# poisons (docs/adr/0008). -T bounds reads only; a connect on a hostile network can
-# otherwise hang for tens of seconds (observed: ~50 s), so the busybox timeout applet
-# gives the ask back its hard whole-call budget -- the curl --max-time semantics. A
-# missing busybox or a failed ask falls back to the system
-# resolver. Prints the ip, or nothing when the host is a literal or unresolvable.
+# 解析已应用节点的主机名。只在规则关闭（直连网络）时安全；结果
+# 被钉进核心 DNS 模块的 hosts，让节点连接从不依赖上游解析器
+#（自举死锁，见 docs/adr/0008）。系统解析器正是被污染的网络会毒化
+# 的东西，所以第一问是经 $KR_BUSYBOX wget 的固定 DoH 端点
+#（只要 A 记录，与 DNS 模块的 UseIPv4 匹配）；KernelSU 的 busybox
+# 带 wget applet，PATH 里既没有 wget 也没有 curl。
+# TLS 校验关闭
+#（--no-check-certificate）：Android 的 busybox 没有可校验的 CA 库，
+# 而对固定 IP 的未校验询问胜过退回被污染毒化的解析器
+#（docs/adr/0008）。-T 只限读取；敌意网络上的连接否则可能挂几十秒
+#（实测：约 50 s），所以 busybox 的 timeout applet 给询问恢复硬性的
+# 整调用预算——即 curl 的 --max-time 语义。busybox 缺失或询问失败
+# 回退到系统
+# 解析器。打印 ip；主机名是字面量或无法解析时什么都不打印。
 kr_tp_resolve_node() {
   _host=$(kr_meta_get host 2>/dev/null)
   case "$_host" in
-    *:*) return 0 ;; # an ipv6 literal: nothing to resolve
-    *[!0-9.]*) ;; # a domain: resolve it
-    *) return 0 ;; # an ipv4 literal
+    *:*) return 0 ;; # ipv6 字面量：无可解析
+    *[!0-9.]*) ;; # 域名：解析它
+    *) return 0 ;; # ipv4 字面量
   esac
-  # Percent-encode the query value; % first, so no later rule double-encodes.
+  # 百分号编码查询值；先编码 %，避免后面的规则双重编码。
   _enc=$(printf '%s' "$_host" | sed -e 's/%/%25/g' -e 's/&/%26/g' -e 's/=/%3D/g' \
     -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/ /%20/g')
   _out=$("$KR_BUSYBOX" timeout 4 "$KR_BUSYBOX" wget -q -T 4 -t 1 -O - --no-check-certificate \
@@ -407,15 +405,15 @@ kr_tp_resolve_node() {
     echo "$_out"
     return 0
   }
-  # Not kr_log: this function's stdout is its return value.
+  # 不是 kr_log：本函数的 stdout 是它的返回值。
   kr_log_file DNS "the DoH ask failed; falling back to the system resolver"
   _out=$(ping -c1 -W2 "$_host" 2>/dev/null | sed -n 's/^[^(]*(\([0-9.]*\)).*/\1/p' | head -n 1)
   [ -n "$_out" ] && echo "$_out"
 }
 
 kr_tp_pin_node() {
-  # One resolve per invocation: an apply pins before it renders, and the start it triggers
-  # runs in the same shell -- asking the same question twice costs a DoH round trip (~0.2-4 s).
+  # 每次调用只解析一次：apply 在渲染前钉死，它触发的启动
+  # 在同一个 shell 里运行——同一问题问两遍要花一次 DoH 往返（约 0.2-4 s）。
   [ "${KR_NODEIP_PINNED:-0}" = 1 ] && return 0
   KR_NODEIP_PINNED=1
   _ip=$(kr_tp_resolve_node)
@@ -429,18 +427,18 @@ kr_tp_pin_node() {
   fi
 }
 
-# ---- geo data and the 分流模式 (docs/adr/0014) ------------------------------------------
+# ---- geo 数据与 分流模式（docs/adr/0014） ------------------------------------------
 
-# Both .dat files are required together: a config that names geosite:cn without geosite.dat
-# fails `xray -test`, and a missing geoip.dat is the same dead end one rule later.
+# 两个 .dat 文件必须同时在场：引用 geosite:cn 而没有 geosite.dat 的配置
+# 过不了 `xray -test`，缺 geoip.dat 是晚一条规则的同一个死胡同。
 kr_geodata_ok() {
   [ -s "$KR_BINDIR/geosite.dat" ] && [ -s "$KR_BINDIR/geoip.dat" ]
 }
 
-# The persisted 分流模式, read from the file's content: `cn` or `cnadblock`, anything else (an
-# absent file included) is 全局. 全局 is the absent-file mode, not the default any more: the
-# installer writes 大陆直连去广告 once (kr_route_default, docs/adr/0021). Written by
-# `kernelray.sh routing`.
+# 持久化的 分流模式，按文件内容读取：`cn` 或 `cnadblock`，其他任何值
+#（包括文件不存在）都是 全局。全局 是文件不存在的模式，不再是默认：
+# 安装器写一次 大陆直连去广告（kr_route_default，docs/adr/0021）。写入方
+# 是 `kernelray.sh routing`。
 kr_route_mode() {
   _m=""
   [ -s "$KR_ROUTE" ] && { IFS= read -r _m <"$KR_ROUTE" || :; }
@@ -465,11 +463,11 @@ kr_route_write() { # <global|cn|cnadblock>
   return 0
 }
 
-# Install-time default: 大陆直连去广告, so a fresh install splits mainland traffic out and blocks
-# ads without the user picking anything. Only the installer creates it, and only when the
-# preference is still unset, so a later choice survives until the next install or update.
-# Skipped while the geo data is missing -- a default the core cannot start with is worse than a
-# default that does less (docs/adr/0021, docs/adr/0014).
+# 安装时默认：大陆直连去广告，让全新安装不挑任何东西就完成大陆分流
+# 与广告拦截。只有安装器创建它，且只在偏好仍为未设时，所以之后的
+# 选择能活到下一次安装或更新。geo 数据缺失时跳过——核心无法以其
+# 启动的默认值，比一个少做事的默认值更糟
+#（docs/adr/0021、docs/adr/0014）。
 kr_route_default() {
   [ -s "$KR_ROUTE" ] && return 0
   if ! kr_geodata_ok; then
@@ -480,19 +478,18 @@ kr_route_default() {
   kr_log Routing "分流模式 defaults to cnadblock"
 }
 
-# What the render may use: KR_ROUTE_EFFECTIVE (global|cn|cnadblock), the flags KR_ROUTE_CN and
-# KR_ROUTE_BLOCK_ADS the builders read instead of comparing strings, and KR_ROUTE_DEGRADED when
-# the preference asked for cn and the geo data is gone. Sets variables instead of printing -- a
-# render's stdout is the config, so a degradation must not be able to corrupt it -- and never
-# touches the preference: the preference is intent, the render is fact. The optional argument is
-# the caller's "render this mode, not the saved one" (routing's switch renders the candidate
-# before it writes the preference).
+# 渲染可用的：KR_ROUTE_EFFECTIVE（global|cn|cnadblock）、构建器读的
+# 标志 KR_ROUTE_CN 与 KR_ROUTE_BLOCK_ADS（代替字符串比较），以及偏好
+# 要求 cn 而 geo 数据没了时的 KR_ROUTE_DEGRADED。设置变量而不打印
+# ——渲染的 stdout 是配置，降级绝不能有机会弄脏它——并且绝不碰
+# 偏好：偏好是意图，渲染是事实。可选参数是调用方的"渲染这个模式，
+# 不是保存的那个"（routing 的切换在写偏好之前先渲染候选）。
 #
-# 大陆直连 degrades to 全局 when the geo data is gone: everything through the node is slow, not
-# broken. 大陆直连去广告 does not -- its name promises blocking, so it renders the ad parts and
-# lets `xray -test` refuse the start (docs/adr/0021). A mode that lies is worse than a mode that
-# will not start.
-kr_route_effective() { # [mode override]
+# geo 数据没了时 大陆直连 降级为 全局：全部走节点是慢，不是坏。
+# 大陆直连去广告 不降级——名字承诺拦截，所以渲染广告部分并让
+# `xray -test` 拒绝启动（docs/adr/0021）。撒谎的模式比不肯启动的
+# 模式更糟。
+kr_route_effective() { # [模式覆盖]
   _m=${1:-}
   [ -n "$_m" ] || _m=$(kr_route_mode)
   KR_ROUTE_DEGRADED=0
@@ -510,22 +507,22 @@ kr_route_effective() { # [mode override]
   return 0
 }
 
-# The DNS module block. 全局 keeps the single DoH upstream (docs/adr/0006). 大陆直连 asks the
-# domestic resolvers first for mainland domains, so the answers are the ones the CDN expects;
-# an answer outside geoip:cn is rejected and the query falls through to the DoH, which still
-# leaves through the node. <host> <escaped host> are the applied node's own name.
-kr_tp_dns_block() { # <host> <escaped host> -> KR_DNS_BLOCK
+# DNS 模块块。全局 保留单一 DoH 上游（docs/adr/0006）。大陆直连 对
+# 大陆域名先问国内解析器，让应答是 CDN 期待的那些；geoip:cn 之外的
+# 应答被拒绝、查询落到仍经节点离开的 DoH。<host> <转义 host> 是
+# 已应用节点自己的名字。
+kr_tp_dns_block() { # <host> <转义 host> -> KR_DNS_BLOCK
   _servers='"https://1.1.1.1/dns-query"'
   if [ "$KR_ROUTE_CN" = 1 ]; then
     _servers='{"address":"'$KR_CN_DNS1'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
     _servers=$_servers'{"address":"'$KR_CN_DNS2'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
     _servers=$_servers'"https://1.1.1.1/dns-query"'
   fi
-  # A pinned node address removes the bootstrap dependence on any upstream resolver: the DNS
-  # module answers the node domain from hosts without asking anyone. 大陆直连去广告 adds the ad
-  # sink to the same map: `#3` makes the module answer an empty response with rcode 3 (NXDOMAIN)
-  # instead of resolving, so an ad domain never gets an address at all (config/dns.html; the
-  # `#<n>` form needs core >= 25.7.23, and bin/README names that floor).
+  # 钉死的节点地址移除对任何上游解析器的自举依赖：DNS 模块不经
+  # 任何人、从 hosts 应答节点域名。大陆直连去广告 往同一映射加广告
+  # 沉没端：`#3` 让模块以 rcode 3（NXDOMAIN）应答空响应而不是解析，
+  # 广告域名彻底拿不到地址（config/dns.html；`#<n>` 形式需要核心
+# >= 25.7.23，bin/README 点名了这个底线）。
   _hosts=""
   _nodeip=$(cat "$KR_NODEIP" 2>/dev/null)
   if [ -n "$1" ] && [ -n "$_nodeip" ]; then
@@ -535,67 +532,65 @@ kr_tp_dns_block() { # <host> <escaped host> -> KR_DNS_BLOCK
     _hosts=$_hosts${_hosts:+,}'"geosite:category-ads-all":"#3"'
   fi
   [ -n "$_hosts" ] && _hosts=',"hosts":{'"$_hosts"'}'
-  # The "dns" tag is what makes the routing block's inboundTag:["dns"] rules reach these
-  # upstream queries at all: without it the core tags them xray.system.<uuid> and they fall
-  # through to the port-53 -> dns-out rule, i.e. straight back into this module (ADR 0006).
+  # "dns" 标签是路由块的 inboundTag:["dns"] 规则能到达这些上游查询
+  # 的前提：没有它核心给它们打上 xray.system.<uuid>，它们落到
+  # 端口-53 -> dns-out 规则——径直回到本模块（ADR 0006）。
   KR_DNS_BLOCK='{"tag":"dns","servers":['$_servers'],"queryStrategy":"UseIPv4"'$_hosts'}'
   return 0
 }
 
-# The routing block. <1|0 takeover> <host> <escaped host> -> KR_ROUTING
-# Only the takeover form has a dns inbound, so only it owns the DNS-module rules and the
-# port-53 capture. The geo rules are the same in both forms: a local socks client gets the
-# same 分流 as the device.
-kr_tp_routing_block() { # <1|0> <host> <escaped host>
+# 路由块。<1|0 接管> <host> <转义 host> -> KR_ROUTING
+# 只有接管形态有 dns 入站，所以只有它拥有 DNS 模块规则与
+# 端口-53 捕获。geo 规则在两种形态里相同：本地 socks 客户端得到
+# 与设备相同的分流。
+kr_tp_routing_block() { # <1|0> <host> <转义 host>
   _rules=""
   if [ "$1" = 1 ]; then
-    # The applied node's own hostname resolves through the direct outbound (bootstrap,
-    # docs/adr/0006); an IP node needs no exception.
+    # 已应用节点自己的主机名经 direct 出站解析（自举，docs/adr/0006）；
+    # IP 型节点不需要例外。
     if [ -n "$2" ]; then
       _rules='{"inboundTag":["dns"],"domain":["full:'$3'"],"outboundTag":"direct"}'
     fi
-    # Domestic resolver queries leave direct; everything else the DNS module asks goes
-    # through the proxy.
+    # 国内解析器查询走 direct；DNS 模块问的其余一切经代理。
     if [ "$KR_ROUTE_CN" = 1 ]; then
       _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"ip":["'$KR_CN_DNS1'","'$KR_CN_DNS2'"],"outboundTag":"direct"}'
     fi
     _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"outboundTag":"proxy"}'
     _rules=$_rules',{"network":"tcp,udp","port":53,"outboundTag":"dns-out"}'
   fi
-  # Ads are refused before any 分流 rule -- first match wins, so a mainland ad domain must not
-  # fall into geosite:cn -> direct -- and after the dns/port-53 group above, so a resolver
-  # query is not swallowed by it (docs/adr/0021).
+  # 广告在所有 分流 规则之前被拒——先命中先赢，所以大陆广告域名绝不能
+  # 落进 geosite:cn -> direct——并在上面的 dns/端口-53 组之后，所以解析器
+  # 查询不会被它吞掉（docs/adr/0021）。
   if [ "$KR_ROUTE_BLOCK_ADS" = 1 ]; then
     _rules=$_rules${_rules:+,}'{"domain":["geosite:category-ads-all"],"outboundTag":"block"}'
   fi
   if [ "$KR_ROUTE_CN" = 1 ]; then
-    # Private destinations stay local. Takeover's iptables bypass already keeps them out of
-    # the core, but a local socks client has no bypass, and a router's admin page is not a
-    # proxy target.
+    # 私网目的地保持本地。接管的 iptables 旁路已把它们挡在核心之外，
+    # 但本地 socks 客户端没有旁路，而路由器的管理页不是代理目标。
     _rules=$_rules${_rules:+,}'{"ip":["geoip:private"],"outboundTag":"direct"}'
     _rules=$_rules',{"domain":["geosite:private"],"outboundTag":"direct"}'
     _rules=$_rules',{"domain":["geosite:cn"],"outboundTag":"direct"}'
     _rules=$_rules',{"ip":["geoip:cn"],"outboundTag":"direct"}'
   fi
-  # AsIs in 全局 keeps the pre-0014 block byte for byte. IPIfNonMatch in the two geo modes is
-  # what lets a domain no geosite category knows still match geoip:cn after resolution.
+  # 全局 的 AsIs 逐字节保留 0014 之前的块。两种 geo 模式的 IPIfNonMatch
+  # 让任何 geosite 分类都不认识的域名在解析后仍可匹配 geoip:cn。
   _strategy=AsIs
   [ "$KR_ROUTE_CN" = 1 ] && _strategy=IPIfNonMatch
   KR_ROUTING='{"domainStrategy":"'$_strategy'","rules":['$_rules']}'
   return 0
 }
 
-# The takeover JSON blocks spliced into the template placeholders. Authored here, not
-# in the UI: inbounds, DNS and routing are module-owned layout (docs/adr/0005).
-kr_tp_render_blocks() { # [route override]; sets KR_TP_INBOUND, KR_DNS_OUTBOUND, KR_DNS_BLOCK, KR_ROUTING
+# 拼进模板占位符的接管 JSON 块。在这里编写，不在 UI：入站、DNS 与
+# 路由是模块持有的布局（docs/adr/0005）。
+kr_tp_render_blocks() { # [路由覆盖]；设置 KR_TP_INBOUND、KR_DNS_OUTBOUND、KR_DNS_BLOCK、KR_ROUTING
   KR_TP_INBOUND='{"tag":"tp-in","listen":"::","port":'"$KR_TP_PORT"',"protocol":"dokodemo-door","settings":{"network":"tcp,udp","followRedirect":true},"streamSettings":{"sockopt":{"tproxy":"tproxy"}}}'
   KR_DNS_OUTBOUND='{"tag":"dns-out","protocol":"dns","settings":{}}'
   kr_route_effective "${1:-}"
   _host=$(kr_meta_get host 2>/dev/null)
   case "$_host" in
-    *:*) _host="" ;; # an IPv6 literal: nothing to resolve
-    *[!0-9.]*) : ;; # a domain: keep the exception
-    *) _host="" ;; # an IPv4 literal (digits and dots only): nothing to resolve
+    *:*) _host="" ;; # IPv6 字面量：无可解析
+    *[!0-9.]*) : ;; # 域名：保留例外
+    *) _host="" ;; # IPv4 字面量（仅数字与点）：无可解析
   esac
   _e=$(kr_tp_json_escape "$_host")
   kr_tp_dns_block "$_host" "$_e"
@@ -603,11 +598,10 @@ kr_tp_render_blocks() { # [route override]; sets KR_TP_INBOUND, KR_DNS_OUTBOUND,
   return 0
 }
 
-# routing <global|cn|cnadblock>: the 分流模式 preference. It re-derives
-# the config at once (docs/adr/0014): render the new form, test it, write the preference, then
-# swap. A swap that fails restores the preference, so it never claims a form the core does
-# not run. With no applied node there is nothing to re-render: the preference is saved and
-# the next apply renders it.
+# routing <global|cn|cnadblock>：分流模式 偏好。它立即重新推导
+# 配置（docs/adr/0014）：渲染新形态、测试、写偏好，然后换入。失败的
+# 换入恢复偏好，所以它绝不声称一个核心并没有运行的形态。没有已
+# 应用节点时没有可重渲染的东西：偏好照存，下一次应用时渲染。
 kr_route_set() { # <global|cn|cnadblock>
   case "$1" in
     global | cn | cnadblock) ;;
@@ -622,9 +616,9 @@ kr_route_set() { # <global|cn|cnadblock>
     kr_log Routing "already $1"
     return 0
   fi
-  # Both geo modes need the files. 大陆直连 keeps its longer message; 大陆直连去广告 says the one
-  # short thing its hint, its toast and its log line all say, because it never degrades
-  # (docs/adr/0021).
+  # 两种 geo 模式都需要文件。大陆直连 保留较长的消息；大陆直连去广告
+  # 只说提示、toast 与日志行共有的那一句短话，因为它永不降级
+  #（docs/adr/0021）。
   if [ "$1" != global ] && ! kr_geodata_ok; then
     case "$1" in
       cn)
@@ -644,8 +638,7 @@ kr_route_set() { # <global|cn|cnadblock>
     kr_log Routing "$_cur -> $1 (no applied node; the next apply renders it)"
     return 0
   fi
-  # Render the candidate with this mode before the preference is written: a config the core
-  # rejects leaves the mode exactly where it was.
+  # 写偏好之前先用此模式渲染候选：被核心拒绝的配置让模式停在原地。
   kr_config_candidate "$_n" "$1" || return 1
   if ! kr_route_write "$1"; then
     [ -n "$KR_CANDIDATE" ] && rm -f "$KR_CANDIDATE"
@@ -655,9 +648,8 @@ kr_route_set() { # <global|cn|cnadblock>
     kr_log Routing "$1 (the config already carries it)"
     return 0
   fi
-  # The mode is the intent this config was rendered from, so the rollback must restore it
-  # *before* the restored config is started: that start re-derives the config from the mode
-  # (docs/adr/0017).
+  # 模式是这份配置的渲染意图，所以回滚必须在恢复的配置启动 *之前*
+  # 恢复它：那次启动会从模式重新推导配置（docs/adr/0017）。
   if ! kr_swap_install "$KR_CANDIDATE" ""; then
     kr_route_write "$_cur"
     return 1
@@ -681,17 +673,17 @@ kr_route_status() {
   return 0
 }
 
-# The first half of a start (docs/adr/0011): the conflict check and the node pin, both before
-# the config is rendered. The pin must ask while the network is still direct -- a DoH query
-# under the rules would enter a capture that leads into a core that is not up yet -- and the
-# render needs its answer (the DNS module's hosts entry). Called from kr_start_locked right
-# after the applied-node gate. Returns 1 with KR_TP_PHASE set when takeover cannot happen:
-# the caller then refuses the start, because there is no core without takeover (docs/adr/0011).
+# 启动的前半程（docs/adr/0011）：冲突检查与节点钉死，都在配置渲染
+# 之前。钉死必须在网络仍直连时提问——规则之下的 DoH 查询会进入
+# 一条通向尚未运行的核心的捕获——渲染也需要它的答案（DNS 模块的
+# hosts 条目）。由 kr_start_locked 在已应用节点闸门之后调用。无法
+# 接管时返回 1 并设置 KR_TP_PHASE：调用方随即拒绝启动，因为没有
+# 接管就没有核心（docs/adr/0011）。
 kr_tp_prepare() {
   _applied=$(kr_applied_id) || _applied=""
   if [ -z "$_applied" ] || [ "$(kr_meta_get id 2>/dev/null)" != "$_applied" ] || [ ! -s "$KR_OUTBOUND" ]; then
-    # No usable outbound: nothing to capture into, so the rules must not go up. The start
-    # gate (ADR 0010) refuses this start anyway; this keeps the rules from outliving it.
+    # 没有可用的出站：没有可捕获进的东西，规则绝不能装上。启动
+    # 闸门（ADR 0010）反正会拒绝这次启动；这条让规则不比启动活得久。
     kr_tp_log TProxy "prepare: no usable outbound for the applied node; takeover skipped"
     return 0
   fi
@@ -701,15 +693,15 @@ kr_tp_prepare() {
     KR_TP_PHASE=failed/conflict
     return 1
   fi
-  # Memoized, so an apply that already pinned for this render does not ask twice.
+  # 已记忆化：为本渲染钉过死的 apply 不再问第二遍。
   kr_tp_pin_node
   return 0
 }
 
-# The second half of a start (docs/adr/0011): the rules go in, still before the core runs
-# (fail-closed, docs/adr/0004), but only once `xray -test` accepted the config -- so a config
-# the core rejects leaves the device direct instead of offline. Returns 1 with KR_TP_PHASE
-# set; the caller then refuses the start. It owns the rules and nothing else.
+# 启动的后半程（docs/adr/0011）：规则装入，仍在核心运行之前
+#（fail-closed，docs/adr/0004），但仅在 `xray -test` 接受配置之后——被
+# 核心拒绝的配置让设备保持直连而不是断网。返回 1 并设置
+# KR_TP_PHASE；调用方随即拒绝启动。它只拥有规则，别的什么都不管。
 kr_tp_engage() {
   if ! kr_tp_install; then
     kr_tp_log TProxy "engage: rule install failed, takeover not enforced"
@@ -721,8 +713,8 @@ kr_tp_engage() {
   return 0
 }
 
-# Read-only diagnosis. There is no switch to report any more (docs/adr/0011); the rules are
-# the fact worth asking about.
+# 只读诊断。不再有可报告的开关（docs/adr/0011）；规则才是值得询问
+# 的事实。
 kr_tproxy_status() {
   kr_tp_rules_present && echo "rules=present" || echo "rules=absent"
   return 0

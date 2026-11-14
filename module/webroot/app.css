@@ -12,10 +12,10 @@
   --log-bg: #12141a;
   --log-text: #d7dce5;
 }
-/* The palette is picked in Settings, and theme.js resolves "auto" into one of these two, so
-   dark exists once, keyed on the attribute, instead of once per source of the choice.
-   color-scheme travels with it: without that, native selects and number spinners would keep
-   the system's colours under a palette the user chose against it. */
+/* 配色在设置页挑选，theme.js 把 "auto" 解析成这两者之一，所以
+   dark 只写一份、以属性为键，而不是按选择来源写多份。
+   color-scheme 跟着走：没有它，原生下拉框与数字 spinner 会在用户
+   选定的配色下继续用系统的颜色。 */
 html[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0e1013;
@@ -73,7 +73,7 @@ dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; f
 dt { color: var(--muted); white-space: nowrap; }
 dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .logcard {
-  --logfooter-h: 49px;   /* the 清空日志 row under the view; .lognav sits above it */
+  --logfooter-h: 49px;   /* 视图下方的 清空日志 行；.lognav 悬在其上 */
   position: relative;
   padding: 0; overflow: hidden;
   display: flex; flex-direction: column; flex: 1; min-height: 0;
@@ -106,16 +106,16 @@ pre {
   font: 12px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
 }
-/* The 清空日志 button sits under the view, inside the card: a second card would be pushed
-   off screen by the page's fixed height. Its fixed height is what .lognav measures against. */
+/* 清空日志 按钮放在视图下方、卡片内部：再开一张卡片会被页面的
+   固定高度挤出屏。它的固定高度正是 .lognav 测量的基准。 */
 .logfooter {
   flex: 0 0 var(--logfooter-h);
   display: flex; align-items: center; justify-content: flex-end;
   padding: 0 12px; border-top: 1px solid var(--line);
 }
 .logfooter button { flex: 0 0 auto; padding: 6px 12px; font-size: 13px; font-weight: 500; }
-/* Floating scroll buttons over the log's bottom-right corner. They sit on the dark log
-   background, so the card colour at .85 opacity keeps them readable without shouting. */
+/* 悬浮在日志右下角的滚动按钮。它们压在深色日志背景上，
+   卡片色 0.85 透明度让它们可读而不扎眼。 */
 .lognav {
   position: absolute; right: 10px; bottom: calc(var(--logfooter-h) + 10px); z-index: 2;
   display: flex; flex-direction: column; gap: 8px;
@@ -136,8 +136,8 @@ pre {
 }
 .banner.show { display: block; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
-/* The 分流模式 card's hint is warning-only (a missing geo file), so it is the one .hint that
-   ever needs the warn colour. */
+/* 分流模式 卡片的提示只作警告（缺 geo 文件），所以它是唯一
+   需要 warn 颜色的 .hint。 */
 .hint.warn { color: var(--warn); }
 .nodehead { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .nodehead > span:first-child { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
@@ -281,7 +281,7 @@ body.dialog-open { overflow: hidden; }
 }
 .addcard > .primary { margin-top: 10px; width: 100%; }
 
-/* Node detail dialog: the row tap opens it read-only; only its Apply button switches. */
+/* 节点详情弹窗：点行打开只读视图；只有其 应用 按钮执行切换。 */
 .nodecard {
   width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
   overflow: auto; margin-bottom: 0;

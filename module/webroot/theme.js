@@ -1,12 +1,12 @@
-// Theme is a Settings-page preference, like language: it rides in the same `kernelray.prefs`
-// blob in the WebView's localStorage and never reaches state.json.
+// 主题与语言一样都是设置页的偏好：它与语言共用 WebView 的 localStorage 里同一份
+// `kernelray.prefs` 数据，绝不进入 state.json。
 //
-// This file loads in <head>, before the body paints, so the first frame already carries the
-// chosen palette — a dark page must not flash light while app.js loads. app.js reuses these
-// functions rather than repeating the key or the "auto" resolution.
+// 本文件在 <head> 中、body 绘制之前加载，因此第一帧就已带上所选配色 —— 深色页面在
+// 加载 app.js 期间不能闪出浅色；app.js 复用这里的函数，不重复键名，也不会重复
+// "auto" 的解析。
 //
-// The palette itself lives once in app.css, keyed on html[data-theme="light"|"dark"]:
-// "auto" is resolved here so the dark colours are not written twice.
+// 配色本身只在 app.css 中定义一处，以 html[data-theme="light"|"dark"] 为键：
+// "auto" 在这里解析，这样深色配色就不必写两遍。
 
 var PREFS_KEY = "kernelray.prefs";
 var THEMES = ["auto", "light", "dark"];
@@ -21,9 +21,9 @@ function systemDark() {
   try { return !!window.matchMedia(DARK_QUERY).matches; } catch (e) { return false; }
 }
 
-// "auto" is the only pref that has to keep asking the system: applyTheme() subscribes to the
-// change event while the pref is auto and drops the subscription otherwise, so a system flip
-// repaints an open page without a reload.
+// "auto" 是唯一需要持续询问系统的偏好：偏好为 auto 时，applyTheme() 订阅 change
+// 事件，否则取消该订阅。这样系统配色切换时，已打开的页面无需重新加载，
+// 就能直接重绘。
 function resolveTheme(pref) {
   var p = themeNormalize(pref);
   if (p !== "auto") { return p; }
@@ -37,7 +37,7 @@ function readThemePref(store) {
   } catch (e) { return "auto"; }
 }
 
-// localStorage itself can throw in a locked-down WebView; the pref is then session-only.
+// 受限的 WebView 里连 localStorage 本身也可能抛异常；此时该偏好只在本次会话内有效。
 function prefStore() {
   try { return window.localStorage; } catch (e) { return null; }
 }
@@ -64,9 +64,9 @@ function watchSystem(on) {
   }
 }
 
-// data-theme is the resolved palette, never "auto", so the CSS needs no media query. The
-// attribute also drives color-scheme in app.css, which is what keeps native selects and
-// number spinners in the palette the user picked rather than the system's.
+// 属性 data-theme 是解析后的配色，绝不会是 "auto"，所以 CSS 不需要媒体查询；该属性
+// 还驱动 app.css 中的 color-scheme，正是它让原生下拉框和数字调节按钮采用用户挑选的
+// 配色，而不是系统的配色。
 function applyTheme(pref) {
   var p = themeNormalize(pref);
   var resolved = resolveTheme(p);
@@ -77,7 +77,7 @@ function applyTheme(pref) {
   return resolved;
 }
 
-// The manager's WebView has no module loader: app.js takes the API off the global.
+// 管理器的 WebView 没有模块加载器：app.js 直接从全局对象上取这套 API。
 if (typeof window !== "undefined") {
   window.KRTheme = {
     PREFS_KEY: PREFS_KEY, THEMES: THEMES,
@@ -86,7 +86,7 @@ if (typeof window !== "undefined") {
   };
 }
 
-// Runs at parse time, before the first paint.
+// 在解析时、首次绘制之前运行。
 if (typeof document !== "undefined") {
   applyTheme(readThemePref(prefStore()));
 }

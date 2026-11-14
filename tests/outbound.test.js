@@ -1,10 +1,10 @@
-// Outbound renderer tests for the WebUI.
+// 针对 WebUI 节点出站渲染器的测试。
 //
-// The renderer lives inside module/webroot/app.js; this harness extracts the marked
-// block from the shipped file, exactly like tests/parse.test.js does for the parser.
-// That keeps the fixture-free "node → Xray outbound" step honest without a browser.
+// 渲染器位于 module/webroot/app.js 中；本测试框架从随包发布的文件里抽取带标记的
+// 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。
+// 这样无需浏览器，也能让不使用夹具的「节点 → Xray 出站」步骤测到真实实现。
 //
-//   node tests/outbound.test.js
+//   运行：node tests/outbound.test.js
 
 "use strict";
 
@@ -57,7 +57,7 @@ function node(over) {
   }, over);
 }
 
-// ---- vless ------------------------------------------------------------------------------
+// ---- vless 节点 ------------------------------------------------------------------------------
 
 check("vless: reality + tcp + vision flow", () => {
   const o = O.outboundOf(node({
@@ -112,7 +112,7 @@ check("vless: security none produces no tls/reality block", () => {
   eq(o.streamSettings, { network: "tcp", security: "none", sockopt: { mark: "__KERNELRAY_MARK__" } }, "streamSettings");
 });
 
-// ---- vmess ------------------------------------------------------------------------------
+// ---- vmess 节点 ------------------------------------------------------------------------------
 
 check("vmess: alterId and cipher map to the Xray user object", () => {
   const o = O.outboundOf(node({
@@ -135,7 +135,7 @@ check("vmess: default cipher is auto", () => {
   eq(o.settings.vnext[0].users[0].security, "auto", "security");
 });
 
-// ---- trojan / ss ------------------------------------------------------------------------
+// ---- trojan / ss 节点 ------------------------------------------------------------------------
 
 check("trojan: password, path and Host", () => {
   const o = O.outboundOf(node({
@@ -161,7 +161,7 @@ check("ss: method and password", () => {
   eq(o.streamSettings, { network: "tcp", security: "none", sockopt: { mark: "__KERNELRAY_MARK__" } }, "streamSettings");
 });
 
-// ---- transports -------------------------------------------------------------------------
+// ---- 传输方式 -------------------------------------------------------------------------
 
 check("h2: httpSettings uses an array for host", () => {
   const o = O.outboundOf(node({
@@ -187,7 +187,7 @@ check("unknown transports are passed through rather than guessed at", () => {
   eq(o.streamSettings.kcpSettings, undefined, "no invented transport settings");
 });
 
-// ---- escaping and validation ------------------------------------------------------------
+// ---- 转义与校验 ------------------------------------------------------------
 
 check("credentials survive JSON escaping and stay on one line", () => {
   const pw = "p\"a\\s$`'<>&\nline2";
@@ -203,10 +203,10 @@ check("port strings are coerced to numbers", () => {
   eq(typeof o.settings.vnext[0].port, "number", "port type");
 });
 
-// The renderer never writes a real mark: a SO_MARK without the matching ip rule loses
-// routing on Android (verified on v0.6). It writes the placeholder, and the shell —
-// which knows the switch state — replaces it with the bypass mark or 0, so mark and
-// rules always ship together (docs/adr/0008).
+// 渲染器绝不写入真实 mark：没有匹配 ip rule 的 SO_MARK 在 Android 上会丢路由
+// （v0.6 上已验证）。它写入的是占位符，而掌握接管状态的 shell 会
+// 把它替换成旁路标记或 0，这样标记与规则
+// 总是一起下发（docs/adr/0008）。
 check("every protocol carries the mark placeholder, never a real mark", () => {
   const fixtures = [
     node({}),
@@ -231,7 +231,7 @@ check("missing required fields are rejected", () => {
   assert.throws(() => O.outboundOf({ protocol: "ss", address: "x", port: 1 }), /method/);
 });
 
-// ---- report -----------------------------------------------------------------------------
+// ---- 结果汇总 -----------------------------------------------------------------------------
 
 if (failures.length) {
   console.error("\n" + failures.length + " failing, " + pass + " passing\n");

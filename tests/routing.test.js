@@ -1,14 +1,14 @@
-// 分流模式 (routing mode) tests.
+// 分流模式 (routing mode) 测试。
 //
-// The mode is a shell-owned preference (docs/adr/0014): runtime/route, written by
-// `kernelray.sh routing global|cn` and applied at once by re-rendering the config. This
-// harness sources the shipped shell against a throwaway module dir, a fake core and fake geo
-// data, so the render matrix (全局/大陆直连 × takeover/idle), the geo-data degradation and the
-// switch's failure paths are covered without an Android device or the real .dat files.
+// 这个模式是 shell 持有的偏好（docs/adr/0014）：runtime/route 由
+// `kernelray.sh routing global|cn` 写入，并通过重新渲染配置立即生效。这套测试在
+// 临时模块目录、假核心与假的地理数据上 source 随包 shell，因此无需 Android 设备
+// 或真正的 .dat 文件，就能覆盖渲染矩阵（全局/大陆直连 × 接管/直连运行）、
+// 地理数据降级以及切换的失败路径。
 //
 //   node tests/routing.test.js
 //
-// Requires bash (Git Bash on Windows).
+// 需要 bash（Windows 上是 Git Bash）。
 
 "use strict";
 
@@ -33,8 +33,8 @@ const fixture = {
   }
 };
 
-// -version prints; -test fails only when FAKE_XRAY_FAIL is set; `run -c` stays up unless
-// FAKE_START_FAIL says otherwise.
+// `-version` 输出版本；只有设置 FAKE_XRAY_FAIL 时 `-test` 才失败；
+// 除非 FAKE_START_FAIL 另有指示，`run -c` 会保持存活。
 const fakeCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -51,8 +51,8 @@ const fakeCore = [
   ""
 ].join("\n");
 
-// Starts for the 全局 form and dies for 大陆直连, so the swap's rollback path is reachable
-// without touching the preference by hand.
+// 对全局形态能启动，对大陆直连则死亡，这样不必手动改偏好就能走到换入操作的
+// 回滚路径。
 const modeAwareCore = [
   "#!/bin/sh",
   'if [ "$1" = "-version" ]; then echo "Xray 0.0.0 (test)"; exit 0; fi',
@@ -92,15 +92,15 @@ function shPath(p) {
   return "/" + p[0].toLowerCase() + p.slice(2).replace(/\\/g, "/");
 }
 
-// The stub dir is prepended in Windows format; msys bash converts PATH itself.
+// 桩目录以 Windows 格式前置；msys bash 会自行转换 PATH。
 function posixPathEnv(extraDir) {
   return process.platform === "win32"
     ? extraDir + ";" + process.env.PATH
     : extraDir + ":" + process.env.PATH;
 }
 
-// A stubs dir whose iptables refuses to create a chain: the rule install fails and the start
-// must be refused (there is no core without takeover, docs/adr/0011).
+// 一个 iptables 拒绝建链的桩目录：接管规则安装失败，启动必须被拒绝
+// （没有接管就没有核心，docs/adr/0011）。
 function makeFailingIptables(m) {
   const dir = path.join(m.dir, "fail-bin");
   fs.mkdirSync(dir, { recursive: true });
@@ -131,13 +131,13 @@ function makeModule(core) {
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
-  // The geo data sits beside the core (docs/adr/0014). `-s` is what the shell checks: an
-  // empty .dat is as good as a missing one.
+  // 地理数据就放在核心旁边（docs/adr/0014）。`-s` 是 shell 检查的依据：
+  // 空的 .dat 与缺失的 .dat 等价。
   fs.writeFileSync(path.join(dir, "bin", "geosite.dat"), "geosite\n");
   fs.writeFileSync(path.join(dir, "bin", "geoip.dat"), "geoip\n");
-  // Every start takes over (docs/adr/0011), so a start needs a kernel that says yes. The
-  // stubs are on PATH for every run; a test that wants a failure brings its own (see
-  // makeFailingIptables).
+  // 每次启动都是一次接管（docs/adr/0011），所以启动需要内核回答「规则在位」。
+  // 桩程序在每次运行里都位于 PATH 上；想要制造失败的测试会自带一套
+  // （见 makeFailingIptables）。
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   const chainless = [
@@ -190,9 +190,9 @@ function runShell(dir, body, args, extraEnv) {
       KR_TEST_SCRIPT: shPath(script),
       KR_BUSYBOX: shPath(path.join(stubs, "busybox")),
       PATH: fs.existsSync(stubs) ? posixPathEnv(stubs) : process.env.PATH,
-      // The fake cores never bind the socks port, so a start waits for its deadline: shorten
-      // it instead of paying 1.5 s per start. A core that exits is still caught on the first
-      // poll, which is what the rollback tests rely on.
+      // 假核心从不绑定 socks 端口，所以启动要等到截止时间：把它缩短，免得每次
+      // 启动都付 1.5 s 的代价。会退出的核心仍在第一次轮询就被发现，回滚测试
+      // 正是依赖这一点。
       KR_START_POLLS: "8",
       KR_START_STEP: "0.05"
     }, extraEnv || {}),
@@ -238,14 +238,14 @@ const CN_RULES_TAKEOVER = [
   { domain: ["geosite:cn"], outboundTag: "direct" },
   { ip: ["geoip:cn"], outboundTag: "direct" }
 ];
-// 全局's rule set: the takeover form always owns the DNS module and the port-53 capture.
+// 全局的规则集：接管形态始终带有 DNS 模块和端口 53 的捕获。
 const GLOBAL_RULES = [
   { inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct" },
   { inboundTag: ["dns"], outboundTag: "proxy" },
   { network: "tcp,udp", port: 53, outboundTag: "dns-out" }
 ];
 
-// ---- rendering --------------------------------------------------------------------------
+// ---- 渲染 --------------------------------------------------------------------------
 
 check("render: 大陆直连 splits DNS and sends mainland destinations direct", () => {
   const m = makeModule();
@@ -262,10 +262,10 @@ check("render: 大陆直连 splits DNS and sends mainland destinations direct", 
   }, "second domestic resolver");
   eq(cfg.dns.servers[2], "https://1.1.1.1/dns-query", "DoH stays the fallback");
   eq(cfg.dns.queryStrategy, "UseIPv4", "queryStrategy survives the split");
-  // The routing rules below match inboundTag:["dns"]; the core only tags the DNS module's
-  // upstream queries with it when the dns block declares that tag -- without it the tag is
-  // xray.system.<uuid>, every upstream query falls through to port 53 -> dns-out (back into
-  // this module), and the domestic resolvers are never asked at all.
+  // 下面的分流规则匹配 inboundTag:["dns"]；只有 dns 块声明了该标签，核心
+  // 才会给它的上游查询打上这个标签 —— 否则标签就是 xray.system.<uuid>，每条
+  // 上游查询都会落到端口 53 -> dns-out（又回到本模块），国内解析器根本
+  // 不会被问到。
   eq(cfg.dns.tag, "dns", "the dns module carries the tag its routing rules match");
 
   eq(cfg.routing.domainStrategy, "IPIfNonMatch", "unmatched domains get resolved and re-tested");
@@ -286,7 +286,7 @@ check("render: there is no idle form left to render", () => {
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)], { KR_TAKEOVER: "0" }));
-  // KR_TAKEOVER is not an input any more: a render is the takeover form, always.
+  // 环境变量 KR_TAKEOVER 已不再是输入：一次渲染永远是接管形态。
   eq(cfg.inbounds.length, 3, "tproxy inbound present");
   eq(cfg.dns.tag, "dns", "the dns module is present");
   eq(cfg.routing.rules, CN_RULES_TAKEOVER, "the full cn rule set, dns group included");
@@ -312,7 +312,7 @@ check("render: a pinned node address lands in the hosts of the split DNS too", (
   eq(cfg.routing.rules, CN_RULES_TAKEOVER, "the rules are unchanged by the pin");
 });
 
-// ---- degradation ------------------------------------------------------------------------
+// ---- 降级 ------------------------------------------------------------------------
 
 check("degrade: a cn render without geo data falls back to 全局 and says so", () => {
   const m = makeModule();
@@ -348,17 +348,17 @@ check("degrade: an empty .dat counts as missing", () => {
   eq(out.trim(), "MISSING", "geodata check");
 });
 
-// ---- where the core finds its data ------------------------------------------------------
+// ---- 核心查找数据的位置 ------------------------------------------------------
 
 check("layout: the geo data the shell checks is the data beside the core", () => {
   const m = makeModule();
-  // The core resolves geosite.dat/geoip.dat from its own executable's directory (26.10.29
-  // searches there, not the cwd), so the data has to live where the core does -- there is no
-  // XRAY_LOCATION_ASSET and no second path to keep in sync (docs/adr/0014).
+  // 核心从自己可执行文件所在目录解析 geosite.dat/geoip.dat（26.10.29 在那里找，
+  // 不是 cwd），所以数据必须与核心同目录 —— 既没有 XRAY_LOCATION_ASSET，也没有
+  // 第二条需要保持同步的路径（docs/adr/0014）。
   const coreDir = path.posix.dirname(runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_core').trim());
   eq(coreDir, shPath(m.dir) + "/bin", "the core lives in bin/");
 
-  // Moving a .dat out of that directory is the layout break this guards against.
+  // 把某个 .dat 移出该目录，正是本测试要防住的布局破坏。
   const moved = path.join(m.dir, "elsewhere");
   fs.mkdirSync(moved);
   fs.renameSync(path.join(m.dir, "bin", "geosite.dat"), path.join(moved, "geosite.dat"));
@@ -366,7 +366,7 @@ check("layout: the geo data the shell checks is the data beside the core", () =>
     "MISSING", "a .dat outside the core's directory does not count");
 });
 
-// ---- the CLI ----------------------------------------------------------------------------
+// ---- CLI ----------------------------------------------------------------------------
 
 check("cli: routing status reports the mode, the effective mode and the data", () => {
   const m = makeModule();
@@ -430,7 +430,7 @@ check("cli: a candidate that does not start rolls the preference back", () => {
   const m = makeModule(modeAwareCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");
-  // Get the global config running first: that is the state the switch starts from.
+  // 先让全局形态的配置跑起来：那才是切换开始时的状态。
   runShell(m.dir, BODY_START);
   const before = fs.readFileSync(m.config, "utf8");
 
@@ -475,7 +475,7 @@ check("cli: an unknown mode is a usage error", () => {
   if (!/usage: kernelray.sh routing/.test(r.stderr)) { throw new Error("usage line: " + r.stderr); }
 });
 
-// ---- a boot that finds the data gone ------------------------------------------------
+// ---- 启动时发现数据已消失 ------------------------------------------------
 
 check("start: a stale cn config degrades to 全局 when the geo data is gone", () => {
   const m = makeModule(modeAwareCore);
@@ -487,8 +487,8 @@ check("start: a stale cn config degrades to 全局 when the geo data is gone", (
   }
   fs.unlinkSync(m.geosite);
 
-  // modeAwareCore only stays up for a config without geosite:cn, so this start proves the
-  // stale config was re-rendered rather than left to fail -test.
+  // 假核心 modeAwareCore 只对不含 geosite:cn 的配置保持存活，所以这次启动证明
+  // 那份陈旧配置被重新渲染过，而不是留着去让 -test 失败。
   runShell(m.dir, BODY_START);
   if (/geosite:cn/.test(fs.readFileSync(m.config, "utf8"))) {
     throw new Error("the stale cn config must be re-rendered before the test");
@@ -504,14 +504,14 @@ check("start: with no rules available, a start is refused instead of falling bac
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_SET, ["cn"]);
   fs.unlinkSync(m.geosite);
-  // The rule install fails here. 启动即接管 (docs/adr/0011): there is no core without takeover,
-  // so the start is refused -- and the device stays direct instead of offline.
+  // 接管规则安装在这里失败。启动即接管 (docs/adr/0011)：没有接管就没有核心，
+  // 所以启动被拒绝 —— 设备保持直连，而不是断网。
   const r = runFail(m.dir, BODY_START, [], { PATH: makeFailingIptables(m) });
   if (!/takeover rules failed/.test(r.stdout + r.stderr)) {
     throw new Error("expected the takeover refusal, got: " + r.stdout + r.stderr);
   }
-  // The config was rendered and tested before the rules were attempted: it is the degraded
-  // global form, because a cn config cannot pass -test without the geo data.
+  // 在尝试装接管规则之前，配置已经渲染并通过测试：它是降级后的全局形态，
+  // 因为没有地理数据时 cn 配置过不了 -test。
   if (/geosite:cn/.test(fs.readFileSync(m.config, "utf8"))) {
     throw new Error("the config must be the degraded global form");
   }
@@ -521,10 +521,10 @@ check("start: with no rules available, a start is refused instead of falling bac
   eq(fs.readFileSync(m.route, "utf8").trim(), "cn", "the mode is a preference, never rewritten");
 });
 
-// ---- done -------------------------------------------------------------------------------
+// ---- 完成 -------------------------------------------------------------------------------
 
 dirs.forEach(function (d) {
-  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* windows */ }
+  try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* Windows 可能占用文件 */ }
 });
 
 if (failures.length) {

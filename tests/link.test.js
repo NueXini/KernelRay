@@ -1,10 +1,10 @@
-// Node → share-link tests for the WebUI.
+// 针对 WebUI「节点 → 分享链接」的测试。
 //
-// The generator lives inside module/webroot/app.js, next to the parser it must round-trip
-// through. This harness extracts both marked blocks from the shipped file, so the copied link
-// is tested against the exact parser that will read it back on the device.
+// 生成器位于 module/webroot/app.js 中，紧挨着它必须与之往返一致的解析器。
+// 本测试框架从随包发布的文件里同时抽取这两个带标记的代码块，因此复制出的链接
+// 正是用设备上将来把它读回去的那个解析器来检验的。
 //
-//   node tests/link.test.js
+//   运行：node tests/link.test.js
 
 "use strict";
 
@@ -61,7 +61,7 @@ function roundTrip(node) {
 
 const VLESS_UUID = "da0b1cdf-81a5-340c-a0c7-c35c22923cbd";
 
-// ---- vless ------------------------------------------------------------------------------
+// ---- vless 节点 ------------------------------------------------------------------------------
 
 check("vless: reality node round-trips through the parser", () => {
   const n = {
@@ -134,7 +134,7 @@ check("vless: gRPC serviceName round-trips", () => {
   eq(r.node.serviceName, n.serviceName, "serviceName");
 });
 
-// ---- trojan -----------------------------------------------------------------------------
+// ---- trojan 节点 -----------------------------------------------------------------------------
 
 check("trojan: special-character password, ws and tls round-trip", () => {
   const n = {
@@ -177,7 +177,7 @@ check("trojan: reality fields survive the round-trip", () => {
   eq(r.node.flow, n.flow, "flow");
 });
 
-// ---- vmess ------------------------------------------------------------------------------
+// ---- vmess 节点 ------------------------------------------------------------------------------
 
 check("vmess: JSON link round-trips transport, TLS and name", () => {
   const n = {
@@ -216,7 +216,7 @@ check("vmess: IPv6 is plain in the JSON add field", () => {
   eq(j.tls, "", "none is an empty tls");
 });
 
-// ---- ss ---------------------------------------------------------------------------------
+// ---- ss 节点 ---------------------------------------------------------------------------------
 
 check("ss: SIP002 link round-trips method, password and name", () => {
   const n = {
@@ -281,7 +281,7 @@ check("a parsed vmess node regenerates a parseable link", () => {
   eq(second.node.security, first.node.security, "security");
 });
 
-// ---- subscription Base64 ----------------------------------------------------------------
+// ---- 订阅 Base64 ----------------------------------------------------------------
 
 check("Base64 of a link is the one-line subscription form and re-imports", () => {
   const n = {
@@ -310,7 +310,7 @@ check("Base64 of a vmess link is double-encoded on purpose", () => {
   eq(P.identityOf(rows[0].node), P.identityOf(n), "identity");
 });
 
-// ---- errors -----------------------------------------------------------------------------
+// ---- 错误处理 -----------------------------------------------------------------------------
 
 check("unknown protocol is refused", () => {
   let failed = false;

@@ -1,6 +1,6 @@
 # shellcheck shell=ash
-# Sourced by the KernelSU/Magisk installer. Do not call `exit` here.
-# Available: MODPATH, API, ARCH, IS64BIT, KSU, KSU_VER_CODE, ...
+# 由 KernelSU/Magisk 安装器 source。这里不要调 `exit`。
+# 可用变量：MODPATH、API、ARCH、IS64BIT、KSU、KSU_VER_CODE、...
 
 SKIPUNZIP=0
 
@@ -11,10 +11,10 @@ if [ "$API" -lt 29 ]; then
 fi
 ui_print "  device: API $API, installer ARCH=$ARCH"
 
-# Zip entries may lose the exec bit (built on Windows), so fix modes before probing.
+# ZIP 条目可能丢失可执行位（在 Windows 上构建），所以探测前先修权限。
 set_perm_recursive "$MODPATH" 0 0 0755 0644
-# bin/ holds the core and the geo data it loads: the directory is traversable and the core is
-# the only file in it that executes (docs/adr/0014).
+# bin/ 放核心与其加载的 geo 数据：目录可穿越，核心是其中唯一
+# 可执行的文件（docs/adr/0014）。
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0644
 set_perm "$MODPATH/bin/xray" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
@@ -40,12 +40,12 @@ else
 fi
 
 kr_dirs
-# The 分流模式 defaults to 大陆直连去广告 (ADR 0021), the installer's one-time default: only the
-# installer creates it, and only while the preference is unset. With the geo data missing the
-# default stays 全局, so the core can still start.
+# 分流模式 默认为 大陆直连去广告（ADR 0021），安装器的一次性默认：只有
+# 安装器创建它，且只在偏好未设时。geo 数据缺失时默认保持 全局，
+# 核心仍可启动。
 command -v kr_route_default >/dev/null 2>&1 && kr_route_default
-# No applied node at install time, so this is a refusal by design (ADR 0010): keep its
-# "apply a node first" message out of the installer output.
+# 安装时没有已应用节点，所以这是设计使然的拒绝（ADR 0010）：
+# 别把它的"先应用节点"消息打进安装器输出。
 kr_ensure_config >/dev/null 2>&1
 kr_status_write installed idle
 
