@@ -785,16 +785,14 @@ kr_ensure_config() {
 # 模式）的调用方可以在中间插手。
 # 传入要记录的已应用 id（apply 路径），或传 "" 让 runtime/applied
 # 原样不动（ports 与 routing 路径重渲染同一节点）。核心曾在运行时设
-# KR_SWAP_WAS=1，KR_SWAP_TP_WAS 记录接管规则是否已在位——回滚用它
-# 只移除本次换入拉起的规则（docs/adr/0011）。每次失败都以带消息
-# 返回 1；只要能恢复，核心就继续运行旧配置。
+# KR_SWAP_WAS=1。kr_stop 会把换入起点的接管规则拆掉，随后由启动的
+# engage 重新装上——失败的换入由 kr_swap_tp_rollback 收尾。每次失败
+# 都以带消息返回 1；只要能恢复，核心就继续运行旧配置。
 kr_swap_install() { # <候选> <已应用 id|"">
   _cand=$1
   _newid=$2
   KR_SWAP_WAS=0
   kr_running && KR_SWAP_WAS=1
-  KR_SWAP_TP_WAS=0
-  command -v kr_tp_rules_present >/dev/null 2>&1 && kr_tp_rules_present && KR_SWAP_TP_WAS=1
   _old=$(kr_applied_id) || _old=""
   KR_SWAP_OLD=$_old
   _prev=$KR_RUNDIR/config.json.prev
@@ -848,9 +846,9 @@ kr_swap_start() {
 # 已指向另一节点的 apply 保留恢复的字节（kr_conf_accept_ondisk）。
 #
 # 重启没能回来的回滚意味着设备没有核心，而没有核心的设备不许
-# 保留捕获（docs/adr/0011）：本次换入拉起的规则被移除，设备回到
-# 直连而不是黑暗。换入之前已在位的规则原样不动——它们属于
-# 之前运行的核心，那才是要回到的状态。
+# 保留捕获（docs/adr/0011）：kr_stop 已在换入开头拆掉规则，之后
+# 每次失败的启动都由 engage 重新装上——所以这里规则一旦在位而
+# 没有核心运行，一律移除，设备回到直连而不是黑暗。
 kr_swap_rollback() {
   _prev=$KR_RUNDIR/config.json.prev
   kr_log Config "new config did not start; restoring previous config"
@@ -881,9 +879,9 @@ kr_swap_rollback() {
   return 0
 }
 
-# 拆掉失败换入拉起的那一次捕获，且仅此一次。
+# 拆掉没有任何核心在承载的捕获。kr_stop 把换入起点的规则也拆了，
+# 所以这里不再区分"规则是不是换入带来的"——在位而无人使用即拆。
 kr_swap_tp_rollback() {
-  [ "${KR_SWAP_TP_WAS:-0}" = 1 ] && return 0
   command -v kr_tp_rules_present >/dev/null 2>&1 || return 0
   kr_tp_rules_present || return 0
   kr_log TProxy "the swap brought the rules up and no core is running; removing them"
@@ -1085,6 +1083,9 @@ kr_start_locked() {
 
 kr_stop() {
   if ! kr_running; then
+    # 这里也是黑洞的解药：核心崩死时规则按 fail-closed 留在位（ADR 0011），
+    # 用户再按一次 stop 就是明确的断开意图——设备回到直连，而不是等重启。
+    command -v kr_tp_remove >/dev/null 2>&1 && kr_tp_remove
     rm -f "$KR_PIDFILE" "$KR_STARTED"
     kr_log Core "not running"
     kr_status_write stopped idle
@@ -1101,6 +1102,10 @@ kr_stop() {
   done
   kill -9 "$_p" 2>/dev/null
   rm -f "$KR_PIDFILE" "$KR_STARTED"
+  # 主动停止就是断开：规则绝不比核心活得久。崩溃路径不经过这里，
+  # 仍按 fail-closed 留着规则（ADR 0011）；换入路径靠下一次启动的
+  # engage 重新装上，中间的直连窗口比黑洞窗口好。
+  command -v kr_tp_remove >/dev/null 2>&1 && kr_tp_remove
   kr_log Core "stopped pid $_p"
   kr_status_write stopped idle
 }

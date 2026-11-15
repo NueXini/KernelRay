@@ -206,6 +206,10 @@ function fakeLog(m) {
   catch (e) { return ""; }
 }
 
+function rulesPath(m) {
+  return path.join(m.dir, "runtime", "rules");
+}
+
 const BODY_INSTALL = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_install';
 const BODY_REMOVE = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_remove';
 const BODY_CONFLICT = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_conflict';
@@ -490,6 +494,52 @@ check("start: a rejected config installs no rules at all", () => {
     eq(status(m).state, "failed", "state");
     eq(status(m).phase, "config-invalid", "phase");
   });
+});
+
+// ---- 主动停止即断开 (ADR 0011) ----------------------------------------------------
+//
+// stop 是用户意图：规则绝不比核心活得久。崩溃路径不经过 kr_stop，
+// 那里仍按 fail-closed 留着规则；核心已死时再按一次 stop 是黑洞的解药。
+
+const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_stop';
+
+check("stop: a running core's stop removes the takeover rules and goes direct", () => {
+  const m = makeModule();
+  writeApplied(m);
+  // 启动装上规则（engage 在核心 fork 之前）。
+  runShell(m, BODY_BOOT, { FAKE_IPT_NOCHAIN: "1" });
+  if (!/^present=1$/m.test(fs.readFileSync(rulesPath(m), "utf8"))) {
+    throw new Error("precondition: the boot must leave the rules in place");
+  }
+  runShell(m, BODY_STOP);
+  const cache = fs.readFileSync(rulesPath(m), "utf8");
+  if (!/^present=0$/m.test(cache)) { throw new Error("cache must say absent: " + cache); }
+  const log = fakeLog(m);
+  for (const ipt of ["iptables", "ip6tables"]) {
+    if (!log.includes(ipt + " -t mangle -D PREROUTING -j KR_TP_PREROUTING")) {
+      throw new Error(ipt + ": PREROUTING hook not detached on stop");
+    }
+    if (!log.includes(ipt + " -t mangle -X KR_TP_OUTPUT")) {
+      throw new Error(ipt + ": output chain not deleted on stop");
+    }
+  }
+  if (!log.includes("ip rule del pref 9500") || !log.includes("ip rule del pref 9400")) {
+    throw new Error("policy routing rules not removed on stop");
+  }
+  eq(status(m).state, "stopped", "state");
+});
+
+check("stop: a stop with no core running removes crashed-core leftovers", () => {
+  const m = makeModule();
+  // 崩溃现场：规则在位、核心已死（黑洞态）。再按一次 stop 必须是解药。
+  runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1" });
+  runShell(m, BODY_STOP);
+  if (!/^present=0$/m.test(fs.readFileSync(rulesPath(m), "utf8"))) {
+    throw new Error("the rescue stop must tear the stale rules down");
+  }
+  if (!fakeLog(m).includes("ip6tables -t mangle -D OUTPUT -j KR_TP_OUTPUT")) {
+    throw new Error("the rescue stop must run the full teardown");
+  }
 });
 
 // ---- 不存在开关 (ADR 0011) --------------------------------------------------------

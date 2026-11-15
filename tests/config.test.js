@@ -885,10 +885,9 @@ check("status: a stopped core is not reported as crashed", () => {
   fs.writeFileSync(m.applied, ID + "\n");
   runShell(m.dir, BODY_START);
   runShell(m.dir, BODY_STOP);
-  // 停止核心会把接管规则留在位上（失败关闭，docs/adr/0004）：缓存里仍然写着
-  // 值 present，因为捕获确实还在。
-  if (!/^present=1$/m.test(fs.readFileSync(m.rules, "utf8"))) {
-    throw new Error("a stop leaves the capture up, so the cache must say present");
+  // 主动停止即断开（docs/adr/0011）：规则在核心停止后拆除，缓存归零。
+  if (!/^present=0$/m.test(fs.readFileSync(m.rules, "utf8"))) {
+    throw new Error("a stop disconnects, so the cache must say absent");
   }
   const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
   if (/^phase=crashed$/m.test(kv)) { throw new Error("a stop is not a crash: " + kv); }
