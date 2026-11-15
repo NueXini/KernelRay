@@ -151,7 +151,7 @@ function readEntry(m, name, entry) {
 
 const PREFIX = /KernelRay-diagnostics-\d{8}-\d{6}(-\d+)?\.tar\.gz$/;
 
-check("diagnostics: 成功时 stdout 只有最终路径一行", function () {
+check("diagnostics: on success stdout is just the final archive path line", function () {
   const m = makeModule();
   const out = runShell(m, ["diagnostics"]);
   const lines = out.trim().split("\n");
@@ -163,7 +163,7 @@ check("diagnostics: 成功时 stdout 只有最终路径一行", function () {
   }), [], "staging dir cleaned");
 });
 
-check("diagnostics: 空模块也能收集，缺失文件记进 info.txt", function () {
+check("diagnostics: an empty module still collects and missing files are listed in info.txt", function () {
   const m = makeModule();
   const dest = runShell(m, ["diagnostics"]).trim();
   const name = path.basename(dest).replace(/\.tar\.gz$/, "");
@@ -175,7 +175,7 @@ check("diagnostics: 空模块也能收集，缺失文件记进 info.txt", functi
   assert.match(info, /^boot=/m, "boot line");
 });
 
-check("diagnostics: 在场的日志与状态都被收集，归档里没有凭据文件", function () {
+check("diagnostics: present logs and status are collected, no credential files in the archive", function () {
   const m = makeModule();
   fs.writeFileSync(path.join(m.dir, "module.prop"), "id=KernelRay\nversionName=test\n");
   fs.writeFileSync(m.status, '{"state":"stopped","phase":"idle"}\n');
@@ -205,7 +205,7 @@ check("diagnostics: 在场的日志与状态都被收集，归档里没有凭据
   assert.match(snapshot, /ip route show table 19282/, "bypass table section");
 });
 
-check("diagnostics: 凭据文件留在原地、绝不进包", function () {
+check("diagnostics: credential files stay in place, unchanged and out of the archive", function () {
   const m = makeModule();
   fs.writeFileSync(path.join(m.dir, "config.json"), '{"secrets":true}');
   fs.writeFileSync(path.join(m.dir, "state.json"), '{"secrets":true}');
@@ -221,7 +221,7 @@ check("diagnostics: 凭据文件留在原地、绝不进包", function () {
   eq(fs.readFileSync(path.join(m.dir, "config.json"), "utf8"), '{"secrets":true}', "config intact");
 });
 
-check("diagnostics: gzip 缺失时退回纯 tar", function () {
+check("diagnostics: missing gzip falls back to plain tar", function () {
   const m = makeModule();
   fs.writeFileSync(path.join(m.stubs, "gzip"), "#!/bin/sh\nexit 1\n");
   fs.chmodSync(path.join(m.stubs, "gzip"), 0o755);
@@ -230,7 +230,7 @@ check("diagnostics: gzip 缺失时退回纯 tar", function () {
   assert.ok(fs.existsSync(fromShellPath(dest)), "archive exists");
 });
 
-check("diagnostics: 重复收集不覆盖，包在下载目录里累加", function () {
+check("diagnostics: repeated collections do not overwrite, bundles accumulate in the download dir", function () {
   const m = makeModule();
   const a = runShell(m, ["diagnostics"]).trim();
   const b = runShell(m, ["diagnostics"]).trim();
@@ -238,7 +238,7 @@ check("diagnostics: 重复收集不覆盖，包在下载目录里累加", functi
   eq(dlEntries(m).length, 2, "two bundles");
 });
 
-check("diagnostics: 落点不可写时报错且暂存被清", function () {
+check("diagnostics: an unwritable target errors and the staging area is cleaned", function () {
   const m = makeModule();
   // 把落点本身变成一个文件：mkdir -p 失败被容忍，打包后的 mv 必然失败。
   // chmod 在 Windows 的 msys 上挡不住写入，不是可靠的模拟手段。
@@ -251,14 +251,14 @@ check("diagnostics: 落点不可写时报错且暂存被清", function () {
   }), [], "staging dir cleaned");
 });
 
-check("diagnostics: 模块日志记录诊断包落点", function () {
+check("diagnostics: the module log records the archive location", function () {
   const m = makeModule();
   const dest = runShell(m, ["diagnostics"]).trim();
   assert.match(fs.readFileSync(m.mlog, "utf8"),
     /\[Module\] diagnostics bundle written to .*/, "log line");
 });
 
-check("usage: CLI 帮助行携带 diagnostics", function () {
+check("usage: the CLI help line mentions diagnostics", function () {
   const m = makeModule();
   const r = runFail(m, ["nonsense"]);
   assert.match(r.stderr, /diagnostics/, "usage mentions diagnostics");

@@ -524,7 +524,7 @@ check("ports: a failed xray -test leaves config.json and the applied id untouche
 
 // ---- 日志等级 (log level) ---------------------------------------------------------------
 
-check("render: the log level comes from runtime/loglevel, defaulting to 警告", () => {
+check("render: the log level comes from runtime/loglevel, defaulting to warning", () => {
   const m = makeModule();
   writeOutbound(m);
   let cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
@@ -1035,7 +1035,7 @@ check("status: the poll never runs the core", () => {
 
 // ---- 启动路径修补 ------------------------------------------------------------------
 
-check("start: a config written before 启动即接管 is re-rendered in the one form", () => {
+check("start: a config written before the 0011 start takeover is re-rendered in the one form", () => {
   const m = makeModule(aliveCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");

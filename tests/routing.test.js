@@ -247,7 +247,7 @@ const GLOBAL_RULES = [
 
 // ---- 渲染 --------------------------------------------------------------------------
 
-check("render: 大陆直连 splits DNS and sends mainland destinations direct", () => {
+check("render: Direct-CN splits DNS and sends mainland destinations direct", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
@@ -272,7 +272,7 @@ check("render: 大陆直连 splits DNS and sends mainland destinations direct", 
   eq(cfg.routing.rules, CN_RULES_TAKEOVER, "rules in order");
 });
 
-check("render: 全局 keeps the pre-0014 takeover blocks byte for byte", () => {
+check("render: Global keeps the pre-0014 takeover blocks byte for byte", () => {
   const m = makeModule();
   writeOutbound(m);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
@@ -314,7 +314,7 @@ check("render: a pinned node address lands in the hosts of the split DNS too", (
 
 // ---- 降级 ------------------------------------------------------------------------
 
-check("degrade: a cn render without geo data falls back to 全局 and says so", () => {
+check("degrade: a cn render without geo data falls back to Global and says so", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
@@ -477,7 +477,7 @@ check("cli: an unknown mode is a usage error", () => {
 
 // ---- 启动时发现数据已消失 ------------------------------------------------
 
-check("start: a stale cn config degrades to 全局 when the geo data is gone", () => {
+check("start: a stale cn config degrades to Global when the geo data is gone", () => {
   const m = makeModule(modeAwareCore);
   writeOutbound(m);
   fs.writeFileSync(m.applied, ID + "\n");

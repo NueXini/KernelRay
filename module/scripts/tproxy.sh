@@ -471,11 +471,11 @@ kr_route_write() { # <global|cn|cnadblock>
 kr_route_default() {
   [ -s "$KR_ROUTE" ] && return 0
   if ! kr_geodata_ok; then
-    kr_log Routing "geo data missing; the 分流模式 default stays global"
+    kr_log Routing "geo data missing; the routing mode default stays global"
     return 0
   fi
   kr_route_write cnadblock || return 0
-  kr_log Routing "分流模式 defaults to cnadblock"
+  kr_log Routing "routing mode defaults to cnadblock"
 }
 
 # 渲染可用的：KR_ROUTE_EFFECTIVE（global|cn|cnadblock）、构建器读的

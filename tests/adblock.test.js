@@ -232,7 +232,7 @@ const CN_AD_TAKEOVER = [
 
 // ---- 渲染 --------------------------------------------------------------------------
 
-check("render: 大陆直连去广告 adds the DNS sink and the block rule to 大陆直连", () => {
+check("render: Direct-CN-Adblock adds the DNS sink and the block rule to Direct-CN", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
@@ -275,17 +275,17 @@ check("render: a pinned node address and the ad sink share the hosts map", () =>
   eq(cfg.routing.rules, CN_AD_TAKEOVER, "the pin does not move the rules");
 });
 
-check("render: 大陆直连 and 全局 carry no ad parts", () => {
+check("render: Direct-CN and Global carry no ad parts", () => {
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cn"]);
   const cn = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
-  if (/category-ads-all/.test(cn)) { throw new Error("大陆直连 must not block ads: " + cn); }
+  if (/category-ads-all/.test(cn)) { throw new Error("Direct-CN must not block ads: " + cn); }
   eq(JSON.parse(cn).dns.hosts, undefined, "no hosts map at all without a pin");
 
   runShell(m.dir, BODY_PREF, ["global"]);
   const global = runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]);
-  if (/category-ads-all/.test(global)) { throw new Error("全局 must not block ads"); }
+  if (/category-ads-all/.test(global)) { throw new Error("Global must not block ads"); }
 });
 
 check("render: no degrade -- missing geo data still renders the ad parts", () => {
@@ -303,17 +303,17 @@ check("render: no degrade -- missing geo data still renders the ad parts", () =>
 
 // ---- 偏好 ---------------------------------------------------------------------
 
-check("pref: cnadblock round-trips through runtime/route, and junk reads as 全局", () => {
+check("pref: cnadblock round-trips through runtime/route, and junk reads as Global", () => {
   const m = makeModule();
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
   eq(fs.readFileSync(m.route, "utf8").trim(), "cnadblock", "written value");
   eq(runShell(m.dir, BODY_MODE).trim(), "cnadblock", "read back");
 
   fs.writeFileSync(m.route, "CN\n");
-  eq(runShell(m.dir, BODY_MODE).trim(), "global", "case matters: an unknown value is 全局");
+  eq(runShell(m.dir, BODY_MODE).trim(), "global", "case matters: an unknown value is Global");
 
   fs.writeFileSync(m.route, "cnad\n");
-  eq(runShell(m.dir, BODY_MODE).trim(), "global", "a truncated value is 全局");
+  eq(runShell(m.dir, BODY_MODE).trim(), "global", "a truncated value is Global");
 
   runShell(m.dir, BODY_PREF, ["global"]);
   if (fs.existsSync(m.route)) { throw new Error("global is the absent-file mode"); }
@@ -412,13 +412,13 @@ check("cli: an unknown mode is a usage error", () => {
 
 check("default: the installer writes cnadblock when the preference is unset", () => {
   const m = makeModule();
-  eq(runShell(m.dir, BODY_MODE).trim(), "global", "an absent file reads as 全局");
+  eq(runShell(m.dir, BODY_MODE).trim(), "global", "an absent file reads as Global");
   runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_route_default');
   eq(fs.readFileSync(m.route, "utf8").trim(), "cnadblock", "the default is written");
   eq(runShell(m.dir, BODY_MODE).trim(), "cnadblock", "and reads back");
 });
 
-check("default: an existing choice survives, and missing geo data keeps 全局", () => {
+check("default: an existing choice survives, and missing geo data keeps Global", () => {
   const m = makeModule();
   runShell(m.dir, BODY_PREF, ["cn"]);
   runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_route_default');
@@ -429,7 +429,7 @@ check("default: an existing choice survives, and missing geo data keeps 全局",
   fs.unlinkSync(n.geosite);
   runShell(n.dir, '. "$KR_TEST_SCRIPT"; kr_route_default');
   if (fs.existsSync(n.route)) { throw new Error("no default may be written without the data"); }
-  eq(runShell(n.dir, BODY_MODE).trim(), "global", "stays 全局");
+  eq(runShell(n.dir, BODY_MODE).trim(), "global", "stays Global");
   const log = fs.readFileSync(n.moduleLog, "utf8");
   if (!/\[Routing\].*default stays global/.test(log)) {
     throw new Error("the skipped default must be logged: " + log);

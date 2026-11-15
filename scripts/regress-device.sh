@@ -151,7 +151,7 @@ expect "P0-3e phase" "$phase_now" "no-config"
 reset_all
 
 # =====================================================================
-echo "===== P1：启动 / 停止"
+echo "===== P1: start / stop"
 
 # P1-7：冷启动，规则不在位：恰好一次测试，规则装上
 ob 192.168.1.10 8401c5e7cf94ad2d
@@ -270,7 +270,7 @@ kill "$hog" 2>/dev/null
 pkill -f "nc -l -p 10808" 2>/dev/null
 
 # =====================================================================
-echo "===== P2：应用与幂等"
+echo "===== P2: apply and idempotency"
 
 reset_all
 ob 192.168.1.10 8401c5e7cf94ad2d
@@ -355,7 +355,7 @@ expect "P2-19e one test" "$(tests_in "$before")" "1"
 grep -n "pinned node address\|could not pre-resolve" "$KL" | tail -1 | cut -d' ' -f1-2 > /tmp/pin.t
 grep -n "stopped pid" "$KL" | tail -1 | cut -d' ' -f1-2 > /tmp/stop.t
 if [ "$(cat /tmp/pin.t)" = "$(cat /tmp/stop.t)" ]; then
-  info "P2-20 pin order" "与停止同一秒；不确定时手动看日志"
+  info "P2-20 pin order" "same second as the stop; check the log manually if unsure"
 else
   ok "P2-20 pin order"
 fi
