@@ -1,6 +1,6 @@
 // 针对 WebUI 节点出站渲染器的测试。
 //
-// 渲染器位于 module/webroot/app.js 中；本测试框架从随包发布的文件里抽取带标记的
+// 渲染器位于 module/webroot/js/outbound.js 中；本测试框架从随包发布的文件里抽取带标记的
 // 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。
 // 这样无需浏览器，也能让不使用夹具的「节点 → Xray 出站」步骤测到真实实现。
 //
@@ -12,7 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
+const jsPath = path.join(__dirname, "..", "module", "webroot", "js", "outbound.js");
 const js = fs.readFileSync(jsPath, "utf8");
 
 const START = "// ---- outbound rendering ----";
@@ -20,7 +20,7 @@ const END = "// ---- end outbound rendering ----";
 const from = js.indexOf(START);
 const to = js.indexOf(END);
 if (from < 0 || to < 0) {
-  console.error("could not find the outbound block markers in app.js");
+  console.error("could not find the outbound block markers in outbound.js");
   process.exit(1);
 }
 

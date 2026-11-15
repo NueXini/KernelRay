@@ -28,7 +28,7 @@ UI 解析并写 `state.json`。划分变成：
   `state.json` 上。写入中途被杀不会留下截断的节点库，其中的凭据也不会有一瞬间对世界可读。
 - **UI 修改它读到的。** 它解析现有文件、合并进那个对象、再序列化回去，所以它不认识的
   字段能在旧构建的写入后幸存。
-- **解析器对着随包文件测试。** `tests/parse.test.js` 从 `module/webroot/app.js` 里抽取打了
+- **解析器对着随包文件测试。** `tests/parse.test.js` 从 `module/webroot/js/parse.js` 里抽取打了
   标记的块来跑；没有会漂移的第二份解析器。这也是 WebUI 能保持手写 HTML/CSS/JS、没有构建
   步骤的原因。
 

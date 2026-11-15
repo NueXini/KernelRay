@@ -1,0 +1,58 @@
+.logcard {
+  --logfooter-h: 49px;   /* 视图下方的 清空日志 行；.lognav 悬在其上 */
+  position: relative;
+  padding: 0; overflow: hidden;
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+  margin-bottom: 0;
+}
+#page-log:not([hidden]) {
+  display: flex; flex-direction: column;
+  height: calc(100vh - 142px - env(safe-area-inset-bottom));
+  height: calc(100dvh - 142px - env(safe-area-inset-bottom));
+}
+.logbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.logbar .spacer { flex: 1; }
+.logbar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.logbar input { accent-color: var(--accent); }
+.logbar button { flex: 0 0 auto; padding: 5px 10px; font-size: 13px; font-weight: 500; }
+.logtabs { flex: 0 0 auto; display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.logtab {
+  padding: 4px 10px; font-size: 12px; font-weight: 500;
+  background: transparent; border: none; border-radius: 0; color: var(--muted);
+}
+.logtab.active { background: var(--accent); border-color: transparent; color: #fff; }
+.logtab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+pre {
+  flex: 1; min-height: 0;
+  margin: 0; padding: 12px; background: var(--log-bg); color: var(--log-text);
+  font: 12px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* 清空日志 按钮放在视图下方、卡片内部：再开一张卡片会被页面的
+   固定高度挤出屏。它的固定高度正是 .lognav 测量的基准。 */
+.logfooter {
+  flex: 0 0 var(--logfooter-h);
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 12px; border-top: 1px solid var(--line);
+}
+.logfooter button { flex: 0 0 auto; padding: 6px 12px; font-size: 13px; font-weight: 500; }
+/* 悬浮在日志右下角的滚动按钮。它们压在深色日志背景上，
+   卡片色 0.85 透明度让它们可读而不扎眼。 */
+.lognav {
+  position: absolute; right: 10px; bottom: calc(var(--logfooter-h) + 10px); z-index: 2;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.lognav[hidden] { display: none; }
+.lognavbtn {
+  width: 34px; height: 34px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--card); border: 1px solid var(--line); color: var(--muted);
+  opacity: .85; box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+}
+.lognavbtn svg { width: 18px; height: 18px; }
+.lognavbtn:active { opacity: 1; color: var(--text); }

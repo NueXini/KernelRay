@@ -1,0 +1,32 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #16181d;
+  --muted: #666c78;
+  --line: #e3e6ea;
+  --accent: #2f6df6;
+  --ok: #17803d;
+  --bad: #b42318;
+  --warn: #b54708;
+  --log-bg: #12141a;
+  --log-text: #d7dce5;
+}
+/* 配色在设置页挑选，theme.js 把 "auto" 解析成这两者之一，所以
+   dark 只写一份、以属性为键，而不是按选择来源写多份。
+   color-scheme 跟着走：没有它，原生下拉框与数字 spinner 会在用户
+   选定的配色下继续用系统的颜色。 */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1013;
+  --card: #171a1f;
+  --text: #e8ebf0;
+  --muted: #9aa3b2;
+  --line: #262b33;
+  --accent: #7aa2ff;
+  --ok: #4ade80;
+  --bad: #ff7b72;
+  --warn: #f0b429;
+  --log-bg: #0a0c10;
+  --log-text: #cfd6e2;
+}

@@ -1,6 +1,6 @@
 // 针对 WebUI 解析器的测试。
 //
-// 解析器位于 module/webroot/app.js 中（WebUI 是手写的，没有构建步骤），因此本测试框架从
+// 解析器位于 module/webroot/js/parse.js 中（WebUI 是手写的，没有构建步骤），因此本测试框架从
 // 随包发布的文件里抽取带标记的代码块并运行它。这样测试运行的正是随包发布的代码——
 // 不存在会与之漂移的第二份副本。
 //
@@ -11,7 +11,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
+const jsPath = path.join(__dirname, "..", "module", "webroot", "js", "parse.js");
 const js = fs.readFileSync(jsPath, "utf8");
 
 const START = "// ---- node parsing ----";
@@ -19,7 +19,7 @@ const END = "// ---- end node parsing ----";
 const from = js.indexOf(START);
 const to = js.indexOf(END);
 if (from < 0 || to < 0) {
-  console.error("could not find the parser block markers in app.js");
+  console.error("could not find the parser block markers in parse.js");
   process.exit(1);
 }
 

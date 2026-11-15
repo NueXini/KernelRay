@@ -1,6 +1,6 @@
 // 针对 WebUI 设置页的界面偏好测试。
 //
-// 偏好模型位于 module/webroot/app.js 中；本测试框架从随包文件里抽出带标记的
+// 偏好模型位于 module/webroot/js/prefs.js 与 module/webroot/js/ports.js 中；本测试框架从随包文件里抽出带标记的
 // 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。偏好的规范化、
 // 加载与保存都是针对存储句柄的纯逻辑，因此无需浏览器或 WebView
 // 即可测试。
@@ -12,10 +12,12 @@
 const fs = require("fs");
 const path = require("path");
 
-const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
-const js = fs.readFileSync(jsPath, "utf8");
+const prefsPath = path.join(__dirname, "..", "module", "webroot", "js", "prefs.js");
+const portsPath = path.join(__dirname, "..", "module", "webroot", "js", "ports.js");
+const prefsJs = fs.readFileSync(prefsPath, "utf8");
+const portsJs = fs.readFileSync(portsPath, "utf8");
 
-// 偏好代码块从 theme.js 取得键名与主题校验；设备上 <head> 先于 app.js 加载它。
+// 偏好代码块从 theme.js 取得键名与主题校验；设备上 <head> 先于 js/prefs.js 加载它。
 // 这里也按同样方式、在 DOM 打桩后加载 theme.js，让测试运行的是随包文件本身，
 // 而不是那些规则的一份副本。
 const themePath = path.join(__dirname, "..", "module", "webroot", "theme.js");
@@ -28,14 +30,14 @@ global.KRTheme = global.window.KRTheme;
 
 const START = "// ---- UI preferences ----";
 const END = "// ---- end UI preferences ----";
-const from = js.indexOf(START);
-const to = js.indexOf(END);
+const from = prefsJs.indexOf(START);
+const to = prefsJs.indexOf(END);
 if (from < 0 || to < 0) {
-  console.error("could not find the UI preferences block markers in app.js");
+  console.error("could not find the UI preferences block markers in prefs.js");
   process.exit(1);
 }
 
-const block = js.slice(from, to);
+const block = prefsJs.slice(from, to);
 const P = new Function(block + "\nreturn {" +
   " prefsNormalize: prefsNormalize, prefsLoad: prefsLoad, prefsSave: prefsSave," +
   " PREFS_KEY: PREFS_KEY, LANGS: LANGS, THEMES: THEMES, LOG_LINE_STEPS: LOG_LINE_STEPS" +
@@ -44,13 +46,13 @@ const P = new Function(block + "\nreturn {" +
 // 入站端口代码块遵循同样的抽取约定。
 const PORTS_START = "// ---- inbound port settings ----";
 const PORTS_END = "// ---- end inbound port settings ----";
-const pfrom = js.indexOf(PORTS_START);
-const pto = js.indexOf(PORTS_END);
+const pfrom = portsJs.indexOf(PORTS_START);
+const pto = portsJs.indexOf(PORTS_END);
 if (pfrom < 0 || pto < 0) {
-  console.error("could not find the inbound port settings block markers in app.js");
+  console.error("could not find the inbound port settings block markers in ports.js");
   process.exit(1);
 }
-const PB = new Function(js.slice(pfrom, pto) + "\nreturn {" +
+const PB = new Function(portsJs.slice(pfrom, pto) + "\nreturn {" +
   " portVal: portVal, portsNormalize: portsNormalize, portsValidate: portsValidate," +
   " PORT_DEFAULTS: PORT_DEFAULTS, TP_PORT: TP_PORT" +
 "};")();

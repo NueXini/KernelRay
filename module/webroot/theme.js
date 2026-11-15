@@ -5,7 +5,7 @@
 // 加载 app.js 期间不能闪出浅色；app.js 复用这里的函数，不重复键名，也不会重复
 // "auto" 的解析。
 //
-// 配色本身只在 app.css 中定义一处，以 html[data-theme="light"|"dark"] 为键：
+// 配色本身只在 css/tokens.css 中定义一处，以 html[data-theme="light"|"dark"] 为键：
 // "auto" 在这里解析，这样深色配色就不必写两遍。
 
 var PREFS_KEY = "kernelray.prefs";
@@ -65,7 +65,7 @@ function watchSystem(on) {
 }
 
 // 属性 data-theme 是解析后的配色，绝不会是 "auto"，所以 CSS 不需要媒体查询；该属性
-// 还驱动 app.css 中的 color-scheme，正是它让原生下拉框和数字调节按钮采用用户挑选的
+// 还驱动 tokens.css 中的 color-scheme，正是它让原生下拉框和数字调节按钮采用用户挑选的
 // 配色，而不是系统的配色。
 function applyTheme(pref) {
   var p = themeNormalize(pref);

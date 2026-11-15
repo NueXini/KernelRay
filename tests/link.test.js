@@ -1,8 +1,8 @@
 // 针对 WebUI「节点 → 分享链接」的测试。
 //
-// 生成器位于 module/webroot/app.js 中，紧挨着它必须与之往返一致的解析器。
-// 本测试框架从随包发布的文件里同时抽取这两个带标记的代码块，因此复制出的链接
-// 正是用设备上将来把它读回去的那个解析器来检验的。
+// 生成器位于 module/webroot/js/links.js，解析器位于 module/webroot/js/parse.js，
+// 两者必须往返一致。本测试框架从随包发布的这两个文件里同时抽取带标记的代码块，
+// 因此复制出的链接正是用设备上将来把它读回去的那个解析器来检验的。
 //
 //   运行：node tests/link.test.js
 
@@ -12,21 +12,23 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
-const js = fs.readFileSync(jsPath, "utf8");
+const linksPath = path.join(__dirname, "..", "module", "webroot", "js", "links.js");
+const parsePath = path.join(__dirname, "..", "module", "webroot", "js", "parse.js");
+const linksJs = fs.readFileSync(linksPath, "utf8");
+const parseJs = fs.readFileSync(parsePath, "utf8");
 
-function marked(start, end) {
-  const from = js.indexOf(start);
-  const to = js.indexOf(end);
+function marked(src, start, end) {
+  const from = src.indexOf(start);
+  const to = src.indexOf(end);
   if (from < 0 || to < 0) {
-    console.error("could not find the " + start + " block markers in app.js");
+    console.error("could not find the " + start + " block markers");
     process.exit(1);
   }
-  return js.slice(from, to);
+  return src.slice(from, to);
 }
 
-const linksBlock = marked("// ---- node links ----", "// ---- end node links ----");
-const parseBlock = marked("// ---- node parsing ----", "// ---- end node parsing ----");
+const linksBlock = marked(linksJs, "// ---- node links ----", "// ---- end node links ----");
+const parseBlock = marked(parseJs, "// ---- node parsing ----", "// ---- end node parsing ----");
 const L = new Function(linksBlock +
   "\nreturn { linkOf: linkOf, base64Link: base64Link };")();
 const P = new Function(parseBlock +

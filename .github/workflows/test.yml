@@ -16,7 +16,7 @@ jobs:
 
       - run: |
           node --version
-          node --check module/webroot/app.js
+          node --experimental-vm-modules scripts/check-webui.js
           bash -n module/customize.sh module/scripts/kernelray.sh \
             module/scripts/tproxy.sh module/uninstall.sh
           node --test tests/*.test.js

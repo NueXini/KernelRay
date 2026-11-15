@@ -1,0 +1,119 @@
+.nodehead { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.nodehead > span:first-child { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+.nodehead .spacer { flex: 1; }
+.iconbtn {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; font-weight: 500; line-height: 1; border-radius: 8px;
+}
+.pill {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.nlist {
+  margin-top: 6px;
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+.nlist.busy { opacity: .55; pointer-events: none; }
+.nrow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px; border: 1px solid var(--line); border-radius: 10px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.nrow.applied { border-color: var(--accent); }
+.nrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.nrow-main { flex: 1; min-width: 0; }
+.nrow-name { font-weight: 600; overflow-wrap: anywhere; }
+.nrow.applied .nrow-name { color: var(--accent); }
+.nrow-meta { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.nrow.confirming { cursor: default; }
+.nrow-q { color: var(--warn); font-size: 12px; margin-top: 4px; }
+.npills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.nempty { grid-column: 1 / -1; margin-top: 4px; }
+.pill.ok { color: var(--ok); border-color: currentColor; }
+.pill.warn { color: var(--warn); border-color: currentColor; }
+.ndel {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); font-size: 15px; font-weight: 500;
+  line-height: 1; border-radius: 8px;
+}
+.ndel.muted { opacity: .45; }
+.nedit { flex: 0 0 auto; padding: 5px 10px; font-size: 12px; font-weight: 500; border-radius: 8px; }
+.nbatch {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+}
+.nbatch[hidden] { display: none; }
+.nbatch button { flex: 0 0 auto; }
+.nbatch-q { flex: 1; min-width: 0; color: var(--warn); font-size: 13px; }
+.nrow.editing { cursor: default; }
+.nrow.applied.editing { cursor: not-allowed; }
+.ncheck { flex: 0 0 auto; width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+.nactions { display: flex; gap: 6px; flex: 0 0 auto; }
+.nodehint { font-size: 12px; margin-top: 7px; color: var(--muted); }
+.nodehint.warn { color: var(--warn); }
+.nodehint.ok { color: var(--ok); }
+.addcard {
+  width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
+  overflow: auto; margin-bottom: 0;
+}
+.addcard > .primary { margin-top: 10px; width: 100%; }
+
+/* 节点详情弹窗：点行打开只读视图；只有其 应用 按钮执行切换。 */
+.nodecard {
+  width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
+  overflow: auto; margin-bottom: 0;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+}
+.nodecard .nodehead > span:first-child {
+  color: var(--text); font-size: 16px; font-weight: 650;
+  letter-spacing: 0; text-transform: none; overflow-wrap: anywhere;
+}
+.ndpills { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 8px; }
+.ndsec {
+  margin-top: 12px; color: var(--muted); font-size: 12px;
+  font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+.ndinfo { margin-top: 4px; }
+.nderror { color: var(--bad); overflow-wrap: anywhere; }
+#nd-copyhint { overflow-wrap: anywhere; }
+.ndfoot { display: flex; align-items: stretch; gap: 10px; margin-top: 14px; }
+.ndcopy { position: relative; display: flex; flex: 1; min-width: 0; }
+.ndcopy > button { flex: 0 0 auto; }
+#nd-copy { flex: 1; min-width: 0; border-radius: 10px 0 0 10px; }
+#nd-copy-menu {
+  width: 38px; padding: 0; border-radius: 0 10px 10px 0; border-left: 0;
+  font-size: 14px; font-weight: 500;
+}
+#nd-apply { flex: 0 0 auto; min-width: 96px; }
+.ndmenu {
+  position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 2;
+  min-width: 200px; max-width: calc(100vw - 64px); padding: 4px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .25);
+}
+.ndmenu[hidden] { display: none; }
+.ndmenu button {
+  display: block; width: 100%; flex: none; text-align: left;
+  padding: 9px 10px; border: 0; background: transparent; border-radius: 7px;
+  font-size: 13px; font-weight: 500; overflow-wrap: anywhere;
+}
+.ndmenu button:active { background: var(--line); }
+
+/* 导入预览行由 import.js 渲染在“添加节点”弹窗的 #i-preview 里，
+   与节点列表无关，但同属节点弹窗层。 */
+.prow {
+  display: flex; gap: 9px; align-items: flex-start; padding: 8px 0;
+  border-top: 1px solid var(--line); font-size: 13px;
+}
+.prow .pbody { flex: 1; min-width: 0; }
+.prow .pname { font-weight: 600; overflow-wrap: anywhere; }
+.prow .pnum {
+  color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+  min-width: 16px; text-align: right; flex: 0 0 auto;
+}
+.prow .pmeta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.prow.bad { color: var(--bad); }
+.prow.bad .pnum { color: var(--bad); }
+.prow.bad .pmeta { color: var(--bad); opacity: .75; }
+#i-preview:not(:empty) { margin-top: 10px; border-top: 1px solid var(--line); }

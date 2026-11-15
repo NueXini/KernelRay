@@ -19,7 +19,7 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 ## 1. 先跑单测（改了解析器、渲染器、模板或脚本就一定要跑）
 
 ```sh
-node --check module/webroot/app.js     # 页面语法（不执行）
+node --experimental-vm-modules scripts/check-webui.js    # WebUI 模块语法 + index.html 引用（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 项解析器测试通过
 node tests/outbound.test.js            # 17 项出站测试通过
@@ -34,7 +34,9 @@ node tests/adblock.test.js             # 17 项去广告测试通过（大陆直
 node tests/diagnostics.test.js          # 9 项诊断包测试通过（收集范围 + 凭据不进包 + 尽力语义）
 ```
 
-`parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/app.js` 里抽出带标记的代码块跑，
+`parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/js/` 里抽出带标记的代码块跑
+（解析器在 `js/parse.js`、链接在 `js/links.js`、出站在 `js/outbound.js`、列表模型在
+`js/nodelist-model.js`、偏好在 `js/prefs.js` 与 `js/ports.js`），
 `theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份），测的都是要发布的文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、单一渲染形态、apply/unapply 的失败路径、清空日志 CLI 和启动回滚；假核心只在回滚和 unapply 拒绝用例里
@@ -272,7 +274,7 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 
 ```sh
 D=127.0.0.1:5555
-node --check module/webroot/app.js || exit 1
+node --experimental-vm-modules scripts/check-webui.js || exit 1
 bash -n module/scripts/kernelray.sh || exit 1
 node tests/parse.test.js || exit 1
 node tests/outbound.test.js || exit 1

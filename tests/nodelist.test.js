@@ -1,6 +1,6 @@
 // 针对 WebUI 节点列表、删除门控、导入时切换与节点详情弹窗状态的测试。
 //
-// 两个代码块都位于 module/webroot/app.js 中；本测试框架从随包发布的文件里抽取带标记的
+// 两个代码块都位于 module/webroot/js/nodelist-model.js 中；本测试框架从随包发布的文件里抽取带标记的
 // 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。节点列表是
 // 纯映射：state.json + runtime/applied → 行；删除门控与取消应用决策是这些行
 // 加上核心是否在运行这一事实的纯函数；导入切换规则则是纯的
@@ -14,14 +14,14 @@
 const fs = require("fs");
 const path = require("path");
 
-const jsPath = path.join(__dirname, "..", "module", "webroot", "app.js");
+const jsPath = path.join(__dirname, "..", "module", "webroot", "js", "nodelist-model.js");
 const js = fs.readFileSync(jsPath, "utf8");
 
 function marked(start, end) {
   const from = js.indexOf(start);
   const to = js.indexOf(end);
   if (from < 0 || to < 0) {
-    console.error("could not find the " + start + " block markers in app.js");
+    console.error("could not find the " + start + " block markers in nodelist-model.js");
     process.exit(1);
   }
   return js.slice(from, to);
