@@ -479,6 +479,7 @@ function refreshNodes(kv) {
       String(kv.revision) === String(known.revision) &&
       String(kv.node || "") === String(lastApplied || "") &&
       String(kv.meta || "") === String(lastMetaId || "")) {
+    renderNodeList();
     return Promise.resolve();
   }
   return exec("cat " + STATE + " 2>/dev/null; echo '@@APPLIED@@'; cat " + APPLIED +

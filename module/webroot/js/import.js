@@ -4,7 +4,7 @@ import { busy, setBusy, toast, refreshPage } from "./main.js";
 import { exec, CLI, STATE, hasBridge, writeState } from "./bridge.js";
 import { parseInput, identityOf, idOf } from "./parse.js";
 import { applyAfterImport } from "./nodelist-model.js";
-import { lastStateObj, lastApplied, setLastStateObj, findNodeById, switchTo } from "./nodelist.js";
+import { lastStateObj, lastApplied, setLastStateObj, findNodeById, switchTo, renderNodeList } from "./nodelist.js";
 import { setButtons } from "./status.js";
 import { dialogId, dialogBusy, syncDialogScrollLock } from "./dialog.js";
 
@@ -151,6 +151,7 @@ function doImport() {
     setBusy(false);
     setButtons();
     els.iApply.disabled = !els.iText.value.trim();
+    renderNodeList();
     // 在 busy 清除之后：switchTo 在另一个操作占用页面时会拒绝运行。
     if (!nextId) { return; }
     var node = findNodeById(lastStateObj, nextId);
