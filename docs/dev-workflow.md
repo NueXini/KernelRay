@@ -19,7 +19,7 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 ## 1. 先跑单测（改了解析器、渲染器、模板或脚本就一定要跑）
 
 ```sh
-node --experimental-vm-modules scripts/check-webui.js    # WebUI 模块语法 + index.html 引用（不执行）
+node --experimental-vm-modules scripts/check-webui.js    # WebUI ES module syntax + module-graph link + index.html refs (no execution)
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 项解析器测试通过
 node tests/outbound.test.js            # 17 项出站测试通过
@@ -27,6 +27,7 @@ node tests/nodelist.test.js            # 45 项节点列表 + 删除闸门 + 导
 node tests/link.test.js                # 18 项节点链接 + 订阅 Base64 测试通过
 node tests/prefs.test.js               # 22 项偏好测试通过
 node tests/theme.test.js               # 14 项主题测试通过
+node tests/css-cascade.test.js         # 3 项 CSS 层叠等价测试通过
 node tests/config.test.js              # 79 项 config 测试通过（需要 bash 和 /proc）
 node tests/tproxy.test.js              # 17 项 tproxy 测试通过（需要假 iptables/ip）
 node tests/routing.test.js             # 20 项 routing 测试通过（分流模式渲染矩阵 + routing CLI）
@@ -37,11 +38,36 @@ node tests/diagnostics.test.js          # 9 项诊断包测试通过（收集范
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/js/` 里抽出带标记的代码块跑
 （解析器在 `js/parse.js`、链接在 `js/links.js`、出站在 `js/outbound.js`、列表模型在
 `js/nodelist-model.js`、偏好在 `js/prefs.js` 与 `js/ports.js`），
-`theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份），测的都是要发布的文件。
+`theme` 直接跑 `module/webroot/theme.js`（`<head>` 里先加载的那份）；`css-cascade` 把 `css/` 各文件按
+index.html 的 link 顺序拼接，对照拆分前的 `tests/fixtures/app.css`，校验同优先级冲突的胜负不变。
+测的都是要发布的文件。
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、单一渲染形态、apply/unapply 的失败路径、清空日志 CLI 和启动回滚；假核心只在回滚和 unapply 拒绝用例里
 运行，用 `/proc` 识别进程。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、
 冲突检测和启动顺序（先 `-test` 再装规则；接管装不上就不起核心）。
+
+### WebUI 的文件地图与不变量
+
+module/webroot 是手写的、无构建步骤的 WebUI；js/ 与 css/ 按职责分文件，没有打包与压缩。
+动 webroot 前先知道三条不变量，它们都由 §1 的检查守着：
+
+- **加载顺序**：`theme.js` 必须保持 `<head>` 里的经典脚本（首帧前打 data-theme，
+  `prefs.js` 在模块求值时读 `window.KRTheme`），不要改成 module；入口是
+  `<script type="module" src="js/main.js">`，check-webui.js 会把整个模块图 link 一遍，
+  写错 import 路径或导出名当场变红。
+- **测试标记块**：`parse.js` / `links.js` / `outbound.js` / `nodelist-model.js` /
+  `prefs.js` / `ports.js` 里 `// ---- xxx ----` 标记的块被 tests/*.test.js 按路径与标记
+  逐字抽取运行，块内只允许纯函数，不得插入 import/export。
+- **CSS 层叠**：`css/` 各文件的 link 顺序就是层叠顺序（notice 在 nodes 前、overlays 收尾）。
+  改动后 css-cascade 变红时，要么把规则放回原层叠位，要么确认翻转无害后更新 fixture
+  ——那是对外承诺的变更，不是随手刷新。
+
+文件职责一句话版：`bridge.js`（ksu.exec 桥与模块路径常量）、`els.js`（DOM 映射）、
+`i18n.js`（词典与 `T` live binding）、`prefs.js`/`ports.js`（偏好与端口模型）、
+`parse.js`（订阅链接解析）、`links.js`（节点链接生成）、`outbound.js`（出站渲染）、
+`nodelist-model.js`（列表/弹窗纯模型）、`{status,log,nodelist,dialog,import,settings,nav}.js`
+（各页面 UI）、`main.js`（入口：事件绑定、busy 闸门、2s 轮询）。css/ 从 tokens（令牌）
+→ base/log/notice/nodes/settings/nav（页面与提示层）→ overlays（浮层）依次 link。
 
 ## 2. 打包
 
@@ -132,6 +158,10 @@ adb -s $D shell input tap 675 1856     # 底部导航「模块」
 adb -s $D shell input tap 262 1047     # 卡片上的 <> 图标 = WebUI（模块没有 action.sh，卡上没有 ▶）
 adb -s $D exec-out screencap -p > build/ui.png
 ```
+
+截图确认 WebUI 真的渲染出来了（无白屏）：ES 模块的相对 import 需要合法 origin，
+如果管理器的 WebView 以 file:// 载入 webroot 会被 CORS 拦掉——这一步是唯一能
+验证模块加载的方式，本地检查替代不了。
 
 坐标是 **1080×1920 这台模拟器**上的实测值，换个分辨率就不对。稳妥做法是先截图看，或：
 
@@ -281,6 +311,7 @@ node tests/outbound.test.js || exit 1
 node tests/nodelist.test.js || exit 1
 node tests/link.test.js || exit 1
 node tests/prefs.test.js || exit 1
+node tests/css-cascade.test.js || exit 1
 node tests/config.test.js || exit 1
 bash scripts/pack.sh || exit 1
 zip=$(ls -t build/KernelRay-*.zip | head -1)
