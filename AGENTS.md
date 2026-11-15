@@ -8,6 +8,7 @@
 
 When creating commits, follow the rules below:
 
+- Write commit messages in English (subject and body).
 - Use Conventional Commits title format: `type(scope): subject`.
 - Allowed types: `feat`, `fix`, `refactor`, `perf`, `docs`, `style`, `test`, `build`, `ci`, `chore`, `revert`.
 - Use a meaningful scope based on the main module, package, or feature.
