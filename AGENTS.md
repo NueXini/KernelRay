@@ -3,6 +3,7 @@
 ## Basics
 
 - Never reference ADRs from user-facing docs (`README.md`): no `docs/adr/` links, no "ADR 0020". Keep any reasoning a reader needs in plain words.
+- Scripts and tests print their console and error output in English. UI strings in the i18n dictionaries (DICT_ZH/DICT_EN) are app content, not output.
 
 ## Git Commits
 
