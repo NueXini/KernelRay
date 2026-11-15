@@ -16,11 +16,12 @@ const fs = require("fs");
 const path = require("path");
 
 const webroot = path.join(__dirname, "..", "module", "webroot");
-// 与 index.html 的 <link> 顺序一致；顺序本身就是层叠的一部分。
-const LINK_ORDER = [
-  "css/tokens.css", "css/base.css", "css/log.css", "css/notice.css",
-  "css/nodes.css", "css/settings.css", "css/nav.css", "css/overlays.css"
-];
+// link 顺序从 index.html 现场解析，而不是在这里抄一份：抄本会漂移，
+// 原文不会（顺序本身就是层叠的一部分）。
+const LINK_ORDER = [...
+  fs.readFileSync(path.join(webroot, "index.html"), "utf8").matchAll(
+    /<link rel="stylesheet" href="(css\/[^"]+)"/g)
+].map((m) => m[1]);
 
 let pass = 0;
 const failures = [];

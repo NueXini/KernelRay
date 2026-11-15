@@ -19,7 +19,7 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 ## 1. 先跑单测（改了解析器、渲染器、模板或脚本就一定要跑）
 
 ```sh
-node --experimental-vm-modules scripts/check-webui.js    # WebUI ES module syntax + module-graph link + index.html refs (no execution)
+node --experimental-vm-modules scripts/check-webui.js    # WebUI ES 模块语法 + 模块图 link + index.html 引用（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
 node tests/parse.test.js               # 24 项解析器测试通过
 node tests/outbound.test.js            # 17 项出站测试通过
@@ -52,8 +52,8 @@ module/webroot 是手写的、无构建步骤的 WebUI；js/ 与 css/ 按职责�
 动 webroot 前先知道三条不变量，它们都由 §1 的检查守着：
 
 - **加载顺序**：`theme.js` 必须保持 `<head>` 里的经典脚本（首帧前打 data-theme，
-  `prefs.js` 在模块求值时读 `window.KRTheme`），不要改成 module；入口是
-  `<script type="module" src="js/main.js">`，check-webui.js 会把整个模块图 link 一遍，
+  `prefs.js` 在 ES 模块求值时读 `window.KRTheme`），不要改成 module；入口是
+  `<script type="module" src="js/main.js">`，check-webui.js 会把整个 ES 模块图 link 一遍，
   写错 import 路径或导出名当场变红。
 - **测试标记块**：`parse.js` / `links.js` / `outbound.js` / `nodelist-model.js` /
   `prefs.js` / `ports.js` 里 `// ---- xxx ----` 标记的块被 tests/*.test.js 按路径与标记
