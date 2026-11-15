@@ -46,6 +46,10 @@ index.html 的 link 顺序拼接，对照拆分前的 `tests/fixtures/app.css`�
 运行，用 `/proc` 识别进程。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、
 冲突检测和启动顺序（先 `-test` 再装规则；接管装不上就不起核心）。
 
+反过来的次序也成立：做拆文件这类等价性重构时，先给现状立守卫（golden 快照、
+等价性比对）再动手，改完守卫必须回到绿。css 拆分当天没这么做，层叠翻转
+是 review 追出来的；守卫落地时跑出的实际差异远大于 review 报的 3 处。
+
 ### WebUI 的文件地图与不变量
 
 module/webroot 是手写的、无构建步骤的 WebUI；js/ 与 css/ 按职责分文件，没有打包与压缩。
