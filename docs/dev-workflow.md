@@ -21,18 +21,7 @@ D=127.0.0.1:5555          # 模拟器；真机换成 adb devices 里的序列号
 ```sh
 node --experimental-vm-modules scripts/check-webui.js    # WebUI ES 模块语法 + 模块图 link + index.html 引用（不执行）
 bash -n module/scripts/kernelray.sh    # 脚本语法
-node tests/parse.test.js               # 24 项解析器测试通过
-node tests/outbound.test.js            # 17 项出站测试通过
-node tests/nodelist.test.js            # 45 项节点列表 + 删除闸门 + 导入应用 + 弹窗状态测试通过
-node tests/link.test.js                # 18 项节点链接 + 订阅 Base64 测试通过
-node tests/prefs.test.js               # 22 项偏好测试通过
-node tests/theme.test.js               # 14 项主题测试通过
-node tests/css-cascade.test.js         # 3 项 CSS 层叠等价测试通过
-node tests/config.test.js              # 79 项 config 测试通过（需要 bash 和 /proc）
-node tests/tproxy.test.js              # 17 项 tproxy 测试通过（需要假 iptables/ip）
-node tests/routing.test.js             # 20 项 routing 测试通过（分流模式渲染矩阵 + routing CLI）
-node tests/adblock.test.js             # 17 项去广告测试通过（大陆直连去广告渲染 + 失败关闭）
-node tests/diagnostics.test.js          # 9 项诊断包测试通过（收集范围 + 凭据不进包 + 尽力语义）
+node --test tests/*.test.js             # 全部单测（文件级通过/失败，CI 同款）
 ```
 
 `parse` / `outbound` / `nodelist` / `link` / `prefs` 从 `module/webroot/js/` 里抽出带标记的代码块跑
@@ -310,13 +299,7 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 D=127.0.0.1:5555
 node --experimental-vm-modules scripts/check-webui.js || exit 1
 bash -n module/scripts/kernelray.sh || exit 1
-node tests/parse.test.js || exit 1
-node tests/outbound.test.js || exit 1
-node tests/nodelist.test.js || exit 1
-node tests/link.test.js || exit 1
-node tests/prefs.test.js || exit 1
-node tests/css-cascade.test.js || exit 1
-node tests/config.test.js || exit 1
+node --test tests/*.test.js || exit 1
 bash scripts/pack.sh || exit 1
 zip=$(ls -t build/KernelRay-*.zip | head -1)
 adb -s $D push "$zip" //data/local/tmp/KernelRay.zip || exit 1
