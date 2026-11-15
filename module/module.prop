@@ -4,4 +4,3 @@ version=26.11.14
 versionCode=261114
 author=NueXini
 description=Xray-core transparent proxy on Android via KernelSU
-updateJson=https://modules.kernelsu.org/api/v1/modules/KernelRay/update.json
