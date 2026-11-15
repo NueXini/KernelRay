@@ -1,0 +1,14 @@
+/* 页面级提示层：banner 与 hint。原单文件里它们排在日志块之后、
+   节点块之前，靠这个 link 位置保持层叠等价。 */
+/* 覆盖在页面之上的全层 chrome：banner 提示、hint、toast、弹窗遮罩。
+   它们的规则在原单文件里就排在所有页面块之后，靠层叠顺序压过页面样式，
+   所以这个文件必须最后 link（tests/css-cascade.test.js 守着这一点）。 */
+.banner {
+  display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--bad); color: var(--bad); font-size: 13px;
+}
+.banner.show { display: block; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+/* 分流模式 卡片的提示只作警告（缺 geo 文件），所以它是唯一
+   需要 warn 颜色的 .hint。 */
+.hint.warn { color: var(--warn); }

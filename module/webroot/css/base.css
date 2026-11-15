@@ -40,38 +40,3 @@ button.danger { color: var(--bad); border-color: currentColor; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 13px; }
 dt { color: var(--muted); white-space: nowrap; }
 dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.banner {
-  display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px;
-  border: 1px solid var(--bad); color: var(--bad); font-size: 13px;
-}
-.banner.show { display: block; }
-.hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
-/* 分流模式 卡片的提示只作警告（缺 geo 文件），所以它是唯一
-   需要 warn 颜色的 .hint。 */
-.hint.warn { color: var(--warn); }
-button.small { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; border-radius: 8px; }
-.row[hidden] { display: none; }
-textarea {
-  width: 100%; margin-top: 4px; padding: 10px; border-radius: 10px;
-  border: 1px solid var(--line); background: var(--bg); color: var(--text);
-  font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  resize: vertical; min-height: 76px;
-}
-textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.row.mt { margin-top: 10px; }
-.toast {
-  position: fixed; left: 50%; bottom: calc(82px + env(safe-area-inset-bottom));
-  transform: translateX(-50%); z-index: 30;
-  background: var(--card); border: 1px solid var(--line); color: var(--text);
-  padding: 9px 14px; border-radius: 999px; font-size: 13px; opacity: 0;
-  transition: opacity .2s ease; pointer-events: none; max-width: 88vw;
-}
-.toast.show { opacity: 1; }
-.overlay {
-  position: fixed; inset: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: center;
-  padding: 16px; background: rgba(0, 0, 0, .45);
-  overscroll-behavior: contain;
-}
-body.dialog-open { overflow: hidden; }
-.overlay[hidden] { display: none; }
