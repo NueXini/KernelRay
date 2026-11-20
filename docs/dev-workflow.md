@@ -57,9 +57,10 @@ module/webroot 是手写的、无构建步骤的 WebUI；js/ 与 css/ 按职责�
 
 文件职责一句话版：`bridge.js`（ksu.exec 桥与模块路径常量）、`els.js`（DOM 映射）、
 `i18n.js`（词典与 `T` live binding）、`prefs.js`/`ports.js`（偏好与端口模型）、
-`parse.js`（订阅链接解析）、`links.js`（节点链接生成）、`outbound.js`（出站渲染）、
-`nodelist-model.js`（列表/弹窗纯模型）、`{status,log,nodelist,dialog,import,settings,nav}.js`
-（各页面 UI）、`main.js`（入口：事件绑定、busy 闸门、2s 轮询）。css/ 从 tokens（令牌）
+`parse.js`（分享链接解析）、`links.js`（节点链接生成）、`outbound.js`（出站渲染）、
+`nodelist-model.js`（列表/分组/刷新合并纯模型）、`subscription.js`（订阅抓取与合并）、
+`{status,log,nodelist,dialog,import,settings,nav}.js`（各页面 UI）、`main.js`
+（入口：事件绑定、busy 闸门、2s 轮询）。css/ 从 tokens（令牌）
 → base/log/notice/nodes/settings/nav（页面与提示层）→ overlays（浮层）依次 link。
 
 ## 2. 打包

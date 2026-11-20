@@ -262,11 +262,54 @@
       <span class="spacer"></span>
       <button type="button" class="iconbtn" id="add-close" aria-label="Close">×</button>
     </div>
-    <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
-              autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
-    <button type="button" class="primary mt" id="i-apply" disabled>Import</button>
-    <div class="nodehint" id="i-hint"></div>
-    <div id="i-preview"></div>
+    <div class="addtabs" role="tablist" aria-label="Add source">
+      <button type="button" class="addtab active" id="add-tab-link" role="tab"
+              aria-selected="true">Link</button>
+      <button type="button" class="addtab" id="add-tab-sub" role="tab"
+              aria-selected="false">Subscription</button>
+    </div>
+    <div id="add-link-pane">
+      <textarea id="i-text" rows="3" spellcheck="false" autocapitalize="off"
+                autocomplete="off" autocorrect="off" placeholder="vless://…"></textarea>
+      <button type="button" class="primary mt" id="i-apply" disabled>Import</button>
+      <div class="nodehint" id="i-hint"></div>
+      <div id="i-preview"></div>
+    </div>
+    <div id="add-sub-pane" hidden>
+      <input type="url" id="s-url" class="addinput" spellcheck="false"
+             autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="https://…">
+      <input type="text" id="s-name" class="addinput mt" spellcheck="false"
+             autocomplete="off" placeholder="Name (optional)">
+      <button type="button" class="primary mt" id="s-add" disabled>Add subscription</button>
+      <div class="nodehint" id="s-hint"></div>
+    </div>
+  </section>
+</div>
+
+<div class="overlay" id="sub-overlay" hidden>
+  <section class="card subcard" role="dialog" aria-modal="true" aria-labelledby="sd-title">
+    <div class="nodehead">
+      <span id="sd-title">Subscription</span>
+      <span class="spacer"></span>
+      <button type="button" class="iconbtn" id="sd-close" aria-label="Close">×</button>
+    </div>
+    <div class="setrow">
+      <label class="setlabel" id="sd-name-label" for="sd-name">Name</label>
+      <input type="text" id="sd-name" spellcheck="false" autocomplete="off">
+    </div>
+    <div class="sdurl">
+      <div id="sd-url" class="sdurl-text"></div>
+      <button type="button" id="sd-reveal">Show</button>
+    </div>
+    <div class="nodehint" id="sd-meta"></div>
+    <div class="nodehint nderror" id="sd-error" hidden></div>
+    <div class="ndfoot">
+      <button type="button" class="danger" id="sd-delete">Delete</button>
+      <button type="button" id="sd-cancel" hidden>Cancel</button>
+      <span class="spacer"></span>
+      <button type="button" id="sd-copy">Copy URL</button>
+      <button type="button" class="primary" id="sd-save">Save</button>
+    </div>
   </section>
 </div>
 

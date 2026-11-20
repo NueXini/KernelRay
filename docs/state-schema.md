@@ -10,8 +10,9 @@
 （见 [`config-derivation.md`](config-derivation.md)）。`selected` 先写，所以切换失败时意图
 仍指向被尝试的节点，而 `runtime/applied` 仍指向核心正在运行的节点。
 
-写入方：WebUI 导入器、节点详情弹窗 的应用路径、节点列表（删除）、以及成功应用路径（清除
-节点的 `dirty` 标记时）。读取方：WebUI 节点列表和 节点详情弹窗。
+写入方：WebUI 导入器、订阅（添加、刷新、改名、删除）、节点详情弹窗 的应用路径、节点列表
+（删除）、以及成功应用路径（清除节点的 `dirty` 标记时）。读取方：WebUI 节点列表和
+节点详情弹窗。
 所有权说明：shell 写运行时事实（`runtime/status.json`、`runtime/applied`、pid），UI 写意图
 和渲染出的出站（`outbound.json` + `outbound.meta`）。
 
@@ -22,8 +23,8 @@
 | `schema` | int | Schema 版本。目前为 `1`；其他值 UI 一律拒绝解释。 |
 | `revision` | int | 每次写入都递增，过期的阅读方由此察觉文件变了。 |
 | `settings` | object | 用户选择的核心设置。目前两个字段：`socksPort` 和 `httpPort`，本地入站端口（见下）。未知字段原样保留。 |
-| `manual` | `Node[]` | 手工添加（导入）的节点 — UI 唯一追加、渲染和删除的列表。 |
-| `subscriptions` | `{name,url,nodes:Node[]}[]` | 来自订阅的节点。原样保留；本版本没有任何东西填充或渲染它们。 |
+| `manual` | `Node[]` | 手工添加（导入）的节点 — UI 追加、编辑和删除的列表。 |
+| `subscriptions` | `{id,name,url,nodes:Node[],lastFetched?,lastError?}[]` | 订阅。`id` 由 URL 派生（`hash(url)`），所以重加同一 URL 是原地更新；`nodes` 是最近一次成功刷新的结果，刷新整体替换它；`lastFetched` 是那次刷新的毫秒时间戳；`lastError` 是最近一次失败的稳定原因码（`http 404`、`timeout`、`empty`、`too-large`、`network`），成功后清掉。节点字段与 `manual` 完全相同。 |
 | `selected` | string | 用户最后选择的节点的 `id`。通常即已应用节点；切换失败时停在被尝试的节点上。未选中任何节点时为 `""`。 |
 | `group` | string | 自由文本标签；不挂任何行为。 |
 
@@ -34,7 +35,9 @@
 
 ## 节点列表动作
 
-节点页只渲染 `manual`。它写 `state.json`；绝不写 `config.json` 或 `runtime/applied`。
+节点页把 `manual` 与每条订阅的 `nodes` 一起渲染成分组列表：手工在前，之后每条订阅一组，
+同身份的手工节点优先（订阅那条不渲染）。下面这些动作只作用于 `manual`；订阅自己的动作
+见下一节。它写 `state.json`；绝不写 `config.json` 或 `runtime/applied`。
 
 - **导入** 追加新节点、原地更新已有节点（保留 id）。若尚未应用任何节点（`runtime/applied`
   不存在或为空），导入还会切换到 `selected` 仍能解析到的节点，否则切换到列表显示的第一个
@@ -59,6 +62,23 @@
 
 弹窗的 复制链接 和 订阅 Base64 动作是从节点字段 **推导** 的；`state.json` 不存原始分享
 链接。因此生成的链接描述的是模块将会运行的那个节点，未必是导入时粘贴的原文。
+
+## 订阅动作
+
+订阅的节点与手工节点共用同一张列表，但归订阅所有：刷新整体替换，删除只能整条删。
+
+- **添加**（添加弹窗的 订阅页签）先写一条 `{id,name,url,nodes:[],lastFetched:0}` 再抓取：
+  抓取或解析失败时这条订阅仍留在列表里，原因写进 `lastError`，用户点刷新重试。成功则把
+  解析出的节点写进 `nodes`、记 `lastFetched`、清 `lastError`；若尚未应用任何节点，还会
+  切换到 `selected` 仍能解析到的节点，否则列表显示的第一个节点（同 导入 的规则）。
+- **刷新**只写这条订阅：`nodes` 整体替换成这次抓到的节点，同身份的旧条目保留原 id，字段
+  真的变了才标 `dirty`（与导入同一条规则）。它绝不渲染、绝不重启核心；已应用节点因此
+  可能落后于节点库，若它在刷新后消失，`runtime/applied` 会悬空，列表按 `appliedMissing`
+  说明。抓取失败（含 0 个节点）保留旧节点，只写 `lastError`。
+- **改名**只改 `name`，URL 与 `id` 不动（换 URL 是删除后重加）。
+- **删除**删掉整条订阅及其全部节点，门槛与删除单个节点相同：含已应用节点时核心必须已停止、
+  且删完列表为空，此时先 `unapply`（ADR 0013）；其余情况拒绝。
+- 订阅节点不能单条删除：编辑模式的 勾选 只作用于 `manual`。
 
 未知顶层字段被保留：写入方解析整个文件、修改对象、再序列化回去，所以旧 UI 不会丢字段。
 
@@ -104,7 +124,7 @@ WebUI 设置页其余条目 — 通用 卡片里的语言和日志缓冲大小 �
 | `fingerprint` | string? | uTLS 指纹（`fp`），例如 `edge`、`chrome`。 |
 | `allowInsecure` | bool? | 仅当链接要求时才出现。 |
 | `path`, `host`, `serviceName` | string? | 传输参数（`ws` path、`Host` 头、`grpc` service name）。 |
-| `dirty` | bool? | 仅 UI：导入/更新改变了同 `id` 节点时置位；成功应用后清除。含义是"运行中的配置可能早于这些字段"，不是"未应用"。点按带 dirty 的已应用节点会重新应用它。shell 忽略它。 |
+| `dirty` | bool? | 仅 UI：导入、订阅刷新改变了同 `id` 节点时置位；成功应用后清除。含义是"运行中的配置可能早于这些字段"，不是"未应用"。点按带 dirty 的已应用节点会重新应用它。shell 忽略它。 |
 
 各协议专有字段：
 

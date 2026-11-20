@@ -153,9 +153,51 @@ pre {
 }
 .nlist {
   margin-top: 6px;
+  /* 显式的 minmax(0,1fr) 轨道：auto 轨道会被组头里不换行的长域名撑开，
+     把整页推出视口（WebView 里表现成整页可横向滚动）。 */
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px;
+}
+.ngrows {
   display: grid; gap: 8px;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
+.ngroup { min-width: 0; }
+.ngroup + .ngroup { margin-top: 6px; }
+
+/* 组头两行：名称与动作一行、计数/时间/状态一行。单行时 393px 宽的手机
+   上长域名会把计数和时间挤没，而折叠后它们是唯一还看得见的东西。 */
+.nghead { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 7px; min-width: 0; }
+
+.ngchev {
+  flex: 0 0 auto; width: 24px; height: 24px; margin-top: 1px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); font-size: 13px; line-height: 1;
+  border-radius: 6px;
+}
+
+.ngmain { flex: 1; min-width: 0; }
+.ngtop { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ngname {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ngbot { display: flex; align-items: center; gap: 6px; margin-top: 2px; min-width: 0; }
+.ngmeta {
+  flex: 1; min-width: 0; color: var(--muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.ngicon {
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); font-size: 15px; line-height: 1;
+  border-radius: 8px;
+}
+
+.ngicon:disabled { opacity: .38; }
+
+.nghint { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+
+.nghint.warn { color: var(--warn); }
+
 .nlist.busy { opacity: .55; pointer-events: none; }
 .nrow {
   display: flex; align-items: center; gap: 8px;
@@ -324,3 +366,68 @@ body.dialog-open { overflow: hidden; }
   font-size: 13px; font-weight: 500; overflow-wrap: anywhere;
 }
 .ndmenu button:active { background: var(--line); }
+.addtabs {
+  display: flex; gap: 4px; margin-bottom: 10px; padding: 3px;
+  border: 1px solid var(--line); border-radius: 10px;
+}
+
+.addtab {
+  flex: 1; padding: 7px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 500;
+}
+
+.addtab.active { background: var(--line); color: var(--text); }
+
+.addinput {
+  width: 100%; margin-top: 4px; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font: inherit; font-size: 13px;
+}
+
+.addinput:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+#add-sub-pane .primary { width: 100%; margin-top: 10px; }
+
+.subcard {
+  width: 100%; max-width: 520px; max-height: calc(100vh - 32px);
+  overflow: auto; margin-bottom: 0;
+}
+
+.subcard .nodehead > span:first-child {
+  color: var(--text); font-size: 16px; font-weight: 650;
+  letter-spacing: 0; text-transform: none; overflow-wrap: anywhere;
+}
+
+.subcard .setrow input {
+  flex: 1; min-width: 0; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font: inherit; font-size: 13px;
+}
+
+.subcard .setrow input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.sdurl { display: flex; gap: 8px; margin-top: 8px; }
+
+.sdurl button { flex: 0 0 auto; }
+
+/* 打码时用省略号截断，而不是让输入框从右边吃掉：截断本身要让用户
+   看见"这里还有东西"，否则打码看起来就是完整地址。 */
+.sdurl-text {
+  flex: 1; min-width: 0; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.sdurl-text.revealed { white-space: normal; overflow-wrap: anywhere; }
+
+.subcard .ndfoot button { flex: 0 0 auto; }
+
+.subcard .ndfoot .spacer { flex: 1; }
+.subcard .setrow .setlabel { flex: 0 0 auto; }
+
+#add-sub-pane .addinput + .addinput { margin-top: 8px; }
+#add-link-pane .primary { width: 100%; margin-top: 10px; }
+
+
+

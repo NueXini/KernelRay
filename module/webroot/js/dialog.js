@@ -31,7 +31,7 @@ function currentDialogNode() {
 // 不像重置 body scrollTop 那样。
 function syncDialogScrollLock() {
   document.body.classList.toggle("dialog-open",
-    Boolean(dialogId || !els.overlay.hidden));
+    Boolean(dialogId || !els.overlay.hidden || !els.subOverlay.hidden));
 }
 
 function openNodeDialog(n) {

@@ -5,10 +5,12 @@ import { THEMES, LANGS, LOG_LINE_STEPS, themePref, langPref, logLines, loadPrefs
 import { renderPrefs, refreshSettings, doSavePorts, setPortDirty } from "./settings.js";
 import { setButtons, routeValue, refreshStatus, lastKv, coreRunning } from "./status.js";
 import { clearCurrentLog, setLogSource, updateLogNav, refreshLog, renderLog, clearLogLabel, logSource, lastLogSize, invalidateLog } from "./log.js";
-import { renderNodeList, invalidateList, findNodeById, canCheckNode, askDelete, confirmDelete, confirmBatchDelete, refreshNodes, editMode, confirmId, checkSet, lastStateObj, lastApplied, setConfirmId, toggleCheck, toggleEditMode, setCheck, setBatchConfirm } from "./nodelist.js";
+import { renderNodeList, invalidateList, findNodeById, canCheckNode, askDelete, confirmDelete, confirmBatchDelete, refreshNodes, editMode, confirmId, checkSet, lastStateObj, lastApplied, setConfirmId, toggleCheck, toggleEditMode, setCheck, setBatchConfirm, toggleCollapse } from "./nodelist.js";
 import { nodeListModel, batchModel, deleteGate } from "./nodelist-model.js";
+import { identityOf } from "./parse.js";
 import { closeNodeDialog, applyFromDialog, copyDialogLink, toggleDialogMenu, openNodeDialog, dialogId, dialogBusy, dialogMenuOpen, closeDialogMenu, invalidateDialog } from "./dialog.js";
-import { doImport, openAdd, closeAdd } from "./import.js";
+import { doImport, openAdd, closeAdd, setAddTab } from "./import.js";
+import { addSubscription, refreshSubscription, openSubDialog, closeSubDialog, renderSubDialog, saveSubName, copySubUrl, confirmSubDelete, cancelSubDelete, toggleSubReveal, invalidateSubDialog } from "./subscription.js";
 import { currentRoute, initNav } from "./nav.js";
 
 var POLL_MS = 2000;
@@ -44,6 +46,17 @@ function label(key) {
   els.iApply.textContent = T.importBtn;
   els.iText.placeholder = T.addPlaceholder;
   els.iHint.textContent = T.notAppliedYet;
+  els.addTabLink.textContent = T.tabLink;
+  els.addTabSub.textContent = T.tabSub;
+  els.sUrl.placeholder = T.subUrlPlaceholder;
+  els.sName.placeholder = T.subNamePlaceholder;
+  els.sAdd.textContent = T.subAdd;
+  els.sHint.textContent = T.subHint;
+  els.sdNameLabel.textContent = T.subNameLabel;
+  els.sdCopy.textContent = T.copyUrl;
+  els.sdSave.textContent = T.save;
+  els.sdCancel.textContent = T.cancel;
+  els.sdClose.setAttribute("aria-label", T.close);
   els.lTabStatus.textContent = T.tabStatus;
   els.lTabNodes.textContent = T.tabNodes;
   els.lTabLog.textContent = T.tabLog;
@@ -96,6 +109,9 @@ function applyLang() {
   renderNodeList();
   els.iHint.textContent = T.notAppliedYet;
   els.iHint.className = "nodehint";
+  els.sHint.textContent = T.subHint;
+  invalidateSubDialog();
+  renderSubDialog();
   invalidateLog();
   renderLog("");
   if (!hasBridge) {
@@ -136,6 +152,7 @@ function refreshPage(manual) {
   }
   var done = function () {
     pollInFlight = false;
+    renderSubDialog();
     if (pollQueued) {
       var next = pollQueued;
       pollQueued = false;
@@ -225,6 +242,10 @@ els.nList.addEventListener("click", function (e) {
   var t = e.target;
   var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
   if (act === "add") { openAdd(); return; }
+  // 组头按钮在行之外，所以要在找 .nrow 之前处理。
+  if (act === "subcollapse") { toggleCollapse(t.getAttribute("data-sub")); return; }
+  if (act === "subrefresh") { refreshSubscription(t.getAttribute("data-sub")); return; }
+  if (act === "submenu") { openSubDialog(t.getAttribute("data-sub")); return; }
   var row = t && t.closest ? t.closest(".nrow") : null;
   if (!row) { return; }
   var node = findNodeById(lastStateObj, row.getAttribute("data-id"));
@@ -232,6 +253,8 @@ els.nList.addEventListener("click", function (e) {
   // 编辑模式下整行都是勾选开关；除非删除门槛允许，已应用行被排除，
   // 节点详情弹窗只在编辑模式之外打开。
   if (editMode) {
+    // 订阅行不是可勾选项：它们归订阅所有，没有单条删除。
+    if (row.hasAttribute("data-sub")) { return; }
     if (!canCheckNode(node)) { return; }
     toggleCheck(node.id);
     renderNodeList();
@@ -251,6 +274,7 @@ els.nList.addEventListener("keydown", function (e) {
   var node = findNodeById(lastStateObj, e.target.getAttribute("data-id"));
   if (!node) { return; }
   if (editMode) {
+    if (e.target.hasAttribute("data-sub")) { return; }
     if (!canCheckNode(node)) { return; }
     toggleCheck(node.id);
     renderNodeList();
@@ -267,7 +291,7 @@ els.nToolbar.addEventListener("click", function (e) {
   var t = e.target;
   var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
   if (act === "checkall") {
-    var model = nodeListModel(lastStateObj, lastApplied);
+    var model = nodeListModel(lastStateObj, lastApplied, identityOf);
     var bm = batchModel(model, checkSet, deleteGate(model, coreRunning()));
     if (bm.allChecked) {
       bm.checkableIds.forEach(function (id) { setCheck(id, false); });
@@ -289,6 +313,23 @@ els.nToolbar.addEventListener("click", function (e) {
 els.iApply.addEventListener("click", doImport);
 els.addNode.addEventListener("click", openAdd);
 els.addClose.addEventListener("click", closeAdd);
+els.addTabLink.addEventListener("click", function () { setAddTab("link"); });
+els.addTabSub.addEventListener("click", function () { setAddTab("sub"); });
+els.sUrl.addEventListener("input", function () {
+  els.sAdd.disabled = busy || !els.sUrl.value.trim();
+});
+els.sAdd.addEventListener("click", function () {
+  addSubscription(els.sUrl.value, els.sName.value);
+});
+els.subOverlay.addEventListener("click", function (e) {
+  if (e.target === els.subOverlay) { closeSubDialog(); }
+});
+els.sdClose.addEventListener("click", closeSubDialog);
+els.sdSave.addEventListener("click", saveSubName);
+els.sdCopy.addEventListener("click", copySubUrl);
+els.sdReveal.addEventListener("click", toggleSubReveal);
+els.sdDelete.addEventListener("click", confirmSubDelete);
+els.sdCancel.addEventListener("click", cancelSubDelete);
 els.overlay.addEventListener("click", function (e) {
   if (e.target === els.overlay) { closeAdd(); }
 });
@@ -314,6 +355,7 @@ document.addEventListener("click", function (e) {
 });
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") { return; }
+  if (!els.subOverlay.hidden) { closeSubDialog(); return; }
   if (dialogMenuOpen) {
     closeDialogMenu();
     return;

@@ -1,6 +1,6 @@
 id=KernelRay
 name=KernelRay
-version=26.11.15
-versionCode=261115
+version=26.11.20
+versionCode=261120
 author=NueXini
 description=Xray-core transparent proxy on Android via KernelSU

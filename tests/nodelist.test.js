@@ -31,7 +31,9 @@ const block = marked("// ---- node list model ----", "// ---- end node list mode
   marked("// ---- import switch rule ----", "// ---- end import switch rule ----");
 const L = new Function(block +
   "\nreturn { nodeListModel: nodeListModel, batchModel: batchModel, deleteGate: deleteGate, " +
-  "willUnapply: willUnapply, applyAfterImport: applyAfterImport, nodeDialogModel: nodeDialogModel };"
+  "willUnapply: willUnapply, applyAfterImport: applyAfterImport, nodeDialogModel: nodeDialogModel, " +
+  "subGroupRows: subGroupRows, subDeleteAllowed: subDeleteAllowed, " +
+  "mergeSubscriptionNodes: mergeSubscriptionNodes };"
 )();
 
 let pass = 0;
@@ -135,12 +137,144 @@ check("a non-array manual store is treated as empty", () => {
   eq(model.empty, true);
 });
 
-check("subscription nodes are not rendered", () => {
+check("subscription nodes render under their own group", () => {
   const model = L.nodeListModel({
-    schema: 1, selected: "s1", manual: [node("a")],
-    subscriptions: [{ name: "sub", nodes: [node("s1"), node("s2")] }]
+    schema: 1, selected: "", manual: [node("a")],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x"), node("y")] }]
   }, "");
-  eq(model.rows.map(function (row) { return row.id; }), ["a"]);
+  eq(model.rows.map(function (row) { return row.id; }), ["a", "x", "y"]);
+  eq(model.groups.map(function (g) { return [g.kind, g.id, g.rows.length]; }),
+    [["manual", "", 1], ["sub", "s1", 2]]);
+  eq(model.rows.map(function (row) { return row.subId; }), ["", "s1", "s1"]);
+});
+
+check("a subscription node shadowed by a manual node renders once, in the manual group", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "", manual: [node("same")],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("same"), node("y")] }]
+  }, "");
+  eq(model.rows.map(function (row) { return row.id; }), ["same", "y"]);
+  eq(model.groups[1].shadowed, 1);
+});
+
+check("the same node from two subscriptions renders once, the first one wins", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "",
+    subscriptions: [
+      { id: "s1", name: "one", nodes: [node("x")] },
+      { id: "s2", name: "two", nodes: [node("x")] }
+    ]
+  }, "");
+  eq(model.rows.map(function (row) { return row.id; }), ["x"]);
+  eq(model.groups.map(function (g) { return g.rows.length; }), [1, 0]);
+  eq(model.groups[1].shadowed, 1);
+});
+
+check("dedupe follows the injected identity, not the id", () => {
+  const keyOf = function (n) { return n.name; };
+  const model = L.nodeListModel({
+    schema: 1, selected: "", manual: [node("old", { name: "same" })],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("new", { name: "same" })] }]
+  }, "", keyOf);
+  eq(model.rows.map(function (row) { return row.id; }), ["old"]);
+  eq(model.groups[1].shadowed, 1);
+});
+
+check("a subscription with no nodes still has a group and is not an empty store", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "", manual: [],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [] }]
+  }, "");
+  eq([model.empty, model.hasSubs, model.groups.length], [false, true, 1]);
+});
+
+check("an applied node that only exists in a subscription is still applied", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "x", manual: [],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "x");
+  eq([model.rows[0].applied, model.rows[0].noop, model.appliedKnown, model.selectedKnown],
+    [true, true, true, true]);
+});
+
+check("an applied node gone from every subscription reads as unknown", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "", manual: [],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "gone");
+  eq([model.appliedKnown, model.appliedId], [false, "gone"]);
+});
+
+check("sub delete: allowed when the subscription holds no applied node", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "", manual: [node("a")],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "a");
+  eq([L.subDeleteAllowed(model, "s1", false), L.subDeleteAllowed(model, "s1", true)], [true, true]);
+});
+
+check("sub delete: refused while the applied node lives in it and the core runs", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "x", manual: [],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "x");
+  eq(L.subDeleteAllowed(model, "s1", true), false);
+});
+
+check("sub delete: the last subscription is deletable when the core is stopped", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "x", manual: [],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "x");
+  eq(L.subDeleteAllowed(model, "s1", false), true);
+});
+
+check("sub delete: refused when other rows would survive the applied node's removal", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "x", manual: [node("a")],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "x");
+  eq(L.subDeleteAllowed(model, "s1", false), false);
+});
+
+// ---- 刷新合并 ----
+
+check("merge: a new node is added, a changed one keeps its id and turns dirty", () => {
+  const existing = [
+    { id: "keep", name: "old", protocol: "vless", address: "h", port: 443 },
+    { id: "gone", name: "gone", protocol: "vless", address: "h", port: 443 }
+  ];
+  const incoming = [
+    { id: "keep", name: "new", protocol: "vless", address: "h", port: 443 },
+    { id: "fresh", name: "fresh", protocol: "vless", address: "h", port: 443 }
+  ];
+  const res = L.mergeSubscriptionNodes(existing, incoming, null);
+  eq(res.nodes.map(function (n) { return n.id; }), ["keep", "fresh"]);
+  eq([res.added, res.updated, res.removed], [1, 1, 1]);
+  eq([res.nodes[0].name, res.nodes[0].dirty], ["new", true]);
+});
+
+check("merge: an unchanged node keeps its dirty flag and is not counted as updated", () => {
+  const fields = { id: "a", name: "n", protocol: "vless", address: "h", port: 443 };
+  const res = L.mergeSubscriptionNodes([Object.assign({}, fields, { dirty: true })],
+    [Object.assign({}, fields)], null);
+  eq([res.added, res.updated, res.removed, res.nodes[0].dirty], [0, 0, 0, true]);
+});
+
+check("merge: identity keeps the stored (legacy) id", () => {
+  const keyOf = function (n) { return n.name; };
+  const res = L.mergeSubscriptionNodes(
+    [{ id: "legacy", name: "same", port: 1 }],
+    [{ id: "hash", name: "same", port: 2 }], keyOf);
+  eq(res.nodes.map(function (n) { return [n.id, n.port]; }), [["legacy", 2]]);
+  eq([res.added, res.updated, res.removed], [0, 1, 0]);
+});
+
+check("merge: duplicates inside one feed are dropped", () => {
+  const n = { id: "a", name: "n", port: 1 };
+  const res = L.mergeSubscriptionNodes([], [n, Object.assign({}, n, { name: "n2" })], null);
+  eq(res.nodes.length, 1);
+  eq(res.added, 1);
 });
 
 check("applied comparison uses the string form of the id", () => {
@@ -155,6 +289,14 @@ function batch(model, checks, allowApplied) {
   const bm = L.batchModel(model, checks, allowApplied);
   return [bm.checkableIds, bm.checkedIds, bm.allChecked];
 }
+
+check("batch: subscription rows are never checkable", () => {
+  const model = L.nodeListModel({
+    schema: 1, selected: "", manual: [node("a")],
+    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
+  }, "");
+  eq(batch(model, { x: true, a: true }, false), [["a"], ["a"], true]);
+});
 
 check("batch: the applied node never joins the checkable set", () => {
   const model = L.nodeListModel(state([node("a"), node("b"), node("c")], "a"), "a");

@@ -12,9 +12,44 @@
 }
 .nlist {
   margin-top: 6px;
+  /* 显式的 minmax(0,1fr) 轨道：auto 轨道会被组头里不换行的长域名撑开，
+     把整页推出视口（WebView 里表现成整页可横向滚动）。 */
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px;
+}
+/* 一组 = 组头 + 自己的卡片网格；没有订阅时组头不渲染，网格就是旧版的列表。 */
+.ngrows {
   display: grid; gap: 8px;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
+.ngroup { min-width: 0; }
+.ngroup + .ngroup { margin-top: 6px; }
+/* 组头两行：名称与动作一行、计数/时间/状态一行。单行时 393px 宽的手机
+   上长域名会把计数和时间挤没，而折叠后它们是唯一还看得见的东西。 */
+.nghead { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 7px; min-width: 0; }
+.ngchev {
+  flex: 0 0 auto; width: 24px; height: 24px; margin-top: 1px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); font-size: 13px; line-height: 1;
+  border-radius: 6px;
+}
+.ngmain { flex: 1; min-width: 0; }
+.ngtop { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ngname {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ngbot { display: flex; align-items: center; gap: 6px; margin-top: 2px; min-width: 0; }
+.ngmeta {
+  flex: 1; min-width: 0; color: var(--muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ngicon {
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); font-size: 15px; line-height: 1;
+  border-radius: 8px;
+}
+.ngicon:disabled { opacity: .38; }
+.nghint { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+.nghint.warn { color: var(--warn); }
 .nlist.busy { opacity: .55; pointer-events: none; }
 .nrow {
   display: flex; align-items: center; gap: 8px;

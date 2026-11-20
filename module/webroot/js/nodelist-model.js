@@ -1,36 +1,98 @@
 // ---- node list model ----
 // 由 state.json 与 runtime/applied 推导出节点页显示的行。纯函数、无 DOM，
-// 使 tests/nodelist.test.js 无需浏览器即可运行。本版本不涉及订阅节点：
-// 列表只渲染手工节点库。
-function nodeListModel(state, appliedId) {
-  var rows = [];
+// 使 tests/nodelist.test.js 无需浏览器即可运行。
+//
+// 订阅节点与手工节点共用一个 id 空间：id 由身份派生，所以同一条节点在
+// 两边会算出同一个 id。渲染时手工优先——订阅是别人给的副本，用户手工
+// 添加的那条才是他能编辑、能删除的那条。`keyOf` 由调用方注入
+// （webroot 里是 parse.js 的 identityOf），本块因此不 import 任何东西。
+function listKey(node, keyOf) {
+  if (typeof keyOf === "function") {
+    var k = keyOf(node);
+    if (k) { return String(k); }
+  }
+  return String(node && node.id || "");
+}
+
+function listRow(node, applied, selectedId, subId) {
+  var id = String(node.id);
+  var row = {
+    node: node, id: id, subId: subId || "",
+    applied: applied !== "" && id === applied,
+    selected: selectedId !== "" && id === selectedId,
+    dirty: !!node.dirty
+  };
+  row.unapplied = row.selected && !row.applied;
+  // 点按已应用节点不会动核心，除非重新导入改动了它的字段。
+  row.noop = row.applied && !row.dirty;
+  return row;
+}
+
+function nodeListModel(state, appliedId, keyOf) {
   var selectedId = state && typeof state.selected === "string" ? state.selected : "";
   var applied = appliedId ? String(appliedId) : "";
   var manual = state && Array.isArray(state.manual) ? state.manual : [];
+  var subs = state && Array.isArray(state.subscriptions) ? state.subscriptions : [];
   var selectedKnown = selectedId === "";
   var appliedKnown = applied === "";
-  for (var i = 0; i < manual.length; i++) {
-    var n = manual[i];
+  // 身份在整份列表里只出现一次：先手工、再按订阅顺序。
+  var seen = Object.create(null);
+  var groups = [];
+  var manualRows = [];
+  var i, j, n, id, row;
+  for (i = 0; i < manual.length; i++) {
+    n = manual[i];
     if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") {
       continue;
     }
-    var id = String(n.id);
-    var row = {
-      node: n, id: id,
-      applied: applied !== "" && id === applied,
-      selected: selectedId !== "" && id === selectedId,
-      dirty: !!n.dirty
-    };
-    row.unapplied = row.selected && !row.applied;
-    // 点按已应用节点不会动核心，除非重新导入改动了它的字段。
-    row.noop = row.applied && !row.dirty;
+    id = String(n.id);
+    seen[listKey(n, keyOf) || id] = true;
+    row = listRow(n, applied, selectedId, "");
     if (row.applied) { appliedKnown = true; }
     if (row.selected) { selectedKnown = true; }
-    rows.push(row);
+    manualRows.push(row);
   }
+  if (manualRows.length) {
+    groups.push({
+      kind: "manual", id: "", name: "", sub: null,
+      rows: manualRows, shadowed: 0, total: manualRows.length
+    });
+  }
+  var rows = manualRows.slice();
+  var subGroups = 0;
+  for (i = 0; i < subs.length; i++) {
+    var sub = subs[i];
+    if (!sub || typeof sub !== "object") { continue; }
+    var subId = sub.id === null || sub.id === undefined ? "" : String(sub.id);
+    var nodes = Array.isArray(sub.nodes) ? sub.nodes : [];
+    var subRows = [];
+    var shadowed = 0;
+    for (j = 0; j < nodes.length; j++) {
+      n = nodes[j];
+      if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") {
+        continue;
+      }
+      id = String(n.id);
+      var k = listKey(n, keyOf) || id;
+      if (seen[k]) { shadowed++; continue; }
+      seen[k] = true;
+      row = listRow(n, applied, selectedId, subId);
+      if (row.applied) { appliedKnown = true; }
+      if (row.selected) { selectedKnown = true; }
+      subRows.push(row);
+      rows.push(row);
+    }
+    subGroups++;
+    groups.push({
+      kind: "sub", id: subId, name: String(sub.name || ""), sub: sub,
+      rows: subRows, shadowed: shadowed, total: nodes.length
+    });
+  }
+  var hasSubs = subGroups > 0;
   return {
-    rows: rows, appliedId: applied, selectedId: selectedId,
-    appliedKnown: appliedKnown, selectedKnown: selectedKnown, empty: rows.length === 0
+    rows: rows, groups: groups, appliedId: applied, selectedId: selectedId,
+    appliedKnown: appliedKnown, selectedKnown: selectedKnown,
+    hasSubs: hasSubs, empty: rows.length === 0 && !hasSubs
   };
 }
 
@@ -71,6 +133,9 @@ function batchModel(model, checks, allowApplied) {
   var checked = [];
   for (var i = 0; i < model.rows.length; i++) {
     var row = model.rows[i];
+    // 订阅节点不归节点库所有：它们随下一次刷新整体替换，单条删除没有
+    // 意义（删掉也会回来）。勾选只作用于手工添加的行。
+    if (row.subId) { continue; }
     if (row.applied && !allowApplied) { continue; }
     checkable.push(row.id);
     if (set[row.id]) { checked.push(row.id); }
@@ -80,6 +145,70 @@ function batchModel(model, checks, allowApplied) {
     allChecked: checkable.length > 0 && checked.length === checkable.length
   };
 }
+// 一个订阅组里渲染出来的行 id：删除订阅要按这批 id 判断删除门槛。
+function subGroupRows(model, subId) {
+  var want = subId === null || subId === undefined ? "" : String(subId);
+  for (var i = 0; i < (model.groups || []).length; i++) {
+    var g = model.groups[i];
+    if (g.kind === "sub" && g.id === want) { return g.rows; }
+  }
+  return [];
+}
+
+// 删除订阅的门槛与删除单个节点一致：只有含已应用节点、且删完会清空
+// 列表并让模块退回从未应用状态时，才允许在核心停止的情况下删。
+function subDeleteAllowed(model, subId, running) {
+  var ids = subGroupRows(model, subId).map(function (r) { return r.id; });
+  if (ids.indexOf(model.appliedId) < 0) { return true; }
+  return willUnapply(model, ids, running);
+}
+
+// 刷新合并：订阅的桶整体替换成这次抓到的节点，但同身份的旧条目保留
+// 原 id，字段真的变了才标 dirty（与导入同一条规则）。removed 只用于
+// 日志，不参与写入。纯函数，便于测试。
+function mergeSubscriptionNodes(existing, incoming, keyOf) {
+  var byKey = Object.create(null);
+  (existing || []).forEach(function (n) {
+    if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") { return; }
+    var k = listKey(n, keyOf) || String(n.id);
+    if (!byKey[k]) { byKey[k] = n; }
+  });
+  var out = [];
+  var seen = Object.create(null);
+  var added = 0, updated = 0, removed = 0;
+  (incoming || []).forEach(function (n) {
+    if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") { return; }
+    var k = listKey(n, keyOf) || String(n.id);
+    if (seen[k]) { return; }
+    seen[k] = true;
+    var ex = byKey[k];
+    if (!ex) { out.push(n); added++; return; }
+    var changed = false;
+    Object.keys(n).forEach(function (f) {
+      if (f === "id" || f === "dirty") { return; }
+      if (JSON.stringify(ex[f]) !== JSON.stringify(n[f])) { changed = true; }
+    });
+    Object.keys(ex).forEach(function (f) {
+      if (f === "id" || f === "dirty") { return; }
+      if (!(f in n)) { changed = true; }
+    });
+    var next = {};
+    Object.keys(n).forEach(function (f) {
+      if (f !== "id" && f !== "dirty") { next[f] = n[f]; }
+    });
+    next.id = ex.id;
+    if (changed) { next.dirty = true; updated++; }
+    else if (ex.dirty) { next.dirty = true; }
+    out.push(next);
+  });
+  (existing || []).forEach(function (n) {
+    if (!n || typeof n !== "object" || n.id === null || n.id === undefined || n.id === "") { return; }
+    var k = listKey(n, keyOf) || String(n.id);
+    if (!seen[k]) { removed++; }
+  });
+  return { nodes: out, added: added, updated: updated, removed: removed };
+}
+
 // 节点详情弹窗的按钮状态：已应用且干净是唯一无操作的点按（切换失败后
 // 它仍可能重新同步 `selected`）；已应用但有改动则重新应用，当前节点却
 // 未应用则是重试。纯函数，便于 tests/nodelist.test.js 运行。
@@ -127,4 +256,4 @@ function applyAfterImport(state, appliedId) {
 
 // ---- end import switch rule ----
 
-export { nodeListModel, deleteGate, emptiesList, willUnapply, batchModel, nodeDialogModel, applyAfterImport };
+export { nodeListModel, deleteGate, emptiesList, willUnapply, batchModel, nodeDialogModel, applyAfterImport, subGroupRows, subDeleteAllowed, mergeSubscriptionNodes };

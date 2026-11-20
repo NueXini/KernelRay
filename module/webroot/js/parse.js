@@ -248,6 +248,13 @@ function idOf(node) {
   return hash32(ident, 0x811c9dc5) + hash32(ident, 0x1b873593);
 }
 
+// 订阅的 id 与节点的 id 用同一套哈希、不同的输入：订阅的身份就是它的
+// URL，所以重复添加同一个 URL 是原地更新，而不是长出第二条订阅。
+function subIdOf(url) {
+  var u = String(url || "");
+  return hash32(u, 0x811c9dc5) + hash32(u, 0x1b873593);
+}
+
 // 整段 base64 数据块（机场分发的那种）只在输入中任何一行都没有链接时才解码，
 // 这样单独一行格式错误也绝不会把整次粘贴变成垃圾。
 function parseInput(text) {
@@ -274,4 +281,4 @@ function parseInput(text) {
 }
 // ---- end node parsing ----
 
-export { parseFail, b64bytes, b64text, decodeName, portOf, splitUri, setIf, transportOf, securityOf, applyLinkParams, parseVless, parseVmess, parseTrojan, parseSs, parseLink, identityOf, hash32, idOf, parseInput };
+export { parseFail, b64bytes, b64text, decodeName, portOf, splitUri, setIf, transportOf, securityOf, applyLinkParams, parseVless, parseVmess, parseTrojan, parseSs, parseLink, identityOf, hash32, idOf, subIdOf, parseInput };

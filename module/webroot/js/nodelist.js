@@ -4,6 +4,7 @@ import { exec, CLI, STATE, APPLIED, OUTBOUND, OUTBOUND_META, parseKv, hasBridge,
 import { busy, setBusy, toast, refreshPage } from "./main.js";
 import { coreRunning, setButtons } from "./status.js";
 import { nodeListModel, deleteGate, batchModel, willUnapply } from "./nodelist-model.js";
+import { identityOf } from "./parse.js";
 import { outboundOf } from "./outbound.js";
 import { dialogId, renderDialog } from "./dialog.js";
 import { logNodeLine } from "./import.js";
@@ -35,14 +36,25 @@ function deleteRefusal(model) {
 // 保持一致。
 function canCheckNode(node) {
   if (!(lastApplied && lastApplied === node.id)) { return true; }
-  return deleteGate(nodeListModel(lastStateObj, lastApplied), coreRunning());
+  return deleteGate(nodeListModel(lastStateObj, lastApplied, identityOf), coreRunning());
 }
 
 function findNodeById(state, id) {
-  if (!state || !id || !Array.isArray(state.manual)) { return null; }
-  for (var i = 0; i < state.manual.length; i++) {
-    var n = state.manual[i];
-    if (n && String(n.id) === String(id)) { return n; }
+  if (!state || !id) { return null; }
+  var want = String(id);
+  var manual = Array.isArray(state.manual) ? state.manual : [];
+  for (var i = 0; i < manual.length; i++) {
+    var n = manual[i];
+    if (n && String(n.id) === want) { return n; }
+  }
+  // 订阅节点同样是节点：点开详情弹窗、复制链接、应用都不该因为它的
+  // 来源而不同，只有删除例外（它们归订阅所有）。
+  var subs = Array.isArray(state.subscriptions) ? state.subscriptions : [];
+  for (var j = 0; j < subs.length; j++) {
+    var nodes = subs[j] && Array.isArray(subs[j].nodes) ? subs[j].nodes : [];
+    for (var k = 0; k < nodes.length; k++) {
+      if (nodes[k] && String(nodes[k].id) === want) { return nodes[k]; }
+    }
   }
   return null;
 }
@@ -90,10 +102,160 @@ function listHint(model, state) {
 
 function rowSig(row) {
   var n = row.node;
-  return [row.id, n.name || "", n.protocol || "", n.transport || "", n.security || "",
+  return [row.id, row.subId || "", n.name || "", n.protocol || "", n.transport || "", n.security || "",
     n.address || "", n.port || "", row.applied ? 1 : 0, row.selected ? 1 : 0,
     row.dirty ? 1 : 0].join("|");
 }
+
+// ---- subscription groups ----
+
+// 折叠状态是 UI 偏好，不是意图：和主题、语言一样留在 localStorage，
+// 不进 state.json。没有存储时退化为仅本次会话有效。
+var COLLAPSE_KEY = "kernelray.collapsed";
+var collapsedIds = (function () {
+  try {
+    var raw = JSON.parse(window.localStorage.getItem(COLLAPSE_KEY) || "[]");
+    return Array.isArray(raw) ? raw.map(String) : [];
+  } catch (e) { return []; }
+})();
+
+function isCollapsed(subId) { return collapsedIds.indexOf(String(subId)) >= 0; }
+
+function toggleCollapse(subId) {
+  var id = String(subId);
+  var i = collapsedIds.indexOf(id);
+  if (i >= 0) { collapsedIds.splice(i, 1); } else { collapsedIds.push(id); }
+  try { window.localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedIds)); } catch (e) { /* 无存储 */ }
+  renderNodeList();
+}
+
+// 相对时间只用于组头第二行；绝对时间戳对“上次刷新”这个判断没有帮助。
+function agoText(ms) {
+  var d = Date.now() - Number(ms);
+  if (!isFinite(d) || d < 0) { d = 0; }
+  var m = Math.floor(d / 60000);
+  if (m < 1) { return T.timeNow; }
+  if (m < 60) { return T.timeMin.replace("{n}", String(m)); }
+  var h = Math.floor(m / 60);
+  if (h < 24) { return T.timeHour.replace("{n}", String(h)); }
+  return T.timeDay.replace("{n}", String(Math.floor(h / 24)));
+}
+
+// 订阅卡上的 lastError 存的是稳定的原因码（`http 404`、`timeout`…），
+// 不是翻译后的句子：换语言后旧错误也能重新说对。
+function subErrorText(code, http) {
+  var c = String(code || "").trim().toLowerCase();
+  if (c === "timeout") { return T.subTimeout; }
+  if (c === "empty") { return T.subEmpty; }
+  if (c === "too-large") { return T.subTooLarge; }
+  if (c === "no url") { return T.subNoUrl; }
+  if (c === "bad url") { return T.subBadUrl; }
+  var m = /^http\s+(\d+)$/.exec(c);
+  if (m) { return T.subHttp.replace("{n}", m[1]); }
+  if (c === "http") { return T.subHttp.replace("{n}", String(http || "?")); }
+  return T.subNetwork;
+}
+
+function groupMeta(group) {
+  if (group.kind === "manual") {
+    return T.nodeCount.replace("{n}", String(group.rows.length));
+  }
+  var sub = group.sub || {};
+  var bits = [T.nodeCount.replace("{n}", String(group.rows.length))];
+  bits.push(sub.lastFetched ? agoText(sub.lastFetched) : T.neverFetched);
+  return bits.join(" · ");
+}
+
+function renderGroupHead(group) {
+  var collapsed = group.kind === "sub" && isCollapsed(group.id);
+  var head = document.createElement("div");
+  head.className = "nghead";
+  if (group.kind === "sub") {
+    var chev = document.createElement("button");
+    chev.type = "button";
+    chev.className = "ngchev";
+    chev.setAttribute("data-action", "subcollapse");
+    chev.setAttribute("data-sub", group.id);
+    chev.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    chev.setAttribute("aria-label", collapsed ? T.expand : T.collapse);
+    chev.textContent = collapsed ? "▸" : "▾";
+    head.appendChild(chev);
+  }
+  // 组头两行：第一行是名称（可省略号）与动作，第二行是计数、时间与
+  // 状态标记。挤成一行时，长域名会把计数和时间挤没——而它们正是折叠
+  // 之后唯一还看得见的东西。
+  var main = document.createElement("div");
+  main.className = "ngmain";
+  var top = document.createElement("div");
+  top.className = "ngtop";
+  var name = document.createElement("div");
+  name.className = "ngname";
+  name.textContent = group.kind === "manual" ? T.manualGroup : (group.name || group.id);
+  top.appendChild(name);
+  if (group.kind === "sub") {
+    var refresh = document.createElement("button");
+    refresh.type = "button";
+    refresh.className = "ngicon";
+    refresh.setAttribute("data-action", "subrefresh");
+    refresh.setAttribute("data-sub", group.id);
+    refresh.setAttribute("aria-label", T.subRefresh);
+    refresh.textContent = "⟳";
+    refresh.disabled = busy;
+    top.appendChild(refresh);
+    var more = document.createElement("button");
+    more.type = "button";
+    more.className = "ngicon";
+    more.setAttribute("data-action", "submenu");
+    more.setAttribute("data-sub", group.id);
+    more.setAttribute("aria-label", T.subActions);
+    more.textContent = "⋯";
+    more.disabled = busy;
+    top.appendChild(more);
+  }
+  main.appendChild(top);
+  var bot = document.createElement("div");
+  bot.className = "ngbot";
+  var meta = document.createElement("div");
+  meta.className = "ngmeta";
+  meta.textContent = groupMeta(group);
+  bot.appendChild(meta);
+  // 折叠后组头是唯一还看得见的东西：正在跑或刚选中的节点必须在它上面
+  // 留个痕迹，否则“哪条在跑”就被一次折叠藏起来了。
+  if (collapsed) {
+    var hasApplied = group.rows.some(function (r) { return r.applied; });
+    var hasSelected = group.rows.some(function (r) { return r.unapplied; });
+    if (hasApplied) { bot.appendChild(pill(T.nodeApplied, "ok")); }
+    else if (hasSelected) { bot.appendChild(pill(T.nodePending, "warn")); }
+  }
+  main.appendChild(bot);
+  head.appendChild(main);
+  return head;
+}
+
+// 一组 = 组头 + 它自己的卡片网格。没有订阅时手工组不渲染组头，
+// 列表和旧版一模一样（Q8）。
+function renderGroup(group, model, gate) {
+  var sec = document.createElement("section");
+  sec.className = "ngroup" + (group.kind === "sub" ? " ngsub" : " ngmanual");
+  sec.setAttribute("data-sub", group.id);
+  if (group.kind === "sub" || model.hasSubs) { sec.appendChild(renderGroupHead(group)); }
+  if (group.kind === "sub" && isCollapsed(group.id)) { return sec; }
+  if (group.rows.length === 0) {
+    var hint = document.createElement("div");
+    var err = group.sub && group.sub.lastError;
+    hint.className = "nghint" + (err ? " warn" : "");
+    hint.textContent = err ? subErrorText(err) : (group.shadowed ? T.subAllInManual : T.subNoNodes);
+    sec.appendChild(hint);
+    return sec;
+  }
+  var rowsEl = document.createElement("div");
+  rowsEl.className = "ngrows";
+  group.rows.forEach(function (row) { rowsEl.appendChild(renderRow(row, gate)); });
+  sec.appendChild(rowsEl);
+  return sec;
+}
+
+// ---- end subscription groups ----
 
 // 每一行都用 createElement/textContent 构建：节点名来自导入的链接，
 // 绝不能进入 innerHTML。
@@ -103,6 +265,7 @@ function renderRow(row, allowDelete) {
     (confirmId === row.id && !editMode ? " confirming" : "") +
     (editMode ? " editing" : "");
   el.setAttribute("data-id", row.id);
+  if (row.subId) { el.setAttribute("data-sub", row.subId); }
 
   var main = document.createElement("div");
   main.className = "nrow-main";
@@ -142,7 +305,7 @@ function renderRow(row, allowDelete) {
   if (!editMode) {
     el.setAttribute("role", "button");
     el.tabIndex = 0;
-  } else {
+  } else if (!row.subId) {
     // 编辑模式下整行都是勾选开关；已应用行的复选框遵循与 ✕ 相同的
     // 删除门槛。节点详情弹窗只在编辑模式之外打开。
     var check = document.createElement("input");
@@ -165,6 +328,9 @@ function renderRow(row, allowDelete) {
   main.appendChild(pills);
 
   if (editMode) { return el; }
+  // 订阅节点没有 ✕：它们归订阅所有，删掉也会在下次刷新时回来；
+  // 删除的入口是订阅自己的 ⋯ 菜单。
+  if (row.subId) { return el; }
 
   var del = document.createElement("button");
   del.type = "button";
@@ -227,21 +393,33 @@ function renderBatchBar(model, bm, unapplies) {
 
 function renderNodeList() {
   var state = lastStateObj;
-  var model = nodeListModel(state, lastApplied);
+  var model = nodeListModel(state, lastApplied, identityOf);
   var running = coreRunning();
   listRunning = running;
   var gate = deleteGate(model, running);
   var bm = batchModel(model, checkSet, gate);
+  // 编辑模式只作用于手工行：最后一条手工节点没了，这个模式就无处可用。
+  var hasManual = model.rows.some(function (row) { return !row.subId; });
+  if (!hasManual && editMode) {
+    editMode = false;
+    checkSet = {};
+    batchConfirm = false;
+  }
   // 门槛跟随运行状态，所以停止/启动也必须让列表失效重绘。
   var sig = [String(state && state.schema), lastApplied, confirmId || "",
     editMode ? "edit" : "", batchConfirm ? "batch" : "", gate ? "gate" : ""];
   bm.checkedIds.forEach(function (id) { sig.push(id); });
+  model.groups.forEach(function (g) {
+    var sub = g.sub || {};
+    sig.push([g.kind, g.id, g.name, g.rows.length, g.shadowed, sub.lastFetched || 0,
+      sub.lastError || "", g.kind === "sub" && isCollapsed(g.id) ? 1 : 0].join("|"));
+  });
   model.rows.forEach(function (row) { sig.push(rowSig(row)); });
   var signature = sig.join("\n");
   if (signature !== listSig) {
     listSig = signature;
     els.nList.textContent = "";
-    model.rows.forEach(function (row) { els.nList.appendChild(renderRow(row, gate)); });
+    model.groups.forEach(function (g) { els.nList.appendChild(renderGroup(g, model, gate)); });
     if (model.empty) {
       // 空列表也必须提供能填满它的手势，而不只是卡片标题里的 +：
       // 初次使用的用户会看向页面中间。
@@ -255,7 +433,8 @@ function renderNodeList() {
   }
   renderBatchBar(model, bm, willUnapply(model, bm.checkedIds, running));
   els.editNode.textContent = editMode ? T.done : T.edit;
-  els.editNode.disabled = busy || model.empty;
+  els.editNode.hidden = !hasManual;
+  els.editNode.disabled = busy;
   var hint = listHint(model, state);
   els.nHint.textContent = hint.text;
   els.nHint.className = "nodehint" + (hint.cls ? " " + hint.cls : "");
@@ -367,7 +546,7 @@ function switchTo(n, opts) {
 
 function askDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var model = nodeListModel(lastStateObj, lastApplied);
+  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
   if (lastApplied && lastApplied === n.id && !deleteGate(model, coreRunning())) {
     toast(deleteRefusal(model));
     return;
@@ -376,19 +555,30 @@ function askDelete(n) {
   renderNodeList();
 }
 
-// 单个或多个 id 共用一条删除路径：过滤手工节点库，若被删节点是当前节点
-// 就清掉 selected 指针，渲染出的出站若属于被删节点就丢弃，然后持久化。
+// 单个、多个或整条订阅共用一条删除路径：过滤手工节点库、过滤订阅桶里的
+// 节点、丢掉 dropSubIds 里的订阅对象；若被删节点是当前节点就清掉
+// selected 指针，渲染出的出站若属于被删节点就丢弃，然后持久化。
 // 先执行 rm 再写入：rm 失败必须让节点留在库里，以便删除可以重试。
 // 核心已停止时清空列表的删除就是一次取消应用（ADR 0013），出于同样
 // 的原因它也最先执行。
-function deleteNodes(ids) {
+function deleteNodes(ids, dropSubIds, opts) {
   var state = lastStateObj;
-  var unapply = willUnapply(nodeListModel(state, lastApplied), ids, coreRunning());
+  var model = nodeListModel(state, lastApplied, identityOf);
+  var unapply = willUnapply(model, ids, coreRunning());
   var gone = {};
-  ids.forEach(function (id) { gone[id] = true; });
+  ids.forEach(function (id) { gone[String(id)] = true; });
   state.manual = (Array.isArray(state.manual) ? state.manual : []).filter(function (x) {
     return !x || !gone[x.id];
   });
+  var drop = {};
+  (dropSubIds || []).forEach(function (id) { drop[String(id)] = true; });
+  state.subscriptions = (Array.isArray(state.subscriptions) ? state.subscriptions : [])
+    .filter(function (s) { return !s || !drop[String(s.id)]; })
+    .map(function (s) {
+      if (!s || !Array.isArray(s.nodes)) { return s; }
+      s.nodes = s.nodes.filter(function (n) { return !n || !gone[n.id]; });
+      return s;
+    });
   if (gone[state.selected]) { state.selected = ""; }
   state.revision = (Number(state.revision) || 0) + 1;
   setBusy(true);
@@ -410,14 +600,15 @@ function deleteNodes(ids) {
   }
   return chain.then(function () {
     return writeState(state).then(function () {
-      logNodeLine("deleted " + ids.length + " nodes");
+      setLastStateObj(state);
+      if (!(opts && opts.quiet)) { logNodeLine("deleted " + ids.length + " nodes"); }
     });
   });
 }
 
 function confirmDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var model = nodeListModel(lastStateObj, lastApplied);
+  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
   if (lastApplied && lastApplied === n.id && !deleteGate(model, coreRunning())) {
     confirmId = null;
     renderNodeList();
@@ -438,7 +629,7 @@ function confirmDelete(n) {
 
 function confirmBatchDelete() {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var model = nodeListModel(lastStateObj, lastApplied);
+  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
   var gate = deleteGate(model, coreRunning());
   var ids = batchModel(model, checkSet, gate).checkedIds;
   if (ids.length === 0) {
@@ -521,4 +712,4 @@ function resetEditMode() {
   batchConfirm = false;
 }
 
-export { lastStateObj, lastApplied, lastMetaId, confirmId, listSig, listRunning, editMode, checkSet, batchConfirm, nodeMeta, pill, listHint, rowSig, renderRow, renderBatchBar, renderNodeList, writeSelected, switchTo, deleteRefusal, canCheckNode, findNodeById, hostPort, askDelete, deleteNodes, confirmDelete, confirmBatchDelete, refreshNodes, invalidateList, setLastStateObj, setConfirmId, setEditMode, setCheck, toggleCheck, clearChecks, setBatchConfirm, toggleEditMode, resetEditMode };
+export { lastStateObj, lastApplied, lastMetaId, confirmId, listSig, listRunning, editMode, checkSet, batchConfirm, nodeMeta, pill, listHint, rowSig, renderRow, renderBatchBar, renderNodeList, writeSelected, switchTo, deleteRefusal, canCheckNode, findNodeById, hostPort, askDelete, deleteNodes, confirmDelete, confirmBatchDelete, refreshNodes, invalidateList, setLastStateObj, setConfirmId, setEditMode, setCheck, toggleCheck, clearChecks, setBatchConfirm, toggleEditMode, resetEditMode, isCollapsed, toggleCollapse, agoText, subErrorText, renderGroup, renderGroupHead };

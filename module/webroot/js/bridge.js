@@ -7,6 +7,10 @@ var STATE = MOD + "/state.json";
 var APPLIED = MOD + "/runtime/applied";
 var OUTBOUND = MOD + "/outbound.json";
 var OUTBOUND_META = MOD + "/outbound.meta";
+// 订阅抓取的一次性输入：URL 从 UI 交给 shell，shell 读完立刻删除。
+// 走文件而不是命令行参数，因为 /proc/<pid>/cmdline 对 URL 里的令牌
+// 没有保护。
+var SUBFETCH_URL = MOD + "/runtime/subfetch.url";
 
 // 日志等级是核心意图，不是 WebView 偏好：下拉框跟随 shell 的
 // 状态（runtime/loglevel），保存的值在下次启动核心时生效（docs/adr/0015）。
@@ -45,7 +49,10 @@ function parseKv(text) {
 function writeFile(path, text, mode) {
   var b64 = bytesToBase64(new TextEncoder().encode(text));
   // 用 tmp + mv，杜绝写了一半的文件；这些文件含凭证，所以权限是 0600。
-  var cmd = "printf '%s' '" + b64 + "' | base64 -d > " + path + ".tmp && chmod " + mode +
+  // 先 mkdir -p 父目录：runtime/ 由 shell 创建，而页面可能在它存在之前
+  // 就要写订阅抓取用的临时 URL。
+  var dir = path.slice(0, path.lastIndexOf("/"));
+  var cmd = "mkdir -p " + dir + " && printf '%s' '" + b64 + "' | base64 -d > " + path + ".tmp && chmod " + mode +
     " " + path + ".tmp && mv " + path + ".tmp " + path;
   return exec(cmd).then(function (r) {
     if (r.errno !== 0) { throw new Error(r.stderr || ("exit " + r.errno)); }
@@ -56,4 +63,4 @@ function writeState(state) {
   return writeFile(STATE, JSON.stringify(state, null, 2) + "\n", "600");
 }
 
-export { MOD, CLI, STATE, APPLIED, OUTBOUND, OUTBOUND_META, LOG_LEVELS, hasBridge, exec, parseKv, writeFile, writeState };
+export { MOD, CLI, STATE, APPLIED, OUTBOUND, OUTBOUND_META, SUBFETCH_URL, LOG_LEVELS, hasBridge, exec, parseKv, writeFile, writeState };

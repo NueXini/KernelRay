@@ -163,14 +163,32 @@ function doImport() {
 // 添加弹窗不持有路由，也不产生历史记录：返回手势始终属于标签栏。
 // 打开时重置内容，因为关闭会丢弃已输入的一切。
 function openAdd() {
-  if (dialogId || dialogBusy) { return; }
+  if (dialogId || dialogBusy || !els.subOverlay.hidden) { return; }
   els.iText.value = "";
   els.iPreview.textContent = "";
   els.iHint.textContent = T.notAppliedYet;
   els.iHint.className = "nodehint";
   els.iApply.disabled = true;
+  els.sUrl.value = "";
+  els.sName.value = "";
+  els.sHint.textContent = T.subHint;
+  els.sAdd.disabled = true;
+  setAddTab("link");
   els.overlay.hidden = false;
   syncDialogScrollLock();
+}
+
+// 两个页签是两个来源，不是两个步骤：链接页签导入节点，订阅页签建一条订阅。
+var addTab = "link";
+
+function setAddTab(tab) {
+  addTab = tab === "sub" ? "sub" : "link";
+  els.addTabLink.classList.toggle("active", addTab === "link");
+  els.addTabSub.classList.toggle("active", addTab === "sub");
+  els.addTabLink.setAttribute("aria-selected", addTab === "link" ? "true" : "false");
+  els.addTabSub.setAttribute("aria-selected", addTab === "sub" ? "true" : "false");
+  els.addLinkPane.hidden = addTab !== "link";
+  els.addSubPane.hidden = addTab !== "sub";
 }
 
 function closeAdd() {
@@ -178,4 +196,4 @@ function closeAdd() {
   syncDialogScrollLock();
 }
 
-export { mergeNodes, previewLine, renderFailedRows, logNodeLine, importLogLine, doImport, openAdd, closeAdd };
+export { mergeNodes, previewLine, renderFailedRows, logNodeLine, importLogLine, doImport, openAdd, closeAdd, setAddTab, addTab };

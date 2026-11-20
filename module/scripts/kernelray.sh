@@ -58,7 +58,7 @@ kr_now() { date +%s; }
 # 每条模块日志行携带的封闭标签集合。WebUI 的 `mlog append` 传入
 # 同样的词，shell 与 UI 共享一份词汇；`kr_log` 拒绝集合之外的词，
 # 让新的调用点没法自造拼法。
-KR_LOG_TAGS="Node DNS Core Config TProxy Routing Module"
+KR_LOG_TAGS="Node DNS Core Config TProxy Routing Module Sub"
 
 kr_log_tag_ok() { # <标签>：属于封闭集合时返回 0
   case " $KR_LOG_TAGS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
@@ -1291,6 +1291,118 @@ kr_mlog_append() { # <标签> <消息...>
   kr_log_file "$_tag" "$_msg"
 }
 
+# ---- 订阅抓取（WebUI 的「从订阅导入」）----------------------------------
+
+# 订阅 URL 经文件传入，不经 argv：URL 常带令牌，而 argv 在 ps 里对
+# 每个进程可见。文件由 UI 写、本函数读完立刻删除。
+KR_SUB_URL=$KR_RUNDIR/subfetch.url
+KR_SUB_RAW=$KR_RUNDIR/subfetch.raw
+# 订阅正文的上限（1 MiB）。超过它的多半是网页错误页或误配的
+# 地址，而不是节点列表；在解析前拒绝，省得 UI 吞掉一大块垃圾。
+KR_SUB_MAX=1048576
+
+# 抓取订阅正文到 stdout。stdout 只放正文：WebUI 把整段输出当作
+# 订阅内容解析，任何日志行都会污染它——所以本函数绝不用 kr_log
+#（它把同一行也打到 stdout），只用 kr_log_file 写日志文件。
+#
+# 为什么用 timeout 包住 wget，而不是 `wget ... | head -c ...`：
+# busybox wget 的 -T 是每次读的超时，不是整次抓取的预算；一个缓慢
+# 滴流的服务器能让它永远抓不完。外层 busybox timeout 给整次抓取
+# 一个硬上限，退出码 124/143 也让「超时」成为可分类的事实。管道
+# 接 head 则相反：head 读够就关管道，wget 收到 SIGPIPE，拿到的
+# 是截断的正文，而且没有退出码能区分「截断」与「完成」。
+kr_sub_fetch() {
+  kr_dirs
+  # 上一次失败可能留下半截正文：先清掉，任何路径都不留旧内容。
+  rm -f "$KR_SUB_RAW" 2>/dev/null
+  _url=""
+  if [ -f "$KR_SUB_URL" ]; then
+    IFS= read -r _url <"$KR_SUB_URL" || :
+    # 读完立刻删除：URL 携带令牌，它是秘密，不是状态。
+    rm -f "$KR_SUB_URL" 2>/dev/null
+  fi
+  case "$_url" in
+    '')
+      echo "kernelray: no subscription URL" >&2
+      kr_log_file Sub "subscription fetch failed: no url"
+      return 2
+      ;;
+    http://* | https://*) ;;
+    *)
+      # 绝不回显 URL：它可能带令牌。
+      echo "kernelray: unsupported subscription URL" >&2
+      kr_log_file Sub "subscription fetch failed: bad url"
+      return 2
+      ;;
+  esac
+
+  # User-Agent 只能是 v2rayN 系：机场按 UA 分发格式，clash 系或浏览器
+  # UA 会换回 Clash YAML，而 WebUI 的解析器只吃链接行与 Base64。
+  #
+  # TLS 不校验证书（--no-check-certificate）：Android 的 busybox 没有
+  # 可校验的 CA 库，设备上也没有 curl。代价是路径上的攻击者能读到 URL
+  # 里的令牌、也能喂来自己的节点——这是有意接受的风险；换掉它的办法
+  # 是随模块内置一个静态 curl，那是另一个决定。
+  #
+  # 顺序很重要：先抓 stderr，再由 _rc 决定后续；外层 timeout 的
+  # 状态码因此可用（124/143 是超时，而不是 wget 自己的失败码）。
+  _err=$("$KR_BUSYBOX" timeout 10 "$KR_BUSYBOX" wget -q -T 10 -t 1 -O "$KR_SUB_RAW" \
+      -U 'v2rayN/6.0' --no-check-certificate "$_url" 2>&1)
+  _rc=$?
+  if [ "$_rc" != 0 ]; then
+    _reason=network
+    _code=""
+    if [ "$_rc" = 124 ] || [ "$_rc" = 143 ]; then
+      _reason=timeout
+    else
+      # 只取状态码；wget 的错误文本可能包含主机名，绝不外传。
+      _code=$(printf '%s\n' "$_err" | sed -n 's/.*HTTP\/1\.[01] \([0-9][0-9][0-9]\).*/\1/p' | head -n 1)
+      [ -n "$_code" ] && _reason=http
+    fi
+    rm -f "$KR_SUB_RAW" 2>/dev/null
+    case "$_reason" in
+      http) kr_log_file Sub "subscription fetch failed: http $_code" ;;
+      *) kr_log_file Sub "subscription fetch failed: $_reason" ;;
+    esac
+    echo "kernelray: subscription fetch failed" >&2
+    case "$_reason" in
+      http) echo "reason=http http=$_code" >&2 ;;
+      *) echo "reason=$_reason" >&2 ;;
+    esac
+    return 1
+  fi
+
+  # 大小经 $KR_BUSYBOX wc -c：PATH 里没有 wc。某些实现会给单个
+  # 计数补空白，所以先去掉一切非数字再比较。wget 成功却没留下
+  # 文件（或 wc 读不出数）按 0 字节处理：对调用方而言那就是空正文。
+  _bytes=""
+  if [ -f "$KR_SUB_RAW" ]; then
+    _bytes=$("$KR_BUSYBOX" wc -c <"$KR_SUB_RAW" 2>/dev/null)
+    _bytes=$(printf '%s\n' "$_bytes" | sed 's/[^0-9]//g')
+  fi
+  case "$_bytes" in '' | *[!0-9]*) _bytes=0 ;; esac
+  if [ "$_bytes" -eq 0 ]; then
+    rm -f "$KR_SUB_RAW" 2>/dev/null
+    kr_log_file Sub "subscription fetch failed: empty"
+    echo "kernelray: subscription fetch failed" >&2
+    echo "reason=empty" >&2
+    return 1
+  fi
+  if [ "$_bytes" -gt "$KR_SUB_MAX" ]; then
+    rm -f "$KR_SUB_RAW" 2>/dev/null
+    kr_log_file Sub "subscription fetch failed: too-large"
+    echo "kernelray: subscription fetch failed" >&2
+    echo "reason=too-large" >&2
+    return 1
+  fi
+
+  kr_log_file Sub "subscription fetch: $_bytes bytes"
+  cat "$KR_SUB_RAW"
+  _rc=$?
+  rm -f "$KR_SUB_RAW" 2>/dev/null
+  return "$_rc"
+}
+
 # ---- 诊断包（词汇表「诊断包」）------------------------------------------
 
 # 诊断包的落点。ADR 0002 说模块目录是模块唯一的写处；下载目录是那条
@@ -1415,6 +1527,15 @@ kr_cli() {
           ;;
       esac
       ;;
+    sub)
+      case "${1:-}" in
+        fetch) kr_sub_fetch ;;
+        *)
+          echo "usage: kernelray.sh sub fetch" >&2
+          return 2
+          ;;
+      esac
+      ;;
     loglevel)
       case "${1:-status}" in
         none | error | warning | info | debug) kr_loglevel_set "$1" ;;
@@ -1449,7 +1570,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|diagnostics|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|diagnostics|sub fetch|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac
