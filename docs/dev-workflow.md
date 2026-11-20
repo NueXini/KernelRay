@@ -106,7 +106,9 @@ adb -s $D shell 'su -c "ksud module install /data/local/tmp/KernelRay.zip"'
 ## 5. 生效 = 重启（KernelSU 换包）+ 手动 start
 
 ```sh
-adb -s $D reboot
+# 重启只用 KernelSU 的用户空间重启：它重跑 post-fs-data，把 modules_update
+# 换成 modules。禁止 `adb reboot`（见下面的第二条）。
+adb -s $D shell 'su -c "ksud soft-reboot"'
 adb -s $D wait-for-device
 for i in $(seq 1 30); do
   [ "$(adb -s $D shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
@@ -116,6 +118,9 @@ done
 
 - **为什么要重启**：KernelSU 把新包解到 `/data/adb/modules_update/<id>`，开机时才替换
   `/data/adb/modules/<id>`。所以“装成功了但版本没变”= 没重启。
+- **禁止 `adb reboot`**：整机重启走 boot image，这台模拟器上它回来过一次没有 KernelSU 的
+  镜像（`which su`、`which ksud` 都空，管理器还在），只能重开模拟器。重启一律用上面的
+  `ksud soft-reboot`，它不碰 boot image。
 - **核心不会自己起来**：模块没有 `service.sh`，开机不启动核心（ADR 0018）。重启后 `ps` 里
   **不应该**有 `xray run`，这是正常的；装好后要自己 start 一次（第 6 节第 1 步）。
 
@@ -268,7 +273,8 @@ adb -s $D shell 'su -c "grep loglevel /data/adb/modules/KernelRay/config.json"'
 
 # 卸载（只是打标记，重启才真正删）
 adb -s $D shell 'su -c "ksud module uninstall KernelRay"'
-adb -s $D reboot && sleep 30
+adb -s $D shell 'su -c "ksud soft-reboot"'
+adb -s $D wait-for-device
 adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c "[x]ray run"'
 #   期望：目录不存在、进程数 0、/data/adb 下没有残留（ksu/ksud/modules/modules_update 除外）
 ```
@@ -305,7 +311,7 @@ bash scripts/pack.sh || exit 1
 zip=$(ls -t build/KernelRay-*.zip | head -1)
 adb -s $D push "$zip" //data/local/tmp/KernelRay.zip || exit 1
 adb -s $D shell 'su -c "ksud module install /data/local/tmp/KernelRay.zip"' | grep -E 'core:|successfully' || exit 1
-adb -s $D reboot; adb -s $D wait-for-device
+adb -s $D shell 'su -c "ksud soft-reboot"'; adb -s $D wait-for-device
 for i in $(seq 1 30); do
   [ "$(adb -s $D shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
   sleep 5
