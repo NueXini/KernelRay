@@ -1,5 +1,6 @@
 // ---- node list model ----
-// 由 state.json 与 runtime/applied 推导出节点页显示的行。纯函数、无 DOM，
+// 由 state.json（selected）、手工节点文件列表与订阅文件列表，加上
+// runtime/applied，推导出节点页显示的行。纯函数、无 DOM，
 // 使 tests/nodelist.test.js 无需浏览器即可运行。
 //
 // 订阅节点与手工节点共用一个 id 空间：id 由身份派生，所以同一条节点在
@@ -28,11 +29,11 @@ function listRow(node, applied, selectedId, subId) {
   return row;
 }
 
-function nodeListModel(state, appliedId, keyOf) {
+function nodeListModel(state, manual, subs, appliedId, keyOf) {
   var selectedId = state && typeof state.selected === "string" ? state.selected : "";
   var applied = appliedId ? String(appliedId) : "";
-  var manual = state && Array.isArray(state.manual) ? state.manual : [];
-  var subs = state && Array.isArray(state.subscriptions) ? state.subscriptions : [];
+  manual = Array.isArray(manual) ? manual : [];
+  subs = Array.isArray(subs) ? subs : [];
   var selectedKnown = selectedId === "";
   var appliedKnown = applied === "";
   // 身份在整份列表里只出现一次：先手工、再按订阅顺序。
@@ -236,10 +237,10 @@ function nodeDialogModel(node, appliedId, selectedId) {
 // （切换失败会把它留在那里），否则取列表能显示的第一个节点。
 // "" 表示"什么都不切换"：已经有已应用节点。纯函数，便于导入测试
 // 在无需浏览器的情况下运行。
-function applyAfterImport(state, appliedId) {
+function applyAfterImport(manual, selected, appliedId) {
   if (appliedId) { return ""; }
-  var manual = state && Array.isArray(state.manual) ? state.manual : [];
-  var selected = state && typeof state.selected === "string" ? state.selected : "";
+  manual = Array.isArray(manual) ? manual : [];
+  selected = typeof selected === "string" ? selected : "";
   var first = "";
   for (var i = 0; i < manual.length; i++) {
     var n = manual[i];

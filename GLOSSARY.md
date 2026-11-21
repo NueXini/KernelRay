@@ -14,11 +14,20 @@ Xray 可执行文件本身，取自上游 `Xray-android-<arch>` 发布版。
 _避免_: binary, engine, xray-core（那是上游项目，不是我们的文件）
 
 **模块目录 (Module directory)**:
-`/data/adb/modules/KernelRay` — 唯一的根：机构、核心二进制与其 geo 数据、配置模板、
-生成的核心配置、节点库、日志和运行时状态都在这里。这也是我们唯一写入的地方，所以移除
-模块不留任何残余。更新时被整体替换，其中的用户数据随之重置；这个代价是有意的
-（见 `docs/adr/0002`）。
+`/data/adb/modules/KernelRay` — 唯一的根：机构、核心二进制与其 geo 数据、用户配置
+（见 配置目录）和日志都在这里。这也是我们唯一写入的地方，所以移除模块不留任何残余。
+更新时目录被新安装整体替换，但 `customize.sh` 会先把旧安装的 配置目录 整树搬进新安装，
+所以用户配置活过更新；`logs/` 除外，随更新重置。
 _避免_: install dir, app dir, data dir, storage, work dir
+
+**配置目录 (Config directory)**:
+模块目录 下的 `config/`（目录 `0700`、文件一律 `0600`）：配置模板、`state.json`
+（`selected` 与入站端口）、每手工节点一个的 `nodes/<id>.json`、每订阅一个的
+`subscriptions/<id>.json`、UI 偏好（`webui/preferences.json`）、生成的 核心配置 与运行时
+状态（`config/runtime/`）都在这里。它是模块更新中唯一被保留的部分：`customize.sh` 把它整树复制
+进新安装，再删掉其中的启动期临时文件（`status.json`、`xray.pid`、`started`、`rules`、
+`nodeip`、`watch.lock`、`subfetch.url`、`config.tested`）。
+_避免_: data dir, user data, config dir
 
 **直连运行 (Direct run)**:
 从未接管过节点时核心运行 freedom（直连）出站的状态。模块已废除该状态：没有已接管节点
@@ -141,7 +150,8 @@ _避免_: select（那只是移动指针）
 _避免_: active node, running node
 
 **取消应用 (Unapply)**:
-忘掉已应用节点：核心配置、`runtime/applied`、渲染出的出站和接管规则全部移除，模块回到
+忘掉已应用节点：核心配置（`config/config.json`）、`config/runtime/applied`、渲染出的出站
+和接管规则全部移除，模块回到
 从未应用过的状态，直到再次应用节点前核心无法启动。唯一的触发是核心停止时一次清空节点
 列表的删除。
 _避免_: reset, clear, wipe, uninstall
@@ -162,8 +172,8 @@ _避免_: node config, proxy JSON
 _避免_: 预解析, pinned IP, nodeip（那是保存它的运行时文件，不是概念）
 
 **配置模板 (Config template)**:
-`config.example.json`，固定的 Xray 配置骨架——入站、固定出站，以及 v0.7 起的路由与
-DNS——核心配置由它生成。
+`config/config.example.json`（模块 配置目录 里的文件），固定的 Xray 配置骨架——入站、
+固定出站，以及 v0.7 起的路由与 DNS——核心配置由它生成。
 _避免_: default config, preset, profile
 
 **地理数据 (Geo data)**:
@@ -172,13 +182,14 @@ _避免_: default config, preset, profile
 _避免_: geo 文件, 规则库, 数据库, 订阅规则
 
 **核心配置 (Core config)**:
-`config.json`，核心实际运行的配置，由模板与已应用节点生成。它只有一种形态：接管 各块
+`config/config.json`（模块 配置目录 里的文件），核心实际运行的配置，由配置模板与已应用
+节点生成。它只有一种形态：接管 各块
 （tproxy 入站、DNS 模块、分流规则、旁路标记）永远在位。绝不手改。
 _避免_: user config, settings
 
 **运行状态 (Runtime status)**:
-阅读方用来回答"模块正在干什么"的文件：`runtime/status.json`
-（state/phase/node/boot）、`runtime/xray.pid`、`runtime/applied`、`logs/xray.log` 以及
+阅读方用来回答“模块正在干什么”的文件：`config/runtime/status.json`
+（state/phase/node/boot）、`config/runtime/xray.pid`、`config/runtime/applied`、`logs/xray.log` 以及
 （v0.7 起）`logs/kernelray.log`——模块自己的日志。状态只被写入、绝不由调用方推断——
 只有一个阅读方可取的例外：`boot` 不是本次开机的 `status.json` 写于本次开机之前，它描述
 的核心不可能还在运行，读作 `idle`（见 `docs/adr/0018`）。
@@ -194,7 +205,7 @@ _避免_: xray log（那是文件，不是概念）, access log, run log
 封闭集合 `Node` `DNS` `Core` `Config` `TProxy` `Routing` `Sub` `Module` 的一个标签，WebUI 的
 节点导入与删除行、订阅的抓取与刷新行也经同一集合进入（`mlog append`）——标签集合是共享
 词汇，不是逐调用方的自由选择。它没有级别、也没有自己的偏好；日志行数 限定日志页显示它
-的多少。模块更新会把它连同模块目录一起清掉（见 `docs/adr/0002`）。
+的多少。模块更新会清掉它：更新只保留 配置目录，`logs/` 随新安装重置。
 _避免_: kernelray log（那是文件，不是概念）, system log, service log, free-form tags
 
 **日志等级 (Log level)**:

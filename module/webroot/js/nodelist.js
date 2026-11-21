@@ -1,6 +1,6 @@
 import { T } from "./i18n.js";
 import { els } from "./els.js";
-import { exec, CLI, STATE, APPLIED, OUTBOUND, OUTBOUND_META, parseKv, hasBridge, writeFile, writeState } from "./bridge.js";
+import { exec, CLI, STATE, APPLIED, OUTBOUND, OUTBOUND_META, NODES_DIR, SUBS_DIR, parseKv, hasBridge, writeFile, writeState, nodeFile, subFile, parseState, readJsonDir } from "./bridge.js";
 import { busy, setBusy, toast, refreshPage } from "./main.js";
 import { coreRunning, setButtons } from "./status.js";
 import { nodeListModel, deleteGate, batchModel, willUnapply } from "./nodelist-model.js";
@@ -10,6 +10,10 @@ import { dialogId, renderDialog } from "./dialog.js";
 import { logNodeLine } from "./import.js";
 
 var lastStateObj = null;
+// 节点库与订阅的内存副本：节点在 nodes/ 下每节点一个文件，订阅在
+// subscriptions/ 下每条一个文件，都与 lastStateObj 同批刷新。
+var lastManual = [];
+var lastSubs = [];
 
 var lastApplied = "";
 var lastMetaId = "";
@@ -36,20 +40,20 @@ function deleteRefusal(model) {
 // 保持一致。
 function canCheckNode(node) {
   if (!(lastApplied && lastApplied === node.id)) { return true; }
-  return deleteGate(nodeListModel(lastStateObj, lastApplied, identityOf), coreRunning());
+  return deleteGate(nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf), coreRunning());
 }
 
 function findNodeById(state, id) {
-  if (!state || !id) { return null; }
+  if (!id) { return null; }
   var want = String(id);
-  var manual = Array.isArray(state.manual) ? state.manual : [];
+  var manual = Array.isArray(lastManual) ? lastManual : [];
   for (var i = 0; i < manual.length; i++) {
     var n = manual[i];
     if (n && String(n.id) === want) { return n; }
   }
   // 订阅节点同样是节点：点开详情弹窗、复制链接、应用都不该因为它的
   // 来源而不同，只有删除例外（它们归订阅所有）。
-  var subs = Array.isArray(state.subscriptions) ? state.subscriptions : [];
+  var subs = Array.isArray(lastSubs) ? lastSubs : [];
   for (var j = 0; j < subs.length; j++) {
     var nodes = subs[j] && Array.isArray(subs[j].nodes) ? subs[j].nodes : [];
     for (var k = 0; k < nodes.length; k++) {
@@ -109,8 +113,8 @@ function rowSig(row) {
 
 // ---- subscription groups ----
 
-// 折叠状态是 UI 偏好，不是意图：和主题、语言一样留在 localStorage，
-// 不进 state.json。没有存储时退化为仅本次会话有效。
+// 折叠状态是临时 UI 偏好：它不值得为每次折叠走一次桥接写盘，所以留在
+// localStorage；没有存储时退化为仅本次会话有效。
 var COLLAPSE_KEY = "kernelray.collapsed";
 var collapsedIds = (function () {
   try {
@@ -393,7 +397,7 @@ function renderBatchBar(model, bm, unapplies) {
 
 function renderNodeList() {
   var state = lastStateObj;
-  var model = nodeListModel(state, lastApplied, identityOf);
+  var model = nodeListModel(state, lastManual, lastSubs, lastApplied, identityOf);
   var running = coreRunning();
   listRunning = running;
   var gate = deleteGate(model, running);
@@ -527,8 +531,24 @@ function switchTo(n, opts) {
       }
       if (cur && current === JSON.stringify(out)) {
         cur.dirty = false;
-        lastStateObj.revision = (Number(lastStateObj.revision) || 0) + 1;
-        return writeState(lastStateObj);
+        // dirty 标记住在节点文件里：手工节点重写 nodes/<id>.json，
+        // 订阅节点重写属主的整份订阅文件。state.json 只 bump revision，
+        // 让轮询重新读列表。
+        var owner = null;
+        if (lastManual.indexOf(cur) < 0) {
+          lastSubs.forEach(function (s) {
+            if (s && Array.isArray(s.nodes) && s.nodes.indexOf(cur) >= 0) { owner = s; }
+          });
+        }
+        var f = owner ? subFile(owner.id) : nodeFile(n.id);
+        if (f) {
+          lastStateObj.revision = (Number(lastStateObj.revision) || 0) + 1;
+          var body = owner ? JSON.stringify(owner, null, 2) : JSON.stringify(cur, null, 2);
+          return writeFile(f, body + "\n", "600").then(function () {
+            return writeState(lastStateObj);
+          });
+        }
+        return Promise.resolve();
       }
     }
   }).then(function () {
@@ -546,7 +566,7 @@ function switchTo(n, opts) {
 
 function askDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
+  var model = nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf);
   if (lastApplied && lastApplied === n.id && !deleteGate(model, coreRunning())) {
     toast(deleteRefusal(model));
     return;
@@ -555,32 +575,33 @@ function askDelete(n) {
   renderNodeList();
 }
 
-// 单个、多个或整条订阅共用一条删除路径：过滤手工节点库、过滤订阅桶里的
-// 节点、丢掉 dropSubIds 里的订阅对象；若被删节点是当前节点就清掉
-// selected 指针，渲染出的出站若属于被删节点就丢弃，然后持久化。
-// 先执行 rm 再写入：rm 失败必须让节点留在库里，以便删除可以重试。
-// 核心已停止时清空列表的删除就是一次取消应用（ADR 0013），出于同样
-// 的原因它也最先执行。
+// 单个、多个或整条订阅共用一条删除路径：手工节点 rm 掉各自的
+// nodes/<id>.json，dropSubIds 里的订阅 rm 掉整份 subscriptions/<id>.json
+// （订阅节点内嵌其中，不单独有文件）；若被删节点是当前节点就清掉
+// selected 指针，渲染出的出站若属于被删节点就丢弃，然后写 state.json。
+// 先执行 rm 再写 state：rm 失败必须让节点留在库里，以便删除可以重试；
+// 崩溃在 rm 与 state 之间只会留下悬空的 selected，UI 已经容忍
+// （selectedMissing）。核心已停止时清空列表的删除就是一次取消应用
+// （ADR 0013），出于同样的原因它也最先执行。
 function deleteNodes(ids, dropSubIds, opts) {
   var state = lastStateObj;
-  var model = nodeListModel(state, lastApplied, identityOf);
+  var model = nodeListModel(state, lastManual, lastSubs, lastApplied, identityOf);
   var unapply = willUnapply(model, ids, coreRunning());
   var gone = {};
   ids.forEach(function (id) { gone[String(id)] = true; });
-  state.manual = (Array.isArray(state.manual) ? state.manual : []).filter(function (x) {
-    return !x || !gone[x.id];
-  });
   var drop = {};
   (dropSubIds || []).forEach(function (id) { drop[String(id)] = true; });
-  state.subscriptions = (Array.isArray(state.subscriptions) ? state.subscriptions : [])
-    .filter(function (s) { return !s || !drop[String(s.id)]; })
-    .map(function (s) {
-      if (!s || !Array.isArray(s.nodes)) { return s; }
-      s.nodes = s.nodes.filter(function (n) { return !n || !gone[n.id]; });
-      return s;
-    });
-  if (gone[state.selected]) { state.selected = ""; }
-  state.revision = (Number(state.revision) || 0) + 1;
+  var rms = [];
+  lastManual.forEach(function (n) {
+    if (!n || !gone[String(n.id)]) { return; }
+    var f = nodeFile(n.id);
+    if (f) { rms.push(f); }
+  });
+  lastSubs.forEach(function (s) {
+    if (!s || !drop[String(s.id)]) { return; }
+    var f = subFile(s.id);
+    if (f) { rms.push(f); }
+  });
   setBusy(true);
   setButtons();
   renderNodeList();
@@ -599,8 +620,18 @@ function deleteNodes(ids, dropSubIds, opts) {
     }) : Promise.resolve();
   }
   return chain.then(function () {
+    if (!rms.length) { return null; }
+    return exec("rm -f " + rms.join(" ")).then(function (r) {
+      if (r.errno !== 0) { throw new Error((r.stderr || "").trim() || ("exit " + r.errno)); }
+    });
+  }).then(function () {
+    // rm 成功之后才更新内存与 state.json；被删节点是当前节点时清掉 selected。
+    var nextManual = lastManual.filter(function (n) { return !n || !gone[String(n.id)]; });
+    var nextSubs = lastSubs.filter(function (s) { return !s || !drop[String(s.id)]; });
+    if (gone[state.selected]) { state.selected = ""; }
+    state.revision = (Number(state.revision) || 0) + 1;
     return writeState(state).then(function () {
-      setLastStateObj(state);
+      setLastStateObj(state, nextManual, nextSubs);
       if (!(opts && opts.quiet)) { logNodeLine("deleted " + ids.length + " nodes"); }
     });
   });
@@ -608,7 +639,7 @@ function deleteNodes(ids, dropSubIds, opts) {
 
 function confirmDelete(n) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
+  var model = nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf);
   if (lastApplied && lastApplied === n.id && !deleteGate(model, coreRunning())) {
     confirmId = null;
     renderNodeList();
@@ -629,7 +660,7 @@ function confirmDelete(n) {
 
 function confirmBatchDelete() {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
+  var model = nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf);
   var gate = deleteGate(model, coreRunning());
   var ids = batchModel(model, checkSet, gate).checkedIds;
   if (ids.length === 0) {
@@ -659,11 +690,16 @@ function confirmBatchDelete() {
   });
 }
 
-// 意图写在 state.json；runtime/applied 指向当前配置由之生成的节点。
-// 一次 exec 里同时读取状态、已应用 id 与渲染出站的 meta；切换失败后列表必须
-// 显示"已选中未应用"，而不是假装已经切换成功。
+// 意图写在 state.json；runtime/applied 指向当前配置由之生成的节点，
+// 节点库本体在 nodes/ 与 subscriptions/ 目录里。
+// 一次 exec 里同时读取状态、已应用 id、渲染出站的 meta 和两目录的
+// ls -l（mtime+size）；切换失败后列表必须显示"已选中未应用"，而不是
+// 假装已经切换成功。
 // 状态轮询带着 state revision、已应用 id 和 meta id：三者都没动时，
-// 整个文件已经在 lastStateObj 里，无需再读、也无需重绘。
+// 整个库已经在内存里，无需再读、也无需重绘。两目录的快照也参与
+// 判断：导入写节点文件、订阅刷新写订阅文件，都可能不动 revision。
+var dirSnapshot = null;
+
 function refreshNodes(kv) {
   var known = lastStateObj;
   if (kv && known && kv.revision !== undefined && known.revision !== undefined &&
@@ -674,22 +710,43 @@ function refreshNodes(kv) {
     return Promise.resolve();
   }
   return exec("cat " + STATE + " 2>/dev/null; echo '@@APPLIED@@'; cat " + APPLIED +
-    " 2>/dev/null; echo '@@META@@'; cat " + OUTBOUND_META + " 2>/dev/null")
+    " 2>/dev/null; echo '@@META@@'; cat " + OUTBOUND_META +
+    " 2>/dev/null; echo '@@DIRS@@'; ls -l " + NODES_DIR + " 2>/dev/null; " +
+    "ls -l " + SUBS_DIR + " 2>/dev/null; true")
     .then(function (r) {
-      var parts = r.stdout.split("@@APPLIED@@");
-      var state = null;
-      try { state = JSON.parse((parts[0] || "").trim()); } catch (e) { state = null; }
-      if (!state || typeof state !== "object" || Array.isArray(state)) { state = null; }
+      var split = r.stdout.split("@@DIRS@@");
+      var head = split[0] || "";
+      var snapshot = (split[1] || "").trim();
+      var parts = head.split("@@APPLIED@@");
       var rest = (parts[1] || "").split("@@META@@");
-      lastStateObj = state;
-      lastApplied = (rest[0] || "").trim().split("\n")[0];
-      lastMetaId = parseKv(rest[1] || "").id || "";
-      renderNodeList();
+      function adoptState() {
+        lastStateObj = parseState(parts[0] || "");
+        lastApplied = (rest[0] || "").trim().split("\n")[0];
+        lastMetaId = parseKv(rest[1] || "").id || "";
+      }
+      if (snapshot === dirSnapshot) {
+        // 目录没变（例如只有 settings 或 revision 变了）：不必重新逐文件读。
+        adoptState();
+        renderNodeList();
+        return null;
+      }
+      dirSnapshot = snapshot;
+      return Promise.all([readJsonDir(NODES_DIR), readJsonDir(SUBS_DIR)])
+        .then(function (lists) {
+          adoptState();
+          lastManual = lists[0];
+          lastSubs = lists[1];
+          renderNodeList();
+        });
     }).catch(function () {});
 }
 
 function invalidateList() { listSig = ""; }
-function setLastStateObj(v) { lastStateObj = v; }
+function setLastStateObj(state, manual, subs) {
+  lastStateObj = state;
+  if (Array.isArray(manual)) { lastManual = manual; }
+  if (Array.isArray(subs)) { lastSubs = subs; }
+}
 function setConfirmId(v) { confirmId = v; }
 function setEditMode(v) { editMode = v; }
 function setCheck(id, on) {
@@ -712,4 +769,4 @@ function resetEditMode() {
   batchConfirm = false;
 }
 
-export { lastStateObj, lastApplied, lastMetaId, confirmId, listSig, listRunning, editMode, checkSet, batchConfirm, nodeMeta, pill, listHint, rowSig, renderRow, renderBatchBar, renderNodeList, writeSelected, switchTo, deleteRefusal, canCheckNode, findNodeById, hostPort, askDelete, deleteNodes, confirmDelete, confirmBatchDelete, refreshNodes, invalidateList, setLastStateObj, setConfirmId, setEditMode, setCheck, toggleCheck, clearChecks, setBatchConfirm, toggleEditMode, resetEditMode, isCollapsed, toggleCollapse, agoText, subErrorText, renderGroup, renderGroupHead };
+export { lastStateObj, lastManual, lastSubs, lastApplied, lastMetaId, confirmId, listSig, listRunning, editMode, checkSet, batchConfirm, nodeMeta, pill, listHint, rowSig, renderRow, renderBatchBar, renderNodeList, writeSelected, switchTo, deleteRefusal, canCheckNode, findNodeById, hostPort, askDelete, deleteNodes, confirmDelete, confirmBatchDelete, refreshNodes, invalidateList, setLastStateObj, setConfirmId, setEditMode, setCheck, toggleCheck, clearChecks, setBatchConfirm, toggleEditMode, resetEditMode, isCollapsed, toggleCollapse, agoText, subErrorText, renderGroup, renderGroupHead };

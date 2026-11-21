@@ -81,7 +81,7 @@ function makeModule() {
   dirs.push(dir);
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), "#!/bin/sh\nexit 0\n", "utf8");
-  fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "config", "runtime"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
@@ -100,8 +100,8 @@ function makeModule() {
     dir: dir,
     stubs: stubs,
     dl: path.join(dir, "Download"),
-    status: path.join(dir, "runtime", "status.json"),
-    rules: path.join(dir, "runtime", "rules"),
+    status: path.join(dir, "config", "runtime", "status.json"),
+    rules: path.join(dir, "config", "runtime", "rules"),
     logDir: path.join(dir, "logs"),
     mlog: path.join(dir, "logs", "kernelray.log"),
     coreLog: path.join(dir, "logs", "xray.log")
@@ -158,7 +158,7 @@ check("diagnostics: on success stdout is just the final archive path line", func
   eq(lines.length, 1, "stdout line count");
   assert.match(lines[0], PREFIX, "path");
   assert.ok(fs.existsSync(fromShellPath(lines[0].trim())), "archive exists");
-  eq(fs.readdirSync(m.dir + "/runtime").filter(function (n) {
+  eq(fs.readdirSync(m.dir + "/config/runtime").filter(function (n) {
     return n.indexOf("diag.") === 0;
   }), [], "staging dir cleaned");
 });
@@ -207,10 +207,10 @@ check("diagnostics: present logs and status are collected, no credential files i
 
 check("diagnostics: credential files stay in place, unchanged and out of the archive", function () {
   const m = makeModule();
-  fs.writeFileSync(path.join(m.dir, "config.json"), '{"secrets":true}');
-  fs.writeFileSync(path.join(m.dir, "state.json"), '{"secrets":true}');
-  fs.writeFileSync(path.join(m.dir, "outbound.json"), '{"secrets":true}');
-  fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "1.2.3.4");
+  fs.writeFileSync(path.join(m.dir, "config", "config.json"), '{"secrets":true}');
+  fs.writeFileSync(path.join(m.dir, "config", "state.json"), '{"secrets":true}');
+  fs.writeFileSync(path.join(m.dir, "config", "outbound.json"), '{"secrets":true}');
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "nodeip"), "1.2.3.4");
   const dest = runShell(m, ["diagnostics"]).trim();
   const listing = tarList(m, path.basename(dest)).join("\n");
   assert.doesNotMatch(listing, /config\.json/, "config.json excluded");
@@ -218,7 +218,7 @@ check("diagnostics: credential files stay in place, unchanged and out of the arc
   assert.doesNotMatch(listing, /outbound\.json/, "outbound.json excluded");
   assert.doesNotMatch(listing, /nodeip/, "nodeip excluded");
   // 只读手势：被收集的原文件一个不动。
-  eq(fs.readFileSync(path.join(m.dir, "config.json"), "utf8"), '{"secrets":true}', "config intact");
+  eq(fs.readFileSync(path.join(m.dir, "config", "config.json"), "utf8"), '{"secrets":true}', "config intact");
 });
 
 check("diagnostics: missing gzip falls back to plain tar", function () {
@@ -246,7 +246,7 @@ check("diagnostics: an unwritable target errors and the staging area is cleaned"
   const r = runFail(m, ["diagnostics"]);
   assert.match(r.stderr, /diagnostics:/, "error message");
   eq(fs.readFileSync(m.dl, "utf8"), "occupied", "destination untouched");
-  eq(fs.readdirSync(m.dir + "/runtime").filter(function (n) {
+  eq(fs.readdirSync(m.dir + "/config/runtime").filter(function (n) {
     return n.indexOf("diag.") === 0;
   }), [], "staging dir cleaned");
 });

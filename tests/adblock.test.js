@@ -21,7 +21,7 @@ const { execFileSync } = require("child_process");
 
 const root = path.join(__dirname, "..");
 const script = path.join(root, "module", "scripts", "kernelray.sh");
-const template = path.join(root, "module", "config.example.json");
+const template = path.join(root, "module", "config", "config.example.json");
 
 const ID = "0123456789abcdef";
 
@@ -121,10 +121,11 @@ function posixPathEnv(extraDir) {
 function makeModule(core) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kernelray-ad-"));
   dirs.push(dir);
-  fs.copyFileSync(template, path.join(dir, "config.example.json"));
+  fs.mkdirSync(path.join(dir, "config"), { recursive: true });
+  fs.copyFileSync(template, path.join(dir, "config", "config.example.json"));
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), core || fakeCore, "utf8");
-  fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "config", "runtime"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
@@ -162,12 +163,12 @@ function makeModule(core) {
   return {
     dir: dir,
     stubs: stubs,
-    config: path.join(dir, "config.json"),
-    outbound: path.join(dir, "outbound.json"),
-    meta: path.join(dir, "outbound.meta"),
-    applied: path.join(dir, "runtime", "applied"),
-    status: path.join(dir, "runtime", "status.json"),
-    route: path.join(dir, "runtime", "route"),
+    config: path.join(dir, "config", "config.json"),
+    outbound: path.join(dir, "config", "outbound.json"),
+    meta: path.join(dir, "config", "outbound.meta"),
+    applied: path.join(dir, "config", "runtime", "applied"),
+    status: path.join(dir, "config", "runtime", "status.json"),
+    route: path.join(dir, "config", "runtime", "route"),
     geosite: path.join(dir, "bin", "geosite.dat"),
     geoip: path.join(dir, "bin", "geoip.dat"),
     moduleLog: path.join(dir, "logs", "kernelray.log")
@@ -267,7 +268,7 @@ check("render: a pinned node address and the ad sink share the hosts map", () =>
   const m = makeModule();
   writeOutbound(m);
   runShell(m.dir, BODY_PREF, ["cnadblock"]);
-  fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "203.0.113.9\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "nodeip"), "203.0.113.9\n");
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns.hosts, {
     "full:n.example.com": "203.0.113.9", "geosite:category-ads-all": "#3"
@@ -469,7 +470,7 @@ check("start: data gone under cnadblock refuses the start and says why", () => {
   if (!/\[Routing\].*geo data missing; cnadblock cannot start/.test(log)) {
     throw new Error("the refusal must be in the module log: " + log);
   }
-  if (fs.existsSync(path.join(m.dir, "runtime", "xray.pid"))) {
+  if (fs.existsSync(path.join(m.dir, "config", "runtime", "xray.pid"))) {
     throw new Error("no core may be left behind");
   }
 });

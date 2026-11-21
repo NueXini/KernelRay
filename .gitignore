@@ -8,9 +8,14 @@ module/bin/*
 build/
 
 # Runtime files written on the device (or by a local test run); never ship them.
-module/config.json
-module/state.json
-module/outbound.json
-module/outbound.meta
+# User data now lives under module/config/ -- keep only the shipped template
+# and the empty scaffolding dirs (nodes/ subscriptions/ webui/ runtime/).
 module/logs/
-module/runtime/
+module/config/*
+!module/config/config.example.json
+!module/config/*/
+module/config/nodes/*
+module/config/subscriptions/*
+module/config/webui/*
+module/config/runtime/*
+!module/config/*/.gitkeep

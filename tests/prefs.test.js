@@ -2,8 +2,8 @@
 //
 // 偏好模型位于 module/webroot/js/prefs.js 与 module/webroot/js/ports.js 中；本测试框架从随包文件里抽出带标记的
 // 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。偏好的规范化、
-// 加载与保存都是针对存储句柄的纯逻辑，因此无需浏览器或 WebView
-// 即可测试。
+// 原文解析/序列化与来源决策（文件、旧 localStorage blob）都是纯逻辑，
+// 因此无需浏览器、WebView 或真实文件系统即可测试。
 //
 //   运行：node tests/prefs.test.js
 
@@ -39,8 +39,8 @@ if (from < 0 || to < 0) {
 
 const block = prefsJs.slice(from, to);
 const P = new Function(block + "\nreturn {" +
-  " prefsNormalize: prefsNormalize, prefsLoad: prefsLoad, prefsSave: prefsSave," +
-  " PREFS_KEY: PREFS_KEY, LANGS: LANGS, THEMES: THEMES, LOG_LINE_STEPS: LOG_LINE_STEPS" +
+  " prefsNormalize: prefsNormalize, prefsParse: prefsParse, prefsSerialize: prefsSerialize," +
+  " prefsSource: prefsSource, PREFS_KEY: PREFS_KEY, LANGS: LANGS, THEMES: THEMES, LOG_LINE_STEPS: LOG_LINE_STEPS" +
 "};")();
 
 // 入站端口代码块遵循同样的抽取约定。
@@ -77,18 +77,70 @@ function eq(actual, expected, what) {
   }
 }
 
-// 一个行为类似 localStorage 的存储句柄；需要时可让每次访问都抛异常。
-function memStore() {
-  const m = new Map();
-  return {
-    getItem: (k) => (m.has(k) ? m.get(k) : null),
-    setItem: (k, v) => { m.set(k, String(v)); }
-  };
-}
-const denyStore = {
-  getItem() { throw new Error("denied"); },
-  setItem() { throw new Error("denied"); }
-};
+// 偏好文件（config/webui/preferences.json）与旧 localStorage blob 是同一
+// 形状（v/theme/lang/logLines），来源决策的输入都是原文，不再是存储句柄：
+// fileText = null 表示文件缺失或读不出，legacyRaw 是 localStorage 里的旧
+// blob（没有就是 null）。
+
+check("file text is the source of truth when it parses", () => {
+  eq(P.prefsSource(JSON.stringify({ v: 1, theme: "dark", lang: "zh", logLines: 500 }), null),
+    { prefs: { theme: "dark", lang: "zh", logLines: 500 }, seed: null });
+  // 旧 blob 还在时也不回头用它：文件能解析就是事实。
+  eq(P.prefsSource(JSON.stringify({ v: 1, theme: "light", lang: "en", logLines: 100 }),
+    JSON.stringify({ v: 1, theme: "dark", lang: "zh", logLines: 500 })),
+    { prefs: { theme: "light", lang: "en", logLines: 100 }, seed: null });
+});
+
+check("a file with extra/unknown fields loads field by field and does not seed", () => {
+  eq(P.prefsSource(JSON.stringify({ v: 1, lang: "zh", logLines: 500, fontSize: 18 }), null),
+    { prefs: { theme: "auto", lang: "zh", logLines: 500 }, seed: null });
+});
+
+check("a corrupted file loads as the defaults and does not seed from the old blob", () => {
+  // 文件存在但读不出内容：内存里落到默认值；不播种——坏文件不该被
+  // 旧 blob 覆盖，用户下次仍能看到"文件坏了"这个事实。
+  eq(P.prefsSource("{not json", JSON.stringify({ v: 1, theme: "dark", lang: "zh" })),
+    { prefs: { theme: "auto", lang: "auto", logLines: 200 }, seed: null });
+});
+
+check("a missing file seeds the preferences.json from the legacy blob once", () => {
+  const got = P.prefsSource(null, JSON.stringify({ v: 1, theme: "dark", lang: "zh", logLines: 500 }));
+  eq(got.prefs, { theme: "dark", lang: "zh", logLines: 500 });
+  // 播种串是规范化前的原样搬迁：旧 blob 写什么就搬什么。
+  eq(JSON.parse(got.seed), { v: 1, theme: "dark", lang: "zh", logLines: 500 });
+});
+
+check("a legacy blob with junk fields is normalized into the seed", () => {
+  const got = P.prefsSource(null, JSON.stringify({ v: 9, theme: "sepia", lang: "zh", logLines: 999, extra: 1 }));
+  eq(got.prefs, { theme: "auto", lang: "zh", logLines: 200 });
+  eq(JSON.parse(got.seed), { v: 1, theme: "auto", lang: "zh", logLines: 200 });
+});
+
+check("no file and no legacy blob: defaults, nothing to seed", () => {
+  eq(P.prefsSource(null, null), { prefs: { theme: "auto", lang: "auto", logLines: 200 }, seed: null });
+  eq(P.prefsSource(null, ""), { prefs: { theme: "auto", lang: "auto", logLines: 200 }, seed: null });
+  eq(P.prefsSource("", "junk"), { prefs: { theme: "auto", lang: "auto", logLines: 200 }, seed: null });
+});
+
+check("an invalid legacy blob is ignored, not seeded", () => {
+  eq(P.prefsSource(null, "{not json"), { prefs: { theme: "auto", lang: "auto", logLines: 200 }, seed: null });
+  eq(P.prefsSource(null, "[1,2]"), { prefs: { theme: "auto", lang: "auto", logLines: 200 }, seed: null });
+});
+
+check("prefsParse reads the same shape from raw text", () => {
+  eq(P.prefsParse(JSON.stringify({ v: 1, theme: "dark", lang: "zh", logLines: 500 })),
+    { theme: "dark", lang: "zh", logLines: 500 });
+  eq(P.prefsParse("{not json"), { theme: "auto", lang: "auto", logLines: 200 });
+  eq(P.prefsParse(null), { theme: "auto", lang: "auto", logLines: 200 });
+});
+
+check("prefsSerialize normalises before persisting", () => {
+  eq(JSON.parse(P.prefsSerialize({ theme: "sepia", lang: "zh", logLines: 999, extra: 1 })),
+    { v: 1, theme: "auto", lang: "zh", logLines: 200 });
+  // 序列化→解析往返不丢字段。
+  eq(P.prefsParse(P.prefsSerialize({ theme: "dark", lang: "en", logLines: 100 })),
+    { theme: "dark", lang: "en", logLines: 100 });
+});
 
 check("no input at all: the defaults", () => {
   eq(P.prefsNormalize(null), { theme: "auto", lang: "auto", logLines: 200 });
@@ -129,60 +181,6 @@ check("a logLines given as a numeric string is coerced, not accepted blindly", (
 check("extra fields from a future version are dropped, not preserved", () => {
   eq(P.prefsNormalize({ theme: "dark", lang: "en", logLines: 100, v: 9, fontSize: 18 }),
     { theme: "dark", lang: "en", logLines: 100 });
-});
-
-check("a blob written before theme existed loads as auto", () => {
-  const store = memStore();
-  store.setItem("kernelray.prefs", JSON.stringify({ v: 1, lang: "zh", logLines: 500 }));
-  eq(P.prefsLoad(store), { theme: "auto", lang: "zh", logLines: 500 });
-});
-
-check("prefsLoad reads the kernelray.prefs key", () => {
-  const store = memStore();
-  store.setItem("kernelray.prefs",
-    JSON.stringify({ v: 1, theme: "dark", lang: "zh", logLines: 500 }));
-  eq(P.prefsLoad(store), { theme: "dark", lang: "zh", logLines: 500 });
-});
-
-check("prefsLoad with nothing stored returns the defaults", () => {
-  eq(P.prefsLoad(memStore()), { theme: "auto", lang: "auto", logLines: 200 });
-});
-
-check("prefsLoad survives invalid JSON and a null-ish store", () => {
-  const store = memStore();
-  store.setItem("kernelray.prefs", "{not json");
-  eq(P.prefsLoad(store), { theme: "auto", lang: "auto", logLines: 200 });
-  eq(P.prefsLoad(null), { theme: "auto", lang: "auto", logLines: 200 });
-  eq(P.prefsLoad(denyStore), { theme: "auto", lang: "auto", logLines: 200 });
-});
-
-check("prefsSave writes v/theme/lang/logLines and round-trips through prefsLoad", () => {
-  const store = memStore();
-  P.prefsSave(store, P.prefsNormalize({ theme: "dark", lang: "en", logLines: 100 }));
-  eq(JSON.parse(store.getItem("kernelray.prefs")),
-    { v: 1, theme: "dark", lang: "en", logLines: 100 });
-  eq(P.prefsLoad(store), { theme: "dark", lang: "en", logLines: 100 });
-});
-
-check("prefsSave normalises before persisting", () => {
-  const store = memStore();
-  P.prefsSave(store, { theme: "sepia", lang: "zh", logLines: 999, extra: 1 });
-  eq(JSON.parse(store.getItem("kernelray.prefs")),
-    { v: 1, theme: "auto", lang: "zh", logLines: 200 });
-});
-
-check("saving one pref does not drop the others", () => {
-  const store = memStore();
-  const prefs = P.prefsLoad(store);
-  prefs.lang = "zh";
-  P.prefsSave(store, prefs);
-  prefs.theme = "dark";
-  P.prefsSave(store, prefs);
-  eq(P.prefsLoad(store), { theme: "dark", lang: "zh", logLines: 200 });
-});
-
-check("prefsSave against a denied store does not throw", () => {
-  P.prefsSave(denyStore, { theme: "dark", lang: "zh", logLines: 200 });
 });
 
 check("the presets the Settings page offers are the ones normalise accepts", () => {

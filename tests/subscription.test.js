@@ -125,7 +125,7 @@ function posixPathEnv(extraDir) {
 function makeModule() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kernelray-sub-"));
   dirs.push(dir);
-  fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "config", "runtime"), { recursive: true });
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   fs.writeFileSync(path.join(stubs, "busybox"), fakeBusybox, "utf8");
@@ -133,8 +133,8 @@ function makeModule() {
   return {
     dir: dir,
     stubs: stubs,
-    url: path.join(dir, "runtime", "subfetch.url"),
-    raw: path.join(dir, "runtime", "subfetch.raw"),
+    url: path.join(dir, "config", "runtime", "subfetch.url"),
+    raw: path.join(dir, "config", "runtime", "subfetch.raw"),
     log: path.join(dir, "logs", "kernelray.log"),
     fetchLog: path.join(dir, "fetch.log")
   };

@@ -1,17 +1,19 @@
 import { T } from "./i18n.js";
 import { els } from "./els.js";
-import { exec, CLI, STATE, SUBFETCH_URL, hasBridge, writeFile, writeState } from "./bridge.js";
+import { exec, CLI, SUBFETCH_URL, hasBridge, writeFile, subFile, readState, readJsonDir, SUBS_DIR } from "./bridge.js";
 import { parseInput, identityOf, idOf, subIdOf } from "./parse.js";
 import { mergeSubscriptionNodes, nodeListModel, subGroupRows, subDeleteAllowed } from "./nodelist-model.js";
 import { busy, setBusy, toast, refreshPage } from "./main.js";
 import { coreRunning, setButtons } from "./status.js";
-import { lastStateObj, lastApplied, setLastStateObj, renderNodeList, findNodeById, switchTo, deleteNodes, subErrorText, agoText } from "./nodelist.js";
+import { lastStateObj, lastManual, lastSubs, lastApplied, setLastStateObj, renderNodeList, findNodeById, switchTo, deleteNodes, subErrorText, agoText } from "./nodelist.js";
 import { copyText, syncDialogScrollLock } from "./dialog.js";
 import { closeAdd } from "./import.js";
 
 // 订阅：一个产出节点的 URL。抓取在 shell 里做（WebView 的 fetch 是跨域的，
 // 机场不会给 CORS 头，而且 fetch 改不了 User-Agent），所以这里只负责：
-// 把 URL 交给 shell、拿回 body、解析、合并进 state.json。
+// 把 URL 交给 shell、拿回 body、解析、合并进订阅自己的文件
+// （config/subscriptions/<id>.json，节点内嵌其中）。state.json 与这里无关，
+// 除非自动应用的链条（ADR 0012）需要写 selected。
 // 刷新绝不渲染、绝不重启核心——只有用户按「应用」才会碰核心。
 
 var subDialogId = "";     // 订阅详情弹窗显示的订阅 id
@@ -20,12 +22,20 @@ var subDeleteConfirm = false;
 var subReveal = false;    // URL 是否明文显示
 var subSig = "";
 
-function findSub(state, id) {
-  var subs = state && Array.isArray(state.subscriptions) ? state.subscriptions : [];
-  for (var i = 0; i < subs.length; i++) {
-    if (subs[i] && String(subs[i].id) === String(id)) { return subs[i]; }
+function findSub(subs, id) {
+  var list = Array.isArray(subs) ? subs : [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && String(list[i].id) === String(id)) { return list[i]; }
   }
   return null;
+}
+
+// 把一份订阅写盘：裸订阅对象（id/name/url/nodes/lastFetched/lastError），
+// 节点内嵌其中。同一条订阅永远写在同一个文件里——改名只改内容，不改文件名。
+function writeSubFile(sub) {
+  var f = subFile(sub.id);
+  if (!f) { return Promise.reject(new Error("subscription has no usable id")); }
+  return writeFile(f, JSON.stringify(sub, null, 2) + "\n", "600");
 }
 
 // 名字的默认值：URL 的主机名。它通常没有信息量，但比一串哈希好，
@@ -95,12 +105,29 @@ function applyBody(sub, body) {
 
 // 失败时保留旧节点，只记下原因码；节点数为 0 的订阅由列表把原因
 // 渲染成一行（有节点的订阅只 toast，卡上靠"上次刷新"时间说明新旧）。
-function runFetch(state, sub) {
+// 成功与失败都重写整份订阅文件：节点内嵌，同身份的旧 id 由
+// mergeSubscriptionNodes 保留，字段真的变了才标 dirty。
+function runFetch(sub) {
+  var fail = function (e) {
+    var code = e && e.code ? e.code : "network";
+    var detail = code === "http" ? "http " + (e.http || "?") : code;
+    sub.lastError = detail;
+    return writeSubFile(sub).then(function () {
+      logSubLine("subscription refresh failed: " + detail);
+      var err = new Error(detail);
+      err.code = code;
+      err.http = e && e.http;
+      throw err;
+    });
+  };
   return fetchBody(sub.url).then(function (body) {
-    var out = applyBody(sub, body);
-    state.revision = (Number(state.revision) || 0) + 1;
-    return writeState(state).then(function () {
-      setLastStateObj(state);
+    var out;
+    try {
+      out = applyBody(sub, body);
+    } catch (e) {
+      return fail(e);
+    }
+    return writeSubFile(sub).then(function () {
       var msg = "subscription refresh: " + sub.nodes.length + " nodes (" +
         out.res.added + " new, " + out.res.updated + " updated, " +
         out.res.removed + " removed" +
@@ -109,18 +136,8 @@ function runFetch(state, sub) {
       return out;
     });
   }).catch(function (e) {
-    var code = e && e.code ? e.code : "network";
-    var detail = code === "http" ? "http " + (e.http || "?") : code;
-    sub.lastError = detail;
-    state.revision = (Number(state.revision) || 0) + 1;
-    return writeState(state).then(function () {
-      setLastStateObj(state);
-      logSubLine("subscription refresh failed: " + detail);
-      var err = new Error(detail);
-      err.code = code;
-      err.http = e && e.http;
-      throw err;
-    });
+    // 抓取/解析失败：旧节点保留，原因码写进同一份订阅文件。
+    return fail(e);
   });
 }
 
@@ -132,21 +149,8 @@ function firstApplyId(state) {
       findNodeById(state, state.selected)) {
     return state.selected;
   }
-  var model = nodeListModel(state, "", identityOf);
+  var model = nodeListModel(state, lastManual, lastSubs, "", identityOf);
   return model.rows.length ? model.rows[0].id : "";
-}
-
-function readState() {
-  return exec("cat " + STATE + " 2>/dev/null").then(function (r) {
-    var state = null;
-    try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
-    if (!state || typeof state !== "object" || Array.isArray(state)) {
-      state = { schema: 1, revision: 0, manual: [], subscriptions: [], selected: "" };
-    }
-    if (!Array.isArray(state.manual)) { state.manual = []; }
-    if (!Array.isArray(state.subscriptions)) { state.subscriptions = []; }
-    return state;
-  });
 }
 
 // 添加订阅：先建卡再抓取。抓取失败时卡片仍然在列表里，错误留在卡上，
@@ -165,21 +169,25 @@ function addSubscription(url, name) {
   setButtons();
   els.sAdd.disabled = true;
   readState().then(function (state) {
-    var sub = findSub(state, id);
-    if (!sub) {
-      sub = { id: id, name: label || hostOf(u), url: u, nodes: [], lastFetched: 0 };
-      state.subscriptions.push(sub);
-    } else {
-      // 同一个 URL 就是同一条订阅：重加是原地更新，不复制。
-      if (label) { sub.name = label; }
-      sub.url = u;
-    }
-    state.revision = (Number(state.revision) || 0) + 1;
-    return writeState(state).then(function () { setLastStateObj(state); });
-  }).then(function () {
-    return runFetch(lastStateObj, findSub(lastStateObj, id));
+    return readJsonDir(SUBS_DIR).then(function (subs) {
+      var sub = findSub(subs, id);
+      if (!sub) {
+        sub = { id: id, name: label || hostOf(u), url: u, nodes: [], lastFetched: 0 };
+        subs.push(sub);
+      } else {
+        // 同一个 URL 就是同一条订阅：重加是原地更新，不复制。
+        if (label) { sub.name = label; }
+        sub.url = u;
+      }
+      // 卡片先落盘再抓取（Q12=b）：失败时卡片已经在列表里，错误随后写进
+      // 同一份文件。state.json 不参与：订阅是 subscriptions/ 下的文件。
+      return writeSubFile(sub).then(function () {
+        setLastStateObj(state, null, subs);
+        return runFetch(sub);
+      });
+    });
   }).then(function (out) {
-    var sub = findSub(lastStateObj, id);
+    var sub = findSub(lastSubs, id);
     var n = sub && Array.isArray(sub.nodes) ? sub.nodes.length : 0;
     applyId = firstApplyId(lastStateObj);
     var msg = T.subAdded.replace("{n}", String(n));
@@ -187,10 +195,10 @@ function addSubscription(url, name) {
     toast(msg);
     closeAdd();
   }).catch(function (e) {
-    var sub = lastStateObj ? findSub(lastStateObj, id) : null;
+    var sub = findSub(lastSubs, id);
     var detail = sub && sub.lastError ? sub.lastError : ((e && e.code) || "network");
     toast(T.subAddFailed + ": " + subErrorText(detail, e && e.http));
-    // 卡片已经写进 state.json 时关掉弹窗：原因就在卡片上，用户点刷新
+    // 卡片已经写进 subscriptions/ 时关掉弹窗：原因就在卡片上，用户点刷新
     // 重试即可。写盘本身失败则留在弹窗里，URL 不至于丢掉。
     if (sub) { closeAdd(); }
   }).then(function () {
@@ -208,15 +216,14 @@ function addSubscription(url, name) {
 
 function refreshSubscription(subId) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var state = lastStateObj;
-  var sub = findSub(state, subId);
+  var sub = findSub(lastSubs, subId);
   if (!sub) { return; }
   var applyId = "";
   setBusy(true);
   setButtons();
   renderNodeList();
-  runFetch(state, sub).then(function (out) {
-    applyId = firstApplyId(state);
+  runFetch(sub).then(function (out) {
+    applyId = firstApplyId(lastStateObj);
     var msg = T.subRefreshed.replace("{n}", String(sub.nodes.length));
     if (out && out.failed) { msg += T.importFailedN.replace("{n}", String(out.failed)); }
     toast(msg);
@@ -234,14 +241,13 @@ function refreshSubscription(subId) {
 }
 
 function renameSubscription(subId, name) {
-  var state = lastStateObj;
-  var sub = findSub(state, subId);
+  var sub = findSub(lastSubs, subId);
   var v = String(name || "").trim();
   if (!sub || !v || v === sub.name) { return Promise.resolve(false); }
   sub.name = v;
-  state.revision = (Number(state.revision) || 0) + 1;
-  return writeState(state).then(function () {
-    setLastStateObj(state);
+  // 改名只重写内容：文件名由 id 定，不跟着改（id 是 url 的哈希，与
+  // 名字无关）。
+  return writeSubFile(sub).then(function () {
     renderNodeList();
     return true;
   });
@@ -249,10 +255,9 @@ function renameSubscription(subId, name) {
 
 function deleteSubscription(subId) {
   if (busy || !hasBridge || !lastStateObj) { return; }
-  var state = lastStateObj;
-  var sub = findSub(state, subId);
+  var sub = findSub(lastSubs, subId);
   if (!sub) { return; }
-  var model = nodeListModel(state, lastApplied, identityOf);
+  var model = nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf);
   if (!subDeleteAllowed(model, subId, coreRunning())) {
     toast(T.subDeleteRefused);
     return;

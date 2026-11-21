@@ -10,36 +10,43 @@
 
 ## 文件与写入者
 
+用户可见的配置全部住在模块目录的 `config/` 子目录里（目录 `0700`，文件一律 `0600`）；
+日志留在模块根的 `logs/`，不在 `config/` 里。
+
 | 路径 | 写入者 | 性质 |
 | --- | --- | --- |
-| `state.json` | WebUI | 用户意图：节点库与 `selected` |
-| `outbound.json` | WebUI | 被应用节点渲染成的 **一条** Xray 出站；`unapply` 会移除它 |
-| `outbound.meta` | WebUI | 该出站的 `id=<node-id>` 与 `host=<address>`；`unapply` 会移除它 |
-| `config.example.json` | 仓库 | 配置模板（本身不可运行） |
-| `config.json` | shell | 核心实际运行的配置 |
-| `state.json` → 渲染 | WebUI 写、shell 读 | 入站端口（`settings.socksPort` / `settings.httpPort`），渲染时提取（ADR 0009） |
-| `runtime/applied` | shell | `config.json` 由哪个节点 id 构建而来 |
-| `runtime/config.tested` | shell | 通过了 `xray -test` 的那些字节的副本（ADR 0017） |
-| `runtime/status.json` | shell | `state`、`phase`、`started`、`revision`、`node`、`route`、`boot`（写入它的那次开机；阅读方把别的开机的文件当 `idle`，docs/adr/0018） |
-| `runtime/route` | shell | 持久化的 分流模式，按文件内容读取：`cn` 或 `cnadblock`，不存在 = 全局；未设时安装器写入 `cnadblock`（docs/adr/0014、docs/adr/0021） |
-| `runtime/rules` | shell | 上一次真实规则存在性检查的开机范围缓存：状态轮询读它；安装/移除与缓存未命中写它；启动路径仍会问 iptables（docs/adr/0019） |
-| `runtime/loglevel` | shell | 持久化的 日志等级；不存在 = 警告（docs/adr/0015） |
+| `config/state.json` | WebUI | 用户意图：`selected` 与入站端口（节点库不在这里，见下两行） |
+| `config/nodes/<id>.json` | WebUI | 一个手工节点一个文件：裸节点对象（见 [`state-schema.md`](state-schema.md)） |
+| `config/subscriptions/<id>.json` | WebUI | 一条订阅一个文件：`{id,name,url,nodes[],lastFetched?,lastError?}`，节点内嵌 |
+| `config/webui/preferences.json` | WebUI | UI 偏好（主题、语言、日志行数） |
+| `config/outbound.json` | WebUI | 被应用节点渲染成的 **一条** Xray 出站；`unapply` 会移除它 |
+| `config/outbound.meta` | WebUI | 该出站的 `id=<node-id>` 与 `host=<address>`；`unapply` 会移除它 |
+| `config/config.example.json` | 仓库 | 配置模板（本身不可运行） |
+| `config/config.json` | shell | 核心实际运行的配置 |
+| `config/state.json` → 渲染 | WebUI 写、shell 读 | 入站端口（`settings.socksPort` / `settings.httpPort`），渲染时提取（ADR 0009） |
+| `config/runtime/applied` | shell | `config.json` 由哪个节点 id 构建而来 |
+| `config/runtime/config.tested` | shell | 通过了 `xray -test` 的那些字节的副本（ADR 0017） |
+| `config/runtime/status.json` | shell | `state`、`phase`、`started`、`revision`、`node`、`route`、`boot`（写入它的那次开机；阅读方把别的开机的文件当 `idle`，docs/adr/0018） |
+| `config/runtime/route` | shell | 持久化的 分流模式，按文件内容读取：`cn` 或 `cnadblock`，不存在 = 全局；未设时安装器写入 `cnadblock`（docs/adr/0014、docs/adr/0021） |
+| `config/runtime/rules` | shell | 上一次真实规则存在性检查的开机范围缓存：状态轮询读它；安装/移除与缓存未命中写它；启动路径仍会问 iptables（docs/adr/0019） |
+| `config/runtime/loglevel` | shell | 持久化的 日志等级；不存在 = 警告（docs/adr/0015） |
 | `bin/` | 仓库 | 核心与其加载的 geo 数据：`xray`、`geosite.dat`、`geoip.dat`（docs/adr/0014） |
 
-一文件一写入者：UI 绝不写 `config.json`、`runtime/applied` 或 `status.json`；shell 绝不写
-`state.json`、`outbound.json` 或 `outbound.meta`。唯一的例外是 `unapply`，它把渲染出的出站
-连同其余从已应用节点派生的东西一起移除
+一文件一写入者：UI 绝不写 `config/config.json`、`config/runtime/applied` 或
+`status.json`；shell 绝不写 `config/state.json`、`config/nodes/`、`config/subscriptions/`、
+`config/webui/preferences.json`、`config/outbound.json` 或 `config/outbound.meta`。唯一的
+例外是 `unapply`，它把渲染出的出站连同其余从已应用节点派生的东西一起移除
 （[ADR 0013](adr/0013-deleting-the-last-node-while-stopped-unapplies-it.md)），但绝不重写。
 这个划分不需要任何锁。
 
-`outbound.json` 含凭据；它与 `outbound.meta` 都以 `0600` 权限原子写入，和 `state.json`
-一样。`pack.sh` 把它们排除在外。
+`config/outbound.json` 含凭据；它与 `config/outbound.meta` 都以 `0600` 权限原子写入，和
+`config/state.json` 一样。`pack.sh` 把它们排除在外。
 
 ## 模板
 
-`module/config.example.json` 是固定的骨架：本地 socks/http 入站（其端口是带引号的占位符
-`"__KERNELRAY_SOCKS_PORT__"` / `"__KERNELRAY_HTTP_PORT__"`，渲染时替换成 `state.json` 的
-`settings` 里的端口，默认 10808/10809），以及四条出站 —
+`module/config/config.example.json` 是固定的骨架：本地 socks/http 入站（其端口是带引号的
+占位符 `"__KERNELRAY_SOCKS_PORT__"` / `"__KERNELRAY_HTTP_PORT__"`，渲染时替换成
+`config/state.json` 的 `settings` 里的端口，默认 10808/10809），以及四条出站 —
 
 ```json
 "outbounds": [
@@ -58,7 +65,7 @@
   没有它 `kr_render_config` 拒绝渲染 — 核心绝不运行不是从已应用节点推导出的配置
   （[ADR 0010](adr/0010-the-core-only-runs-an-applied-nodes-config.md)）。
 - `"loglevel": "__KERNELRAY_LOGLEVEL__"` 在每次渲染时替换为 日志等级 偏好
-  （`runtime/loglevel`，默认 警告）。值在拼入前经过校验，缺该占位符的模板与缺端口占位符的
+  （`config/runtime/loglevel`，默认 警告）。值在拼入前经过校验，缺该占位符的模板与缺端口占位符的
   模板一样被拒绝。
 - 接管占位符用同一手法，每行一个、各自带前置逗号：`inbounds` 里的
   `,"__KERNELRAY_TPROXY_INBOUND__"`、`outbounds` 里的 `,"__KERNELRAY_DNS_OUTBOUND__"`，加上
@@ -151,15 +158,15 @@ scripts/kernelray.sh apply <node-id>
 
 shell 这边：
 
-1. 趁旧节点还能用时钉住节点的主机地址（`runtime/nodeip`，ADR 0008）— 解析需要能用的网络，
+1. 趁旧节点还能用时钉住节点的主机地址（`config/runtime/nodeip`，ADR 0008）— 解析需要能用的网络，
    渲染需要解析的结果；
 2. 向 `kr_config_candidate <id>` 要这次切换将运行的配置。它检查 id、检查 `outbound.meta` 的
-   `id` 与之相等，把模板 + 出站渲染进 `runtime/config.new.json`，并对其跑
+   `id` 与之相等，把模板 + 出站渲染进 `config/runtime/config.new.json`，并对其跑
    `xray run -test -c`，输出进 `logs/xray.log` — **仅当那些字节与 `config.json` 不同**。
    相同（重新应用同一节点）时整个步骤零成本，手势到此结束：不测试、不停止、不重启；
-3. `kr_swap_install` 记住核心是否在运行，把旧配置存为 `runtime/config.json.prev`，若核心
-   在运行则停止它，原子 `mv` 候选为 `config.json`，chmod `0600`，记录 tested 标记并写
-   `runtime/applied`；
+3. `kr_swap_install` 记住核心是否在运行，把旧配置存为 `config/runtime/config.json.prev`，若核心
+   在运行则停止它，原子 `mv` 候选为 `config/config.json`，chmod `0600`，记录 tested 标记并写
+   `config/runtime/applied`；
 4. `kr_swap_start` 若之前核心在运行则启动它。新配置起不来时，`kr_swap_rollback` 恢复
    `config.json.prev` 和旧的已应用 id，再启动旧配置 — 若那次启动也没能回来，则移除换入
    拉起的规则，所以失败的换入绝不会留下一个没有核心、却带着活捕获的设备；
@@ -170,7 +177,7 @@ shell 这边：
 | 失败 | 结果 |
 | --- | --- |
 | 渲染错误、meta 不匹配、出站缺失 | 什么都没停、什么都没换；CLI 以非零退出 |
-| 磁盘字节已是该节点的配置 | 不测试、不停止、不重启；仅重新同步 `runtime/applied` |
+| 磁盘字节已是该节点的配置 | 不测试、不停止、不重启；仅重新同步 `config/runtime/applied` |
 | `xray -test` 拒绝候选 | 旧配置与运行中的核心原封不动；CLI 以非零退出 |
 | 候选启动成功 | 已应用 id 与 `status.json` 指向新节点 |
 | 候选启动失败 | 恢复旧配置 + 旧已应用 id，启动旧配置；CLI 以非零退出 |
@@ -202,7 +209,7 @@ toast 显示。只有失败的 **启动** 才让状态失败，恢复路径在�
 ## 应用入站端口
 
 在设置页保存端口是一个形如节点应用的手势：UI 校验这对值（1–65535、互不相同、绝不许是
-tproxy 的 10810），写 `state.json` 的 `settings`（意图先行），然后调用 `kernelray.sh
+tproxy 的 10810），写 `config/state.json` 的 `settings`（意图先行），然后调用 `kernelray.sh
 ports`。shell 重渲染配置 — 用的是已应用节点的出站，账目对不上时拒绝 — 没有已应用 id、
 或 `outbound.meta` 指向别的节点，而不是渲染别的什么。随后经与 `apply` 相同的 备份 → 停止
 → 换入 → 重启 → 回滚 路径测试并换入。已应用 id 不动：端口改的是本地入站，从不改出站。
@@ -228,7 +235,7 @@ WebUI 的 启动 或 `kernelray.sh start` 运行。其他一切之前，启动�
 - 它从 `outbound.json` 渲染并与 `config.json` 比较字节。字节相同则原样不动（不测试、不
   写入）；不同则测试并换入。这就是全部的漂移修复：日志等级变化和 geo 数据消失都会改变
   渲染字节，所以谁都不需要自己的检测器；
-- `outbound.meta` 指向与 `runtime/applied` 不同的节点时 — 一次失败的切换，UI 已经写好
+- `config/outbound.meta` 指向与 `config/runtime/applied` 不同的节点时 — 一次失败的切换，UI 已经写好
   *下一个* 节点 — 磁盘上的配置是已应用节点唯一的描述，于是原样接受，走同一个
   `xray -test` 闸门。完全没有渲染出站时，磁盘配置不可能描述任何东西，于是改为拒绝启动
   （"在 WebUI 重新点按该节点"）；
@@ -238,21 +245,26 @@ WebUI 的 启动 或 `kernelray.sh start` 运行。其他一切之前，启动�
 
 启动本身不再跑 `xray -test`：它 fork 的配置就是标记说测过的那份（ADR 0017）。
 
-升级整体替换模块目录（ADR 0002），所以配置、出站和已应用 id 一起重置。
+模块更新不再重置这些：KernelSU/Magisk 把更新暂存在 `modules_update/<id>`，旧目录在重启
+换包前原封不动；`customize.sh` 在此期间把旧安装的 `config/` 整树复制进新安装，再删掉其中
+的启动期临时文件（`config/runtime/` 下的 `status.json`、`xray.pid`、`started`、`rules`、
+`nodeip`、`watch.lock`、`subfetch.url`，以及 `config.tested` — 新核心要在下一次启动重新
+通过 `xray -test`）。`config/` 里其余一切 — 节点库、订阅、`selected`、端口、偏好、
+`config.json` 与渲染出站 — 都活过更新；`logs/` 不保留，随更新重置。
 
 ## 分流模式 (routing mode)
 
 `kernelray.sh routing global|cn|cnadblock` 写偏好并立即重新推导配置
 （[ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)、
 [ADR 0021](adr/0021-ad-blocking-is-a-third-routing-mode.md)）：渲染新形态 → `xray -test`
-→ 写 `runtime/route` → 换入（`ports` 路径，含其停止、重启和回滚）。`global` 就是文件不
+→ 写 `config/runtime/route` → 换入（`ports` 路径，含其停止、重启和回滚）。`global` 就是文件不
 存在；`cn` 和 `cnadblock` 写自己的名字加一个换行，权限 `0600` — 文件是值，不是存在标志。
 
 - **拒绝。** geo 数据缺失或 `-test` 拒绝候选时，`routing cn` 和 `routing cnadblock` 以非零
   退出、什么都不改。失败的换入在回滚启动旧配置 *之前* 就把偏好恢复为旧模式，因为那次启动
   会从模式重新推导配置 — 只恢复字节不恢复偏好只会把失败的模式再渲染一遍（ADR 0017）。
 - **没有已应用节点。** 没有可重渲染的东西：偏好照写，下一次应用时渲染它。
-- **默认。** `runtime/route` 尚未设置时安装器写 `cnadblock`（`kr_route_default`），geo 数据
+- **默认。** `config/runtime/route` 尚未设置时安装器写 `cnadblock`（`kr_route_default`），geo 数据
   缺失时跳过 — 此时 全局 保持为模式，因为一个核心拒绝以其启动的默认值，比一个少做事的
   默认值更糟（docs/adr/0021）。用户的 全局 是文件不存在，所以下一次安装或更新会重建默认。
 - **降级。** 渲染可以用的由 `kr_route_effective` 决定：仅当 `bin/geosite.dat` 和
@@ -281,16 +293,17 @@ WebUI 的 启动 或 `kernelray.sh start` 运行。其他一切之前，启动�
 
 ## 不变量
 
-- `state.selected` 是意图；`runtime/applied` 是事实。UI 两者都显示，绝不等同它们。
+- `state.selected` 是意图；`config/runtime/applied` 是事实。UI 两者都显示，绝不等同它们。
 - 节点出站 tag 为 `proxy` 且只带 `__KERNELRAY_MARK__` 占位符。在 Android 上，没有匹配
   ip 规则的任意 `SO_MARK` 会丢路由（验证过：去掉 mark 之前节点的 Reality 握手失败）。
   shell 恰好在规则在位时把占位符变成旁路标记；只有模板里固定的 `direct` 出站带字面 mark，
   且核心未被接管时它不使用。
 - `config.json` 绝不手改、绝不进 ZIP。
-- 核心绝不运行不是从已应用节点推导出的配置：每次渲染需要 `outbound.json`，每次启动需要
-  `runtime/applied`，过去会产出直连（freedom）配置的每一条回退都已移除（ADR 0010）。
+- 核心绝不运行不是从已应用节点推导出的配置：每次渲染需要 `config/outbound.json`，每次启动需要
+  `config/runtime/applied`，过去会产出直连（freedom）配置的每一条回退都已移除（ADR 0010）。
 - `xray -test` 先于每次换入；失败的候选绝不替换能用的配置。
 - 每次切换一次渲染一次测试：配置只渲染一次，来自调用方声明的意图，启动复用换入已测试的
   字节（ADR 0017）。
-- `config.json` 只从模块目录内的文件生成：模板、出站、`state.json` 的端口、两个偏好文件
-  和 `bin/`。运行时不联网拉取任何东西，也不导出资源路径：核心从它所在的目录读数据。
+- `config.json` 只从 `config/` 目录内的文件生成：模板（`config.example.json`）、出站、
+  `state.json` 的端口、两个偏好文件；核心与 geo 数据在 `bin/`。运行时不联网拉取任何东西，
+  也不导出资源路径：核心从它所在的目录读数据。

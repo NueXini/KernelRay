@@ -3,18 +3,25 @@
 #
 # 布局契约：
 #   一切都在模块目录 (/data/adb/modules/KernelRay) 里：机构、核心、
-#   用户配置、节点库、日志和运行时状态。目录之外什么都不写，所以
-#   卸载模块不留残余——而模块更新会整体替换
-#   整个目录，config/state 随之重置（见 docs/adr/0002）。
+#   用户配置、节点库、日志和运行时状态。用户可见的配置全部住在
+#   config/ 里（目录 0700，其中每个文件 0600）：state.json、渲染出的
+#   config.json、渲染出的出站（outbound.json/outbound.meta）、随包
+#   发行的模板 config.example.json，以及 WebUI 拥有的子树 nodes/、
+#   subscriptions/、webui/ 和 runtime/。目录之外什么都不写（下载目录
+#   的诊断包是唯一例外），所以卸载模块不留残余。
+#   模块更新不再重置 config/state：KernelSU/Magisk 把更新装进暂存
+#   目录，customize.sh 在换入之前把旧安装的 config/ 整树拷贝进来
+#   （见 customize.sh 的「更新存活」块）。
 #
 # 安装时覆盖 KR_MODDIR：customize.sh 把它设为 $MODPATH。
 
 KR_ID=KernelRay
 KR_MODDIR=${KR_MODDIR:-/data/adb/modules/KernelRay}
+KR_CONFDIR=$KR_MODDIR/config
 KR_BINDIR=$KR_MODDIR/bin
-KR_CONF=$KR_MODDIR/config.json
+KR_CONF=$KR_CONFDIR/config.json
 KR_LOGDIR=$KR_MODDIR/logs
-KR_RUNDIR=$KR_MODDIR/runtime
+KR_RUNDIR=$KR_CONFDIR/runtime
 KR_LOG=$KR_LOGDIR/xray.log
 # 限制核心日志大小：启动在核心追加之前先轮转。只保留一代，
 # 每次被替换；可覆盖，便于测试轮转一个小文件。
@@ -24,10 +31,10 @@ KR_PIDFILE=$KR_RUNDIR/xray.pid
 KR_STARTED=$KR_RUNDIR/started
 KR_STATUS=$KR_RUNDIR/status.json
 KR_VERFILE=$KR_RUNDIR/version
-KR_TMPL=$KR_MODDIR/config.example.json
-KR_STATE=$KR_MODDIR/state.json
-KR_OUTBOUND=$KR_MODDIR/outbound.json
-KR_OUTBOUND_META=$KR_MODDIR/outbound.meta
+KR_TMPL=$KR_CONFDIR/config.example.json
+KR_STATE=$KR_CONFDIR/state.json
+KR_OUTBOUND=$KR_CONFDIR/outbound.json
+KR_OUTBOUND_META=$KR_CONFDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
 KR_LOGLEVEL=$KR_RUNDIR/loglevel
 # 最近一次通过 `xray -test` 的磁盘字节原样副本：启动据此跳过一次
@@ -126,10 +133,15 @@ kr_log_rotate() { # <文件> [上限]
 }
 
 kr_dirs() {
-  mkdir -p "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
+  # config/ 及其子树：WebUI 的子目录（nodes/、subscriptions/、webui/）
+  # 只由这里创建——shell 是它们的读者不是写者（ADR 0013），但目录
+  # 必须在位，UI 首次写入才不需要自己 mkdir。
+  mkdir -p "$KR_LOGDIR" "$KR_CONFDIR" "$KR_CONFDIR/nodes" \
+    "$KR_CONFDIR/subscriptions" "$KR_CONFDIR/webui" "$KR_RUNDIR" 2>/dev/null
   # 模块目录本身保持安装时的权限；只收紧我们自己的子目录。
-  chmod 700 "$KR_LOGDIR" "$KR_RUNDIR" 2>/dev/null
-  chmod 600 "$KR_CONF" "$KR_MODDIR/state.json" \
+  chmod 700 "$KR_LOGDIR" "$KR_CONFDIR" "$KR_CONFDIR/nodes" \
+    "$KR_CONFDIR/subscriptions" "$KR_CONFDIR/webui" "$KR_RUNDIR" 2>/dev/null
+  chmod 600 "$KR_CONF" "$KR_STATE" \
     "$KR_OUTBOUND" "$KR_OUTBOUND_META" "$KR_APPLIED" "$KR_LOGLEVEL" \
     "$KR_CONF_TESTED" 2>/dev/null
   [ -n "${KR_ROUTE:-}" ] && chmod 600 "$KR_ROUTE" 2>/dev/null
@@ -417,8 +429,7 @@ kr_setting_port() { # <键> <默认值>
 }
 
 # 日志等级（docs/adr/0015）：shell 的偏好，如同分流模式。文件不存在即
-# 默认 警告，所以模块更新（替换 runtime/）
-# 会重置它，未知值回退到 警告，而不是把坏级别烘进核心会拒绝的
+# 默认 警告，未知值回退到 警告，而不是把坏级别烘进核心会拒绝的
 # 配置里。
 KR_LOGLEVEL_DEFAULT=warning
 

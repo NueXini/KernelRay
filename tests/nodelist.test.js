@@ -2,10 +2,14 @@
 //
 // 两个代码块都位于 module/webroot/js/nodelist-model.js 中；本测试框架从随包发布的文件里抽取带标记的
 // 代码块，与 tests/parse.test.js 抽取解析器的做法完全一致。节点列表是
-// 纯映射：state.json + runtime/applied → 行；删除门控与取消应用决策是这些行
-// 加上核心是否在运行这一事实的纯函数；导入切换规则则是纯的
-// 决策：由 state.json + runtime/applied 得出 id；弹窗按钮状态是纯的节点 + 指针映射，
-// 因此它们都无需浏览器即可运行。
+// 纯映射：state.json（selected）+ 节点文件列表 + 订阅文件列表 + runtime/applied
+// → 行；删除门控与取消应用决策是这些行加上核心是否在运行这一事实的纯函数；
+// 导入切换规则则是纯的决策：由节点列表 + selected + runtime/applied 得出 id；
+// 弹窗按钮状态是纯的节点 + 指针映射，因此它们都无需浏览器即可运行。
+//
+// 新的存储布局下 state.json 不再持有节点库：手工节点是 nodes/<id>.json、
+// 订阅是 subscriptions/<id>.json（节点内嵌），所以这里的输入是
+// (state, manual[], subs[], applied) 四样东西，而不是一个胖 state 对象。
 //
 //   运行：node tests/nodelist.test.js
 
@@ -60,10 +64,16 @@ function node(id, extra) {
   return Object.assign({ id: id, name: "node-" + id, protocol: "vless", address: "h", port: 443 }, extra || {});
 }
 
-function state(manual, selected, extra) {
+// state.json 只剩意图：selected 与 settings。节点库本体是 manual[]
+// （nodes/ 目录的文件）与 subs[]（subscriptions/ 目录的文件，节点内嵌）。
+function state(selected, extra) {
   return Object.assign({
-    schema: 1, revision: 1, manual: manual, subscriptions: [], selected: selected || ""
+    schema: 1, revision: 1, selected: selected || ""
   }, extra || {});
+}
+
+function sub(id, nodes) {
+  return { id: id, name: "sub-" + id, url: "https://sub.example/" + id, nodes: nodes || [] };
 }
 
 // 把各行压缩成概要，这样失败时能看出究竟是什么发生了变化。
@@ -74,25 +84,25 @@ function rows(model) {
 }
 
 check("null state: no rows and no dangling pointers", () => {
-  const model = L.nodeListModel(null, "");
+  const model = L.nodeListModel(null, [], [], "");
   eq(rows(model), []);
   eq([model.empty, model.appliedKnown, model.selectedKnown], [true, true, true]);
 });
 
 check("empty store: no rows", () => {
-  const model = L.nodeListModel(state([], ""), "");
+  const model = L.nodeListModel(state(""), [], [], "");
   eq(rows(model), []);
   eq(model.empty, true);
 });
 
 check("store order is kept", () => {
-  const model = L.nodeListModel(state([node("a"), node("b"), node("c")], ""), "");
+  const model = L.nodeListModel(state(""), [node("a"), node("b"), node("c")], [], "");
   eq(model.rows.map(function (row) { return row.id; }), ["a", "b", "c"]);
   eq(model.empty, false);
 });
 
 check("applied node is marked and is a no-op tap", () => {
-  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a"), node("b")], [], "a");
   eq(rows(model), [
     ["a", true, true, false, false, true],
     ["b", false, false, false, false, false]
@@ -101,12 +111,12 @@ check("applied node is marked and is a no-op tap", () => {
 });
 
 check("a dirty applied node is not a no-op tap", () => {
-  const model = L.nodeListModel(state([node("a", { dirty: true })], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a", { dirty: true })], [], "a");
   eq(rows(model), [["a", true, true, true, false, false]]);
 });
 
 check("selected but not applied: the failed-switch state", () => {
-  const model = L.nodeListModel(state([node("a"), node("b")], "b"), "a");
+  const model = L.nodeListModel(state("b"), [node("a"), node("b")], [], "a");
   eq(rows(model), [
     ["a", true, false, false, false, true],
     ["b", false, true, false, true, false]
@@ -114,34 +124,31 @@ check("selected but not applied: the failed-switch state", () => {
 });
 
 check("selected id that is not in the store is reported", () => {
-  const model = L.nodeListModel(state([node("a")], "gone"), "a");
+  const model = L.nodeListModel(state("gone"), [node("a")], [], "a");
   eq(model.selectedKnown, false);
   eq(model.rows[0].selected, false);
 });
 
 check("applied id that is not in the store is reported", () => {
-  const model = L.nodeListModel(state([node("a")], ""), "gone");
+  const model = L.nodeListModel(state(""), [node("a")], [], "gone");
   eq(model.appliedKnown, false);
   eq(model.rows[0].applied, false);
 });
 
 check("malformed manual entries are ignored", () => {
-  const model = L.nodeListModel(
-    state([null, {}, { id: "" }, { id: null }, node("a")], ""), "");
+  const model = L.nodeListModel(state(""),
+    [null, {}, { id: "" }, { id: null }, node("a")], [], "");
   eq(model.rows.map(function (row) { return row.id; }), ["a"]);
 });
 
-check("a non-array manual store is treated as empty", () => {
-  const model = L.nodeListModel({ schema: 1, selected: "", manual: "nope" }, "");
+check("malformed manual/sub lists are treated as empty", () => {
+  const model = L.nodeListModel(state("nope"), "nope", "nope", "");
   eq(rows(model), []);
   eq(model.empty, true);
 });
 
 check("subscription nodes render under their own group", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [node("a")],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x"), node("y")] }]
-  }, "");
+  const model = L.nodeListModel(state(""), [node("a")], [sub("s1", [node("x"), node("y")])], "");
   eq(model.rows.map(function (row) { return row.id; }), ["a", "x", "y"]);
   eq(model.groups.map(function (g) { return [g.kind, g.id, g.rows.length]; }),
     [["manual", "", 1], ["sub", "s1", 2]]);
@@ -149,22 +156,13 @@ check("subscription nodes render under their own group", () => {
 });
 
 check("a subscription node shadowed by a manual node renders once, in the manual group", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [node("same")],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("same"), node("y")] }]
-  }, "");
+  const model = L.nodeListModel(state(""), [node("same")], [sub("s1", [node("same"), node("y")])], "");
   eq(model.rows.map(function (row) { return row.id; }), ["same", "y"]);
   eq(model.groups[1].shadowed, 1);
 });
 
 check("the same node from two subscriptions renders once, the first one wins", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "",
-    subscriptions: [
-      { id: "s1", name: "one", nodes: [node("x")] },
-      { id: "s2", name: "two", nodes: [node("x")] }
-    ]
-  }, "");
+  const model = L.nodeListModel(state(""), [], [sub("s1", [node("x")]), sub("s2", [node("x")])], "");
   eq(model.rows.map(function (row) { return row.id; }), ["x"]);
   eq(model.groups.map(function (g) { return g.rows.length; }), [1, 0]);
   eq(model.groups[1].shadowed, 1);
@@ -172,68 +170,45 @@ check("the same node from two subscriptions renders once, the first one wins", (
 
 check("dedupe follows the injected identity, not the id", () => {
   const keyOf = function (n) { return n.name; };
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [node("old", { name: "same" })],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("new", { name: "same" })] }]
-  }, "", keyOf);
+  const model = L.nodeListModel(state(""), [node("old", { name: "same" })],
+    [sub("s1", [node("new", { name: "same" })])], "", keyOf);
   eq(model.rows.map(function (row) { return row.id; }), ["old"]);
   eq(model.groups[1].shadowed, 1);
 });
 
 check("a subscription with no nodes still has a group and is not an empty store", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [] }]
-  }, "");
+  const model = L.nodeListModel(state(""), [], [sub("s1", [])], "");
   eq([model.empty, model.hasSubs, model.groups.length], [false, true, 1]);
 });
 
 check("an applied node that only exists in a subscription is still applied", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "x", manual: [],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "x");
+  const model = L.nodeListModel(state("x"), [], [sub("s1", [node("x")])], "x");
   eq([model.rows[0].applied, model.rows[0].noop, model.appliedKnown, model.selectedKnown],
     [true, true, true, true]);
 });
 
 check("an applied node gone from every subscription reads as unknown", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "gone");
+  const model = L.nodeListModel(state(""), [], [sub("s1", [node("x")])], "gone");
   eq([model.appliedKnown, model.appliedId], [false, "gone"]);
 });
 
 check("sub delete: allowed when the subscription holds no applied node", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [node("a")],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "a");
+  const model = L.nodeListModel(state(""), [node("a")], [sub("s1", [node("x")])], "a");
   eq([L.subDeleteAllowed(model, "s1", false), L.subDeleteAllowed(model, "s1", true)], [true, true]);
 });
 
 check("sub delete: refused while the applied node lives in it and the core runs", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "x", manual: [],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "x");
+  const model = L.nodeListModel(state("x"), [], [sub("s1", [node("x")])], "x");
   eq(L.subDeleteAllowed(model, "s1", true), false);
 });
 
 check("sub delete: the last subscription is deletable when the core is stopped", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "x", manual: [],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "x");
+  const model = L.nodeListModel(state("x"), [], [sub("s1", [node("x")])], "x");
   eq(L.subDeleteAllowed(model, "s1", false), true);
 });
 
 check("sub delete: refused when other rows would survive the applied node's removal", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "x", manual: [node("a")],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "x");
+  const model = L.nodeListModel(state("x"), [node("a")], [sub("s1", [node("x")])], "x");
   eq(L.subDeleteAllowed(model, "s1", false), false);
 });
 
@@ -278,7 +253,7 @@ check("merge: duplicates inside one feed are dropped", () => {
 });
 
 check("applied comparison uses the string form of the id", () => {
-  const model = L.nodeListModel(state([node("7")], "7"), "7");
+  const model = L.nodeListModel(state("7"), [node("7")], [], "7");
   eq(model.rows[0].applied, true);
   eq(model.rows[0].noop, true);
 });
@@ -291,45 +266,42 @@ function batch(model, checks, allowApplied) {
 }
 
 check("batch: subscription rows are never checkable", () => {
-  const model = L.nodeListModel({
-    schema: 1, selected: "", manual: [node("a")],
-    subscriptions: [{ id: "s1", name: "sub", nodes: [node("x")] }]
-  }, "");
+  const model = L.nodeListModel(state(""), [node("a")], [sub("s1", [node("x")])], "");
   eq(batch(model, { x: true, a: true }, false), [["a"], ["a"], true]);
 });
 
 check("batch: the applied node never joins the checkable set", () => {
-  const model = L.nodeListModel(state([node("a"), node("b"), node("c")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a"), node("b"), node("c")], [], "a");
   eq(batch(model, {}), [["b", "c"], [], false]);
 });
 
 check("batch: checked ids follow the check set", () => {
-  const model = L.nodeListModel(state([node("a"), node("b"), node("c")], ""), "");
+  const model = L.nodeListModel(state(""), [node("a"), node("b"), node("c")], [], "");
   eq(batch(model, { b: true, c: true }), [["a", "b", "c"], ["b", "c"], false]);
 });
 
 check("batch: every checkable id checked means allChecked", () => {
-  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a"), node("b")], [], "a");
   eq(batch(model, { b: true }), [["b"], ["b"], true]);
 });
 
 check("batch: stale check ids that lost their row are ignored", () => {
-  const model = L.nodeListModel(state([node("a")], ""), "");
+  const model = L.nodeListModel(state(""), [node("a")], [], "");
   eq(batch(model, { a: true, gone: true }), [["a"], ["a"], true]);
 });
 
 check("batch: no checkable rows is never allChecked", () => {
-  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a")], [], "a");
   eq(batch(model, {}), [[], [], false]);
 });
 
 check("batch: empty list is never allChecked", () => {
-  const model = L.nodeListModel(state([], ""), "");
+  const model = L.nodeListModel(state(""), [], [], "");
   eq(batch(model, {}), [[], [], false]);
 });
 
 check("batch: the delete gate lets the applied last row join", () => {
-  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a")], [], "a");
   eq(batch(model, {}, true), [["a"], [], false]);
   eq(batch(model, { a: true }, true), [["a"], ["a"], true]);
 });
@@ -337,99 +309,97 @@ check("batch: the delete gate lets the applied last row join", () => {
 // ---- 删除门控（ADR 0013） ----
 
 check("gate: the applied node is deletable when it is the last row and the core is stopped", () => {
-  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a")], [], "a");
   eq(L.deleteGate(model, false), true);
 });
 
 check("gate: a running core refuses the applied node", () => {
-  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a")], [], "a");
   eq(L.deleteGate(model, true), false);
 });
 
 check("gate: a list with another node still in it refuses the applied node", () => {
-  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a"), node("b")], [], "a");
   eq(L.deleteGate(model, false), false);
 });
 
 check("gate: a last row that is not applied is deleted without the gate", () => {
-  const model = L.nodeListModel(state([node("a")], ""), "gone");
+  const model = L.nodeListModel(state(""), [node("a")], [], "gone");
   eq(L.deleteGate(model, false), false);
   eq(L.deleteGate(model, true), false);
 });
 
 check("gate: an empty list has nothing to delete", () => {
-  const model = L.nodeListModel(state([], ""), "");
+  const model = L.nodeListModel(state(""), [], [], "");
   eq(L.deleteGate(model, false), false);
 });
 
 // ---- 取消应用决策 ----
 
 check("unapply: deleting the whole list while the core is stopped", () => {
-  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a")], [], "a");
   eq(L.willUnapply(model, ["a"], false), true);
 });
 
 check("unapply: a running core is never unapplied", () => {
-  const model = L.nodeListModel(state([node("a")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a")], [], "a");
   eq(L.willUnapply(model, ["a"], true), false);
 });
 
 check("unapply: deleting one of several nodes leaves the applied one alone", () => {
-  const model = L.nodeListModel(state([node("a"), node("b")], "a"), "a");
+  const model = L.nodeListModel(state("a"), [node("a"), node("b")], [], "a");
   eq(L.willUnapply(model, ["b"], false), false);
 });
 
 check("unapply: an emptied list with a dangling applied id is unapplied too", () => {
-  const model = L.nodeListModel(state([node("b")], "b"), "gone");
+  const model = L.nodeListModel(state("b"), [node("b")], [], "gone");
   eq(L.willUnapply(model, ["b"], false), true);
 });
 
 check("unapply: a partial delete with a dangling applied id does not unapply", () => {
-  const model = L.nodeListModel(state([node("b"), node("c")], "b"), "gone");
+  const model = L.nodeListModel(state("b"), [node("b"), node("c")], [], "gone");
   eq(L.willUnapply(model, ["b"], false), false);
 });
 
 check("unapply: an already empty list has nothing to unapply", () => {
-  const model = L.nodeListModel(state([], ""), "");
+  const model = L.nodeListModel(state(""), [], [], "");
   eq(L.willUnapply(model, [], false), false);
 });
 
 // ---- 导入切换规则（ADR 0012） ----
 
 check("import into a store with nothing applied switches the first node", () => {
-  eq(L.applyAfterImport(state([node("a"), node("b")], ""), ""), "a");
+  eq(L.applyAfterImport([node("a"), node("b")], "", ""), "a");
 });
 
 check("import with a node already applied switches nothing", () => {
-  eq(L.applyAfterImport(state([node("a"), node("b")], ""), "a"), "");
+  eq(L.applyAfterImport([node("a"), node("b")], "", "a"), "");
 });
 
 check("import into an empty store switches nothing", () => {
-  eq(L.applyAfterImport(state([], ""), ""), "");
+  eq(L.applyAfterImport([], "", ""), "");
 });
 
 check("import skips entries the list cannot render", () => {
-  eq(L.applyAfterImport(state([{ id: "" }, null, node("b")], ""), ""), "b");
+  eq(L.applyAfterImport([{ id: "" }, null, node("b")], "", ""), "b");
 });
 
 check("a selection that still resolves wins over the first node", () => {
-  eq(L.applyAfterImport(state([node("a"), node("b")], "b"), ""), "b");
+  eq(L.applyAfterImport([node("a"), node("b")], "b", ""), "b");
 });
 
 check("a dangling selection falls back to the first node", () => {
-  eq(L.applyAfterImport(state([node("a")], "gone"), ""), "a");
+  eq(L.applyAfterImport([node("a")], "gone", ""), "a");
 });
 
 check("a selection pointing at a subscription node falls back to the first node", () => {
-  const s = {
-    schema: 1, selected: "s1", manual: [node("a")],
-    subscriptions: [{ name: "sub", nodes: [node("s1")] }]
-  };
-  eq(L.applyAfterImport(s, ""), "a");
+  // 订阅节点在切换规则里不参与：selected 若指向订阅里的节点（例如刚导入
+  // 时的 "x"），而手工库里没有它，就回落到第一行。
+  eq(L.applyAfterImport([node("a")], "x", ""), "a");
 });
 
-check("a malformed store switches nothing", () => {
-  eq(L.applyAfterImport({ schema: 1, manual: "nope" }, ""), "");
+check("a malformed manual list switches nothing", () => {
+  eq(L.applyAfterImport("nope", "", ""), "");
 });
 
 // ---- 节点详情弹窗的按钮状态 ----

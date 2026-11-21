@@ -42,13 +42,15 @@ rm -f "$zip"
 
 cd "$mod"
 if command -v zip >/dev/null 2>&1; then
-  # 用户数据在运行时住在模块目录里；绝不打进 zip。
+  # 用户数据在运行时住在 config/ 里；绝不打进 zip。模板
+  # config/config.example.json 必须发行——核心渲染靠它。
   zip -qr "$zip" . -x 'bin/README.md' -x '*.DS_Store' \
-    -x 'config.json' -x 'state.json' -x 'outbound.json' -x 'outbound.meta' \
-    -x 'logs/*' -x 'runtime/*'
+    -x 'config/state.json' -x 'config/config.json' -x 'config/outbound.json' -x 'config/outbound.meta' \
+    -x 'config/nodes/*' -x 'config/subscriptions/*' -x 'config/webui/*' -x 'config/runtime/*'
 elif command -v 7z >/dev/null 2>&1; then
-  7z a -tzip -bso0 -bsp0 "$zip" . -x'!bin/README.md' -x'!config.json' \
-    -x'!state.json' -x'!outbound.json' -x'!outbound.meta' -x'!logs/*' -x'!runtime/*' >/dev/null
+  7z a -tzip -bso0 -bsp0 "$zip" . -x'!bin/README.md' \
+    -x'!config/state.json' -x'!config/config.json' -x'!config/outbound.json' -x'!config/outbound.meta' \
+    -x'!config/nodes/*' -x'!config/subscriptions/*' -x'!config/webui/*' -x'!config/runtime/*' >/dev/null
 else
   echo "error: need zip or 7z on PATH" >&2
   exit 1

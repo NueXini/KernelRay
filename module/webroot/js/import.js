@@ -1,7 +1,7 @@
 import { T } from "./i18n.js";
 import { els } from "./els.js";
 import { busy, setBusy, toast, refreshPage } from "./main.js";
-import { exec, CLI, STATE, hasBridge, writeState } from "./bridge.js";
+import { exec, CLI, NODES_DIR, hasBridge, writeFile, nodeFile, readJsonDir, readState } from "./bridge.js";
 import { parseInput, identityOf, idOf } from "./parse.js";
 import { applyAfterImport } from "./nodelist-model.js";
 import { lastStateObj, lastApplied, setLastStateObj, findNodeById, switchTo, renderNodeList } from "./nodelist.js";
@@ -13,17 +13,19 @@ import { dialogId, dialogBusy, syncDialogScrollLock } from "./dialog.js";
 // 重新导入会原地更新节点并保留其 id，因此当前节点与所有指向它的引用
 // 都能存活；只有真正新的身份才追加。对节点库建一份索引，
 // 使导入 N 个节点是 O(N)，而不是每节点都扫一遍列表。
-function mergeNodes(state, nodes) {
-  if (!state.schema) { state.schema = 1; }
-  if (!Array.isArray(state.manual)) { state.manual = []; }
-  if (!Array.isArray(state.subscriptions)) { state.subscriptions = []; }
+// manual 现在是内存里的节点列表（nodes/ 下每节点一个文件）；命中同一
+// 身份的原地更新（保留 id、标 dirty），否则追加。返回 touched：
+// 需要（重新）落盘的节点，由调用方逐个写 nodes/<id>.json。
+function mergeNodes(manual, nodes) {
+  manual = Array.isArray(manual) ? manual : [];
   var byIdentity = Object.create(null);
-  state.manual.forEach(function (n) {
+  manual.forEach(function (n) {
     if (!n || !n.protocol || !n.address) { return; }
     var ident = identityOf(n);
     if (!byIdentity[ident]) { byIdentity[ident] = n; }
   });
   var added = 0, updated = 0;
+  var touched = [];
   nodes.forEach(function (n) {
     delete n.dupOf;
     var ident = identityOf(n);
@@ -36,14 +38,16 @@ function mergeNodes(state, nodes) {
       // 列表会一直标记它，直到下一次成功应用清除该标记。
       existing.dirty = true;
       updated++;
+      touched.push(existing);
     } else {
       n.id = n.id || idOf(n);
-      state.manual.push(n);
+      manual.push(n);
       byIdentity[ident] = n;
       added++;
+      touched.push(n);
     }
   });
-  return { added: added, updated: updated };
+  return { manual: manual, added: added, updated: updated, touched: touched };
 }
 
 function previewLine(text, cls) {
@@ -117,32 +121,38 @@ function doImport() {
   setBusy(true);
   setButtons();
   els.iApply.disabled = true;
-  exec("cat " + STATE + " 2>/dev/null").then(function (r) {
-    var state = null;
-    try { state = JSON.parse((r.stdout || "").trim()); } catch (e) { state = null; }
-    if (!state || typeof state !== "object" || Array.isArray(state)) {
-      state = { schema: 1, revision: 0, manual: [], subscriptions: [], selected: "" };
-    }
-    var res = mergeNodes(state, ok.map(function (x) { return x.node; }));
-    state.revision = (Number(state.revision) || 0) + 1;
-    return writeState(state).then(function () {
-      // 页面必须持有刚写入的内容：switchTo 会读 lastStateObj，若拿着旧副本，
-      // 重新导入的节点在自身应用成功后仍会被标记为有改动。
-      setLastStateObj(state);
-      nextId = applyAfterImport(state, lastApplied);
-      logNodeLine(importLogLine(res.added, res.updated, bad.length));
-      var msg = T.importDone + " " + res.added;
-      if (res.updated) { msg += T.importUpdated + " " + res.updated; }
-      if (!bad.length) {
-        toast(msg);
-        closeAdd();
-        refreshPage();
-      } else {
-        // 文本保留以便编辑；重新导入是安全的，因为 mergeNodes 按身份更新，
-        // 而不是复制出重复项。
-        toast(msg + T.importFailedN.replace("{n}", String(bad.length)));
-        renderFailedRows(bad);
-      }
+  // 读当前状态与节点库：合并必须在最新的手工列表上做（孤儿文件也是成员）。
+  readState().then(function (state) {
+    return readJsonDir(NODES_DIR).then(function (manual) {
+      return mergeNodes(manual, ok.map(function (x) { return x.node; }));
+    }).then(function (res) {
+      // 节点文件先落盘（ADR 0012 的意图次序）：崩溃留下的孤儿文件是
+      // 可容忍的——节点存在 = 文件存在；反过来先写 state 再写文件，
+      // 崩溃会留下指向不存在节点的 selected。state.json 只在 selected
+      // 变化时写（revision 一起 +1），由 switchTo 的链条完成。
+      var writes = res.touched.filter(function (n) { return !!nodeFile(n.id); })
+        .map(function (n) {
+          return writeFile(nodeFile(n.id), JSON.stringify(n, null, 2) + "\n", "600");
+        });
+      return Promise.all(writes).then(function () {
+        // 页面必须持有刚写入的内容：switchTo 会读 lastStateObj，若拿着旧副本，
+        // 重新导入的节点在自身应用成功后仍会被标记为有改动。
+        setLastStateObj(state, res.manual);
+        nextId = applyAfterImport(res.manual, state.selected, lastApplied);
+        logNodeLine(importLogLine(res.added, res.updated, bad.length));
+        var msg = T.importDone + " " + res.added;
+        if (res.updated) { msg += T.importUpdated + " " + res.updated; }
+        if (!bad.length) {
+          toast(msg);
+          closeAdd();
+          refreshPage();
+        } else {
+          // 文本保留以便编辑；重新导入是安全的，因为 mergeNodes 按身份更新，
+          // 而不是复制出重复项。
+          toast(msg + T.importFailedN.replace("{n}", String(bad.length)));
+          renderFailedRows(bad);
+        }
+      });
     });
   }).catch(function (e) {
     nextId = "";

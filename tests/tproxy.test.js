@@ -18,7 +18,7 @@ const { execFileSync } = require("child_process");
 
 const root = path.join(__dirname, "..");
 const script = path.join(root, "module", "scripts", "kernelray.sh");
-const template = path.join(root, "module", "config.example.json");
+const template = path.join(root, "module", "config", "config.example.json");
 
 const ID = "0123456789abcdef";
 
@@ -144,11 +144,12 @@ function posixPathEnv(extraDir) {
 function makeModule() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kernelray-tp-"));
   dirs.push(dir);
-  fs.copyFileSync(template, path.join(dir, "config.example.json"));
+  fs.mkdirSync(path.join(dir, "config"), { recursive: true });
+  fs.copyFileSync(template, path.join(dir, "config", "config.example.json"));
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), fakeCore, "utf8");
   fs.chmodSync(path.join(dir, "bin", "xray"), 0o755);
-  fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "config", "runtime"), { recursive: true });
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(root, "module", "scripts", "tproxy.sh"),
     path.join(dir, "scripts", "tproxy.sh"));
@@ -161,11 +162,11 @@ function makeModule() {
   }
   return {
     dir: dir,
-    config: path.join(dir, "config.json"),
-    outbound: path.join(dir, "outbound.json"),
-    meta: path.join(dir, "outbound.meta"),
-    applied: path.join(dir, "runtime", "applied"),
-    status: path.join(dir, "runtime", "status.json"),
+    config: path.join(dir, "config", "config.json"),
+    outbound: path.join(dir, "config", "outbound.json"),
+    meta: path.join(dir, "config", "outbound.meta"),
+    applied: path.join(dir, "config", "runtime", "applied"),
+    status: path.join(dir, "config", "runtime", "status.json"),
     log: path.join(dir, "logs", "kernelray.log")
   };
 }
@@ -207,7 +208,7 @@ function fakeLog(m) {
 }
 
 function rulesPath(m) {
-  return path.join(m.dir, "runtime", "rules");
+  return path.join(m.dir, "config", "runtime", "rules");
 }
 
 const BODY_INSTALL = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_install';
@@ -466,7 +467,7 @@ check("start: xray -test runs before the rules go in, and a good config takes ov
     eq(cfg.inbounds.length, 3, "tproxy inbound present");
     eq(cfg.outbounds[0].streamSettings.sockopt.mark, 19282, "live mark");
     eq(cfg.routing.rules.some((r) => r.outboundTag === "dns-out"), true, "dns rule present");
-    if (fs.existsSync(path.join(m.dir, "runtime", "config.form"))) {
+    if (fs.existsSync(path.join(m.dir, "config", "runtime", "config.form"))) {
       throw new Error("there is no form to record any more");
     }
     eq(status(m).state, "running", "state");
@@ -547,8 +548,8 @@ check("stop: a stop with no core running removes crashed-core leftovers", () => 
 check("switch: no switch API survives, and a leftover file is removed by a start", () => {
   const m = makeModule();
   writeApplied(m);
-  fs.writeFileSync(path.join(m.dir, "runtime", "tproxy"), "off\n");
-  fs.writeFileSync(path.join(m.dir, "runtime", "config.form"), "0\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "tproxy"), "off\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "config.form"), "0\n");
   const gone = runAllow(m,
     '. "$KR_TEST_SCRIPT"; for f in kr_tp_switch_on kr_tproxy_set kr_tp_default_on kr_tp_form; do' +
     ' command -v "$f" >/dev/null 2>&1 && echo STILL-THERE $f; done');
@@ -559,7 +560,7 @@ check("switch: no switch API survives, and a leftover file is removed by a start
   // 陈旧偏好或形态都影响不了一次启动（docs/adr/0011）。
   withBoot(m, {}, () => {
     for (const leftover of ["tproxy", "config.form"]) {
-      if (fs.existsSync(path.join(m.dir, "runtime", leftover))) {
+      if (fs.existsSync(path.join(m.dir, "config", "runtime", leftover))) {
         throw new Error("a leftover " + leftover + " must be removed");
       }
     }
@@ -581,7 +582,7 @@ check("switch: tproxy status reports the rules only, and status.json has no tpro
 check("pin: the DoH answer via wget lands in runtime/nodeip, with the ask on record", () => {
   const m = makeModule();
   writeApplied(m);
-  const nodeip = path.join(m.dir, "runtime", "nodeip");
+  const nodeip = path.join(m.dir, "config", "runtime", "nodeip");
   runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_pin_node',
     { FAKE_WGET_JSON: '{"Status":0,"Answer":[{"type":1,"data":"203.0.113.9"}]}' });
   eq(fs.readFileSync(nodeip, "utf8").trim(), "203.0.113.9", "nodeip content");
@@ -606,7 +607,7 @@ check("pin: a failed DoH ask logs the fallback and answers nothing", () => {
   const m = makeModule();
   writeApplied(m);
   const out = runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_pin_node');
-  if (fs.existsSync(path.join(m.dir, "runtime", "nodeip"))) {
+  if (fs.existsSync(path.join(m.dir, "config", "runtime", "nodeip"))) {
     throw new Error("nothing to pin, nodeip must not exist");
   }
   if (out.includes("pinned node address")) { throw new Error("nothing was pinned"); }

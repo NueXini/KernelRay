@@ -74,8 +74,9 @@ ls -l build/                  # 确认时间戳是刚才的，别推了旧包
 `versionCode=YYMMDD` 写进 `module.prop`，不用手改，忘改版本号这件事不可能发生。
 同一天重打包会得到同名 ZIP，`rm -f` 旧的直接覆盖。
 
-有核心时约 12 MB。ZIP 内容是 `module/` 的**根**，并排除 `config.json`/`state.json`/
-`outbound.json`/`outbound.meta`/`logs/`/`runtime/`（都是设备上的运行数据）。
+有核心时约 12 MB。ZIP 内容是 `module/` 的**根**，并排除设备上的运行数据：`config/` 下生成的
+`config.json`、`state.json`、`outbound.json`、`outbound.meta` 与 `config/runtime/`，以及
+`logs/`（模板 `config/config.example.json` 随包发布）。
 
 ## 3. 推包到设备
 
@@ -131,15 +132,16 @@ done
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh start'
 # 2) 进程只应有一个，且指向模块目录里的二进制
 adb -s $D shell 'ps -A -o PID,ARGS | grep "[x]ray run"'
-#  houdini64 /data/adb/modules/KernelRay/bin/xray ... run -c /data/adb/modules/KernelRay/config.json
+#  houdini64 /data/adb/modules/KernelRay/bin/xray ... run -c /data/adb/modules/KernelRay/config/config.json
 
 # 3) 模块自报状态；node= 是已应用节点（没应用时为空）
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh status'
 #  state=running  phase=idle  pid=...  node=...  conf=...  log=...
 
-# 4) 文件都在模块目录里，权限正确
-adb -s $D shell 'ls -l /data/adb/modules/KernelRay/{state.json,config.json,outbound.json,outbound.meta,logs,runtime}'
-adb -s $D shell 'cat /data/adb/modules/KernelRay/runtime/applied 2>/dev/null'   # 空 = 直连
+# 4) 用户配置都在 config/ 里（目录 0700，文件 0600），权限正确
+adb -s $D shell 'ls -l /data/adb/modules/KernelRay/config'
+adb -s $D shell 'ls -l /data/adb/modules/KernelRay/config/{state.json,config.json,outbound.json,outbound.meta,nodes,subscriptions,runtime} /data/adb/modules/KernelRay/logs'
+adb -s $D shell 'cat /data/adb/modules/KernelRay/config/runtime/applied 2>/dev/null'   # 空 = 直连
 
 # 5) 真的在转发（不是只看进程活着）
 adb -s $D forward tcp:11080 tcp:10808
@@ -183,8 +185,8 @@ adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh stop"'
 
 ```sh
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh status' | grep node=
-adb -s $D shell 'cat /data/adb/modules/KernelRay/runtime/applied'
-adb -s $D shell 'sed -n "1,20p" /data/adb/modules/KernelRay/config.json'   # 第一个 outbound 是节点
+adb -s $D shell 'cat /data/adb/modules/KernelRay/config/runtime/applied'
+adb -s $D shell 'sed -n "1,20p" /data/adb/modules/KernelRay/config/config.json'   # 第一个 outbound 是节点
 ```
 
 切换的失败语义：`xray -test` 失败时旧配置和运行中的核心**都不动**，只在 UI 里弹错误；
@@ -194,7 +196,7 @@ adb -s $D shell 'sed -n "1,20p" /data/adb/modules/KernelRay/config.json'   # 第
 `docs/config-derivation.md`。
 
 **选中 ≠ 已应用（只在切换失败时）**：正常路径下在弹窗里点「应用」就同时改了 `selected` 和
-`runtime/applied`。切换失败时列表会把刚应用的行标成“未应用”、原节点仍显示“已应用”。
+`config/runtime/applied`。切换失败时列表会把刚应用的行标成“未应用”、原节点仍显示“已应用”。
 重新导入保留 id 时该行会显示“有改动”，打开弹窗点「重新应用」即可。
 
 **tproxy（v0.7，启动即接管）**：没有开关。每次启动核心都接管——冲突检测 → pin 节点 → 渲染并
@@ -214,7 +216,7 @@ adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh tproxy s
 重启或卸载——已经没有“关掉开关”这条路了。
 
 **分流模式**：**立即生效**——写偏好 → 重渲染 → `-test` →
-重启核心，启动失败会把偏好一起退回。偏好是 `runtime/route`，内容是模式名（`cn` / `cnadblock`，
+重启核心，启动失败会把偏好一起退回。偏好是 `config/runtime/route`，内容是模式名（`cn` / `cnadblock`，
 不存在 = `global`）；安装时若还没设过，安装器会写成 `cnadblock`（缺 geo 数据时跳过，留 `全局`）：
 
 ```sh
@@ -223,7 +225,7 @@ adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing 
 # 大陆直连去广告: mode=cnadblock / effective=cnadblock / geodata=ok（数据缺失时 effective 也不降级）
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing cn'
 adb -s $D shell 'su -c /data/adb/modules/KernelRay/scripts/kernelray.sh routing cnadblock'
-adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/KernelRay/config.json"'
+adb -s $D shell 'su -c "grep -o geosite:cn /data/adb/modules/KernelRay/config/config.json"'
 adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.com"'
 ```
 
@@ -233,7 +235,7 @@ adb -s $D shell 'su -c "curl -sS -o /dev/null -w %{remote_ip} https://www.baidu.
 CLI 同样拒绝切换，而偏好已是 `cnadblock` 时**启动会被拒绝**（`failed config-invalid`，模块日志一行、
 stderr 一句 `geo data missing`，WebUI toast 同一句）——缺数据时它绝不降级成 `大陆直连`。
 
-**日志等级**：只写 `runtime/loglevel`，**下次启动核心时生效**（ADR 0015）；运行中的核心要
+**日志等级**：只写 `config/runtime/loglevel`，**下次启动核心时生效**（ADR 0015）；运行中的核心要
 Stop→Start，停着的核心下次 Start 就带上。`warning` 是默认值（文件不存在），`loglevel status`
 看 `level` / `active` / `pending`：
 
@@ -245,7 +247,7 @@ adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh status"
 # loglevel=debug  loglevelpending=1（核心在跑，配置还是旧的）
 adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh stop"'
 adb -s $D shell 'su -c "/data/adb/modules/KernelRay/scripts/kernelray.sh start"'
-adb -s $D shell 'su -c "grep loglevel /data/adb/modules/KernelRay/config.json"'
+adb -s $D shell 'su -c "grep loglevel /data/adb/modules/KernelRay/config/config.json"'
 #     "loglevel": "debug",    → 再 status 应 pending=0
 ```
 
@@ -268,8 +270,10 @@ adb -s $D shell 'su -c "grep loglevel /data/adb/modules/KernelRay/config.json"'
 
 ```sh
 # 升级 = 重打包（pack.sh 自动把 versionCode 跳到当天日期）→ 重复 2~6 步
-#   注意：模块目录被整体替换，state.json / config.json / outbound.json /
-#   outbound.meta / logs / runtime 会被清空（docs/adr/0002）
+#   注意：用户配置不再被更新清空：KernelSU 把更新暂存在 modules_update/<id>，重启换包前
+#   旧目录原封不动；customize.sh 在此期间把旧安装的 config/ 整树复制进新安装，再删掉其中
+#   的启动期临时文件（config/runtime/ 下的 status.json、xray.pid、started、rules、nodeip、
+#   watch.lock、subfetch.url、config.tested）。logs/ 不保留，随更新重置。
 
 # 卸载（只是打标记，重启才真正删）
 adb -s $D shell 'su -c "ksud module uninstall KernelRay"'
@@ -286,7 +290,7 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 | 安装成功但版本没变 | 没重启，包还在 `modules_update` |
 | `phase=no-core` / `failed` | `bin/xray` 缺失或不可执行（x86_64 模拟器靠 houdini64 翻译 ARM 二进制） |
 | 出现两个 `xray run` | WebUI 和终端可能同时 start；靠 `mkdir` 原子锁 + 清理残留进程兜住 |
-| 状态轮询卡顿 | `xray -version` 在 ARM 翻译下要 0.44s；已缓存到 `runtime/version`，正常一次 0.05s |
+| 状态轮询卡顿 | `xray -version` 在 ARM 翻译下要 0.44s；已缓存到 `config/runtime/version`，正常一次 0.05s |
 | `uname -m` 显示 aarch64 但设备是 x86_64 | 模拟器的 ARM 翻译；不要据此挑架构，只有一个 arm64 二进制 |
 | `push` 报错、路径变成 `C:/...` | MSYS 路径改写，用 `//data/...` 或 `MSYS_NO_PATHCONV=1` |
 | `logcat` 里搜不到 kernelray | WebUI/CLI 的输出不进 logcat；看 `logs/xray.log` 或 `kernelray.sh log 50` |
@@ -298,7 +302,7 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 | 列表某行显示“未应用” | 上次切换失败，`selected` 留在那一行；打开它点「应用」就是重试 |
 | 列表某行显示“有改动” | 重新导入保留了 id，但运行配置还是旧的；打开弹窗点「重新应用」 |
 | 点了已应用节点的「应用」但没反应 | 正常：没有字段变化，只会同步 `selected`，不会重启核心 |
-| `node=` 为空但配置里有代理 | `runtime/applied` 丢了或没写；打开节点再点一次「应用」，别手改 `config.json` |
+| `node=` 为空但配置里有代理 | `config/runtime/applied` 丢了或没写；打开节点再点一次「应用」，别手改 `config.json` |
 
 ## 11. 一条命令走完（复制粘贴用）
 

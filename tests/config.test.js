@@ -20,7 +20,7 @@ const { execFileSync } = require("child_process");
 
 const root = path.join(__dirname, "..");
 const script = path.join(root, "module", "scripts", "kernelray.sh");
-const template = path.join(root, "module", "config.example.json");
+const template = path.join(root, "module", "config", "config.example.json");
 
 const ID = "0123456789abcdef";
 const OTHER_ID = "fedcba9876543210";
@@ -125,14 +125,15 @@ function shPath(p) {
 function makeModule(core) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kernelray-conf-"));
   dirs.push(dir);
-  fs.copyFileSync(template, path.join(dir, "config.example.json"));
+  fs.mkdirSync(path.join(dir, "config"), { recursive: true });
+  fs.copyFileSync(template, path.join(dir, "config", "config.example.json"));
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, "bin", "xray"), core || fakeCore, "utf8");
   // 在 Git Bash 里 [ -x ] 把 shebang 当作可执行魔数，所以缺少执行位只会在 Linux CI
   // 上出问题；真实设备上安装的二进制本来就是可执行的（tproxy.test.js 也
   // 同样处理）。
   fs.chmodSync(path.join(dir, "bin", "xray"), 0o755);
-  fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "config", "runtime"), { recursive: true });
   // 由于 kernelray.sh 从 $KR_MODDIR/scripts 加载接管辅助函数，夹具里必须放进
   // 真正的 tproxy.sh 才能走接管的渲染路径。
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
@@ -173,14 +174,14 @@ function makeModule(core) {
   return {
     dir: dir,
     stubs: stubs,
-    config: path.join(dir, "config.json"),
-    state: path.join(dir, "state.json"),
-    outbound: path.join(dir, "outbound.json"),
-    meta: path.join(dir, "outbound.meta"),
-    applied: path.join(dir, "runtime", "applied"),
-    status: path.join(dir, "runtime", "status.json"),
-    loglevel: path.join(dir, "runtime", "loglevel"),
-    rules: path.join(dir, "runtime", "rules")
+    config: path.join(dir, "config", "config.json"),
+    state: path.join(dir, "config", "state.json"),
+    outbound: path.join(dir, "config", "outbound.json"),
+    meta: path.join(dir, "config", "outbound.meta"),
+    applied: path.join(dir, "config", "runtime", "applied"),
+    status: path.join(dir, "config", "runtime", "status.json"),
+    loglevel: path.join(dir, "config", "runtime", "loglevel"),
+    rules: path.join(dir, "config", "runtime", "rules")
   };
 }
 
@@ -379,7 +380,7 @@ check("render: tproxy inbound, dns module and routing are spliced in", () => {
 check("render: a pinned node address lands in the dns hosts", () => {
   const m = makeModule();
   writeOutbound(m);
-  fs.writeFileSync(path.join(m.dir, "runtime", "nodeip"), "203.0.113.9\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "nodeip"), "203.0.113.9\n");
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.dns.hosts, { "full:n.example.com": "203.0.113.9" }, "hosts pin");
   eq(cfg.routing.rules[0].outboundTag, "direct", "bootstrap rule kept");
@@ -432,7 +433,7 @@ check("render: there is one form, so the form machinery is gone", () => {
 
 check("a template without the placeholder is refused", () => {
   const m = makeModule();
-  fs.writeFileSync(path.join(m.dir, "config.example.json"), '{"outbounds":[]}\n');
+  fs.writeFileSync(path.join(m.dir, "config", "config.example.json"), '{"outbounds":[]}\n');
   const r = runFail(m.dir, BODY_RENDER, [""]);
   if (!/placeholder/.test(r.stdout + r.stderr)) {
     throw new Error("expected a placeholder error, got: " + (r.stdout + r.stderr));
@@ -545,7 +546,7 @@ check("render: the log level comes from runtime/loglevel, defaulting to warning"
 check("render: a template without the log level placeholder is refused", () => {
   const m = makeModule();
   writeOutbound(m);
-  const tmpl = path.join(m.dir, "config.example.json");
+  const tmpl = path.join(m.dir, "config", "config.example.json");
   const t = JSON.parse(fs.readFileSync(tmpl, "utf8"));
   delete t.log.loglevel;
   fs.writeFileSync(tmpl, JSON.stringify(t));
@@ -868,9 +869,9 @@ check("status: an invalid applied file is reported as no node", () => {
 check("status: a core that died on its own is reported as crashed, not as the stale phase", () => {
   const m = makeModule();
   fs.writeFileSync(m.applied, ID + "\n");
-  fs.writeFileSync(path.join(m.dir, "runtime", "started"),
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "started"),
     String(Math.floor(Date.now() / 1000)) + "\n");
-  fs.writeFileSync(path.join(m.dir, "runtime", "xray.pid"), "999999\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "xray.pid"), "999999\n");
   runShell(m.dir, BODY_STATUS, ["running", "idle"]);
   const kv = runShell(m.dir, '. "$KR_TEST_SCRIPT"; kr_status_kv');
   if (!/^state=stopped$/m.test(kv)) { throw new Error("state: " + kv); }
@@ -918,7 +919,7 @@ check("status: a status.json from an earlier boot reads as idle, not as its old 
     state: "running", phase: "failed/rules", started: 1, revision: 0,
     node: ID, tproxy: "on", route: "global", boot: "the-previous-boot"
   }) + "\n");
-  fs.writeFileSync(path.join(m.dir, "runtime", "xray.pid"), "999999\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "xray.pid"), "999999\n");
   const kv = runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
   if (!/^phase=idle$/m.test(kv)) {
@@ -934,7 +935,7 @@ check("status: a pidfile written by this boot is still evidence of a crash", () 
     state: "running", phase: "idle", started: 1, revision: 0,
     node: ID, tproxy: "on", route: "global", boot: "the-current-boot"
   }) + "\n");
-  fs.writeFileSync(path.join(m.dir, "runtime", "xray.pid"), "999999\n");
+  fs.writeFileSync(path.join(m.dir, "config", "runtime", "xray.pid"), "999999\n");
   const kv = runShell(m.dir,
     '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv');
   if (!/^phase=crashed$/m.test(kv)) {
@@ -1260,7 +1261,7 @@ check("apply: the bytes already on disk are neither tested nor restarted", () =>
   const m = makeModule(countingCore);
   const log = path.join(m.dir, "tests.log");
   const env = { FAKE_TEST_LOG: shPath(log) };
-  const pidFile = path.join(m.dir, "runtime", "xray.pid");
+  const pidFile = path.join(m.dir, "config", "runtime", "xray.pid");
   try {
     writeOutbound(m);
     runShell(m.dir, BODY_APPLY, [ID], env);
@@ -1280,7 +1281,7 @@ check("ports: saving the ports that are already rendered restarts nothing", () =
   const m = makeModule(countingCore);
   const log = path.join(m.dir, "tests.log");
   const env = { FAKE_TEST_LOG: shPath(log) };
-  const pidFile = path.join(m.dir, "runtime", "xray.pid");
+  const pidFile = path.join(m.dir, "config", "runtime", "xray.pid");
   try {
     // 配置模板自带的默认值：保存它们不改变任何一个字节。
     writeStatePorts(m, { socksPort: 10808, httpPort: 10809 });
@@ -1473,7 +1474,7 @@ check("log: a start rotates the core log over the cap", () => {
 check("render: a template without the inbound port placeholders is refused", () => {
   const m = makeModule();
   writeOutbound(m);
-  const tmpl = path.join(m.dir, "config.example.json");
+  const tmpl = path.join(m.dir, "config", "config.example.json");
   const t = JSON.parse(fs.readFileSync(tmpl, "utf8"));
   delete t.inbounds[0].port;
   fs.writeFileSync(tmpl, JSON.stringify(t));

@@ -1,5 +1,8 @@
-// 主题与语言一样都是设置页的偏好：它与语言共用 WebView 的 localStorage 里同一份
-// `kernelray.prefs` 数据，绝不进入 state.json。
+// 主题与语言一样都是设置页的偏好：偏好的事实来源是桥接侧的
+// config/webui/preferences.json（js/prefs.js 维护）；本文件读的
+// `kernelray.prefs` localStorage 键只是首屏前的镜像——偏好文件要经桥接
+// 异步读取，而首帧等不了。prefs.js 每次保存都会同步这份镜像，
+// 所以首屏读到的就是用户所选；它也还是无桥接环境的回退路径。
 //
 // 本文件在 <head> 中、body 绘制之前加载，因此第一帧就已带上所选配色 —— 深色页面在
 // 加载 app.js 期间不能闪出浅色；app.js 复用这里的函数，不重复键名，也不会重复
@@ -37,7 +40,8 @@ function readThemePref(store) {
   } catch (e) { return "auto"; }
 }
 
-// 受限的 WebView 里连 localStorage 本身也可能抛异常；此时该偏好只在本次会话内有效。
+// 受限的 WebView 里连 localStorage 本身也可能抛异常；此时首屏用默认配色，
+// 等 js/prefs.js 读回偏好文件后再纠正。
 function prefStore() {
   try { return window.localStorage; } catch (e) { return null; }
 }
