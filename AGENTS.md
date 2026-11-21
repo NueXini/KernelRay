@@ -6,6 +6,7 @@
 - Never reference ADRs from user-facing docs (`README.md`): no `docs/adr/` links, no "ADR 0020". Keep any reasoning a reader needs in plain words.
 - Scripts and tests print their console and error output in English. UI strings in the i18n dictionaries (DICT_ZH/DICT_EN) are app content, not output.
 - Write LF line endings in every file you create or edit (shell, JS, HTML, CSS, JSON, Markdown, etc.).
+- Choose persisted data formats by their consumers: data read and written only by module shell code must use `key=value` pairs (`.env` syntax); data exchanged with the WebUI must use JSON.
 
 ## Git Commits
 
