@@ -33,7 +33,9 @@ index.html 的 link 顺序拼接，对照拆分前的 `tests/fixtures/app.css`�
 `config.test.js` 用临时模块目录 + 假核心 source 发布的 `kernelray.sh`，覆盖模板拼装、
 特殊字符转义、单一渲染形态、apply/unapply 的失败路径、清空日志 CLI 和启动回滚；假核心只在回滚和 unapply 拒绝用例里
 运行，用 `/proc` 识别进程。`tproxy.test.js` 用假 iptables/ip 跑规则安装/删除、
-冲突检测和启动顺序（先 `-test` 再装规则；接管装不上就不起核心）。
+冲突检测和启动顺序（先 `-test` 再装规则；接管装不上就不起核心）。`subdialog.test.js`
+用最小 DOM shim + 假 `window.ksu` 桥跑真实的 ES 模块图（拷进临时目录声明 type=module），
+模拟组头 `⋯` 按钮的委托点击——弹窗逻辑与 DOM 耦合，标记块抽取够不到这条路径。
 
 反过来的次序也成立：做拆文件这类等价性重构时，先给现状立守卫（golden 快照、
 等价性比对）再动手，改完守卫必须回到绿。css 拆分当天没这么做，层叠翻转

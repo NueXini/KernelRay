@@ -291,7 +291,7 @@ els.nToolbar.addEventListener("click", function (e) {
   var t = e.target;
   var act = t && t.getAttribute ? t.getAttribute("data-action") : "";
   if (act === "checkall") {
-    var model = nodeListModel(lastStateObj, lastApplied, identityOf);
+    var model = nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf);
     var bm = batchModel(model, checkSet, deleteGate(model, coreRunning()));
     if (bm.allChecked) {
       bm.checkableIds.forEach(function (id) { setCheck(id, false); });

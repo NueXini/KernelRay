@@ -308,9 +308,9 @@ function closeSubDialog() {
 
 function renderSubDialog() {
   if (!subDialogId) { return; }
-  var sub = findSub(lastStateObj, subDialogId);
+  var sub = findSub(lastSubs, subDialogId);
   if (!sub) { closeSubDialog(); return; }
-  var model = nodeListModel(lastStateObj, lastApplied, identityOf);
+  var model = nodeListModel(lastStateObj, lastManual, lastSubs, lastApplied, identityOf);
   var rows = subGroupRows(model, subDialogId);
   var sig = [sub.name || "", sub.url || "", sub.lastFetched || 0, sub.lastError || "",
     lastApplied || "", rows.length,
