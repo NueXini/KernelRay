@@ -41,9 +41,12 @@ const fakeIpt = [
   "  exit 0",
   "fi",
   'case "$*" in',
+  '  *"-C KR_TP_OUTPUT"*"--dport 53 -j REJECT"*) [ -n "$FAKE_IPT_NO_SENTINEL" ] && exit 1 ;; # chain is an older shape',
   '  *-nL*) [ -n "$FAKE_IPT_NOCHAIN" ] && exit 1 ;;',
   '  *-C*) [ -n "$FAKE_IPT_NOCHAIN" ] && exit 1 ;; # the hook rule is not there yet',
-  '  *"-N KR_TP_OUTPUT"*) [ -n "$FAKE_IPT_FAIL_N" ] && exit 1 ;;',
+  '  *"-N KR_TP_OUTPUT"*) { [ -n "$FAKE_IPT_FAIL_N" ] || [ -n "$FAKE_IPT_CHAIN_EXISTS" ]; } && exit 1 ;;',
+  '  *"-F KR_TP_OUTPUT"*) [ -n "$FAKE_IPT_FAIL_N" ] && exit 1 ;; # a chain that exists but cannot be cleared',
+  '  *"-A KR_TP_OUTPUT"*--reject-with*) [ -n "$FAKE_IPT_NO_REJECT_WITH" ] && exit 1 ;; # kernel without --reject-with',
   "esac",
   "exit 0",
   ""
@@ -295,6 +298,94 @@ check("install: both families get the full rule set and the policy routing", () 
   }
 });
 
+// 链路本地解析器（Android 在 IPv6 网络上拿到的 fe80::/10 服务器）抓不住：内核把链路
+// 本地目的地按 oif 钉在网卡上，捕获表的 local ::/0 dev lo 永远不被查表。不拦的话查询
+// 原样出网卡、拿到被污染的应答，而解析器把它当有效结果——没有回退，于是被封锁的域名
+// 解析成错误地址。
+check("install: dns to a link-local resolver is rejected before the mark", () => {
+  const m = makeModule();
+  runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1" });
+  const log = fakeLog(m);
+  for (const proto of ["tcp", "udp"]) {
+    const mark = "ip6tables -t mangle -A KR_TP_OUTPUT -p " + proto +
+      " --dport 53 -j MARK --set-mark 19283";
+    if (!log.includes(mark)) {
+      throw new Error("ip6tables: " + proto + " dns mark missing");
+    }
+    // TCP 必须 reset：mangle OUTPUT 里的 icmp6-port-unreachable 不会结束一个已发
+    // SYN 的 stub 解析器，它要等到重传预算耗尽才换服务器。
+    const reject = "ip6tables -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p " + proto +
+      " --dport 53 -j REJECT" + (proto === "tcp" ? " --reject-with tcp-reset" : "");
+    if (!log.includes(reject)) {
+      throw new Error("ip6tables: " + proto + " link-local dns reject missing");
+    }
+    if (log.indexOf(reject) > log.indexOf(mark)) {
+      throw new Error("ip6tables: " + proto + " link-local reject must precede the mark");
+    }
+  }
+  // 非 53 的链路本地流量（DHCPv6、NDP）必须继续可用：除上面两条外不允许
+  // 出现任何发往 fe80::/10 的 REJECT。
+  const rejects = log.split("\n").filter((l) => l.includes("ip6tables") &&
+    l.includes("-A KR_TP_OUTPUT") && l.includes("fe80::/10") && l.includes("-j REJECT"));
+  if (rejects.length !== 2) {
+    throw new Error("only port 53 may be rejected on link-local destinations: " + rejects.length);
+  }
+});
+
+// 升级模块后不重启时，上一版的链还在。只探链的存在性会让安装短路掉，新加的
+// 规则永远不落地——修复对存量用户静默不生效。链存在时也不能把 `-N` 的失败
+// 当错误：那会让重建直接放弃。
+check("install: a chain in an older shape is rebuilt instead of skipped", () => {
+  const m = makeModule();
+  runShell(m, BODY_INSTALL,
+    { FAKE_IPT_NO_SENTINEL: "1", FAKE_IPT_CHAIN_EXISTS: "1" });
+  const log = fakeLog(m);
+  if (!log.includes("iptables -t mangle -N KR_TP_OUTPUT")) {
+    throw new Error("an older chain must be rebuilt, not skipped");
+  }
+  if (!log.includes("iptables -t mangle -F KR_TP_OUTPUT")) {
+    throw new Error("an existing chain must be flushed before it is refilled");
+  }
+  if (!log.includes("ip6tables -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p udp --dport 53 -j REJECT")) {
+    throw new Error("the rebuild must reach the new rules");
+  }
+});
+
+// 回滚要拆的是「没有核心在承载的捕获」，不是「这一版的规则」。旧形状的链照样
+// 在捕获：用形状哨兵去问会跳过它，留下一张没人应答的捕获表（包照样被 mark
+// 进表 19283，那里只剩 unreachable）。
+check("rollback: an old-shaped chain is torn down when no core is running", () => {
+  const m = makeModule();
+  runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_swap_tp_rollback',
+    { FAKE_IPT_NO_SENTINEL: "1" });
+  const log = fakeLog(m);
+  if (!log.includes("-X KR_TP_OUTPUT")) {
+    throw new Error("an old-shaped chain must still be removed: " + log);
+  }
+});
+
+check("rollback: nothing installed is a no-op", () => {
+  const m = makeModule();
+  runShell(m, '. "$KR_TEST_SCRIPT"; kr_dirs; kr_swap_tp_rollback',
+    { FAKE_IPT_NOCHAIN: "1" });
+  if (fakeLog(m).includes("-X KR_TP_OUTPUT")) {
+    throw new Error("nothing installed must not be torn down");
+  }
+});
+
+// --reject-with 不受支持时退回默认拒绝：拿不到 reset 也比完全不接管好。
+check("install: tcp reject falls back to a plain reject", () => {
+  const m = makeModule();
+  runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_NO_REJECT_WITH: "1" });
+  const log = fakeLog(m);
+  if (!log.includes("ip6tables -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p tcp --dport 53 -j REJECT")) {
+    throw new Error("the plain reject must be added when --reject-with fails");
+  }
+  if (!log.includes("ip6tables -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK")) {
+    throw new Error("the rest of the rule set must still be installed");
+  }
+});
+
 check("install: already-present rules are not installed twice", () => {
   const m = makeModule();
   runShell(m, BODY_INSTALL, {});
@@ -327,6 +418,19 @@ check("remove: tolerant when nothing was ever installed", () => {
   const log = fakeLog(m);
   if (!log.includes("iptables -t mangle -X KR_TP_OUTPUT")) {
     throw new Error("remove must still run its cleanup steps");
+  }
+  // 捕获表是本模块私有的：按装进去的形状 del 在内核规范化过路由时会漏删，
+  // 留下把本地流量送进黑洞的残留（停止后访问国内站点报证书错误的成因）。
+  for (const cmd of ["ip route flush table 19283", "ip -6 route flush table 19283"]) {
+    if (!log.includes(cmd)) {
+      throw new Error("remove must flush the capture table: " + cmd);
+    }
+  }
+  for (const cmd of ["route del local 0.0.0.0/0 table 19283",
+    "route del local ::/0 table 19283"]) {
+    if (log.includes(cmd)) {
+      throw new Error("the exact-spec delete must be gone: " + cmd);
+    }
   }
 });
 

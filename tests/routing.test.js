@@ -110,6 +110,7 @@ function makeFailingIptables(m) {
     '  *-nL*) exit 1 ;;',
     '  *-C*) exit 1 ;;',
     '  *"-N KR_TP_OUTPUT"*) exit 1 ;;',
+    '  *"-F KR_TP_OUTPUT"*) exit 1 ;; # an existing chain cannot be rebuilt either',
     "esac",
     "exit 0",
     ""

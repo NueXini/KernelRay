@@ -25,9 +25,13 @@ pid、已应用 id、启动时间、版本、日志级别和两个入站端口�
 
 **`runtime/rules` 是最后一次真实内核应答的读穿缓存，不是第二事实来源。**
 
-- 文件携带 `boot=<boot_id>` 和 `present=<0|1>`。boot id 是
+- 文件携带 `boot=<boot_id>`、`shape=<n>` 和 `present=<0|1>`。boot id 是
   `/proc/sys/kernel/random/boot_id` 每次开机铸造的那个，`runtime/status.json` 已在用
   （[ADR 0018](0018-no-action-button-and-no-boot-start.md)）。不涉及时钟。
+- `shape` 是规则形状的版本号（`KR_TP_SHAPE`），改了 `KR_TP_*` 链里的规则就加一。缓存的
+  `present=1` 只说明「当时那个形状在不在」；形状变了，它就是错的答案，所以 shape 不匹配
+  等同于缓存缺失。boot id 管不住这一维：换掉 `tproxy.sh` 而不重启、不刷新 `runtime/` 时
+  （开发时直接 push 脚本、或某些升级路径）boot id 是同一个，但规则已经是旧的。
 - `kr_tp_install` 写 `present=1`，包括"规则已在位"的提前返回；`kr_tp_remove` 写
   `present=0`。两者都写当前 boot id。开关关闭、发现无规则的启动同样写 `present=0`，所以
   被外部 flush 弄陈旧的缓存由本就询问过内核的同一次启动修复。
@@ -39,8 +43,10 @@ pid、已应用 id、启动时间、版本、日志级别和两个入站端口�
   检查内核，而不是信任一份出自规则已消失的开机的文件。`runtime/` 也会被模块更新清空
   （[ADR 0002](0002-everything-lives-in-the-module-dir.md)），所以更新后的未命中是正常
   路径，不是错误。
-- `kr_tp_rules_present` 仍是权威检查，仍被 `kr_tp_form`、`kr_conf_accept_ondisk`、
-  `kr_tp_install` 和 `tproxy status` CLI 调用。缓存绝不被它们读取。
+- `kr_tp_rules_present` 仍是权威检查，仍被 `kr_tp_form`、`kr_conf_accept_ondisk` 和
+  `kr_tp_install` 调用。缓存绝不被它们读取。它回答的是「这一版的规则装了吗」，所以旧形状
+  的链算 absent。需要问「有没有东西在捕获」的读者用 `kr_tp_chains_exist`：回滚和
+  `tproxy status` 都用它，否则旧形状的捕获会被当成没装而漏拆，或者报成直连。
 - 状态输出保持 `rules=present|absent`；UI 无从得知缓存的存在。
 - 缓存为 `0600`（它只带一个 boot id 和一个标志，但它与其他运行时状态同住，`kr_dirs` 会
   一并收紧权限）。

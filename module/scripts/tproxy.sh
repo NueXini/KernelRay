@@ -24,6 +24,9 @@ KR_NODEIP=$KR_RUNDIR/nodeip
 # 2s 状态轮询读它，而不调两次 iptables；安全攸关的形态读者仍询问
 # 内核（docs/adr/0019）。
 KR_TP_RULES=$KR_RUNDIR/rules
+# 规则形状的版本。改了 KR_TP_* 链里的规则就加一：缓存里的 present 只说明
+# 「当时那个形状在不在」，形状变了它就是错的答案（docs/adr/0019）。
+KR_TP_SHAPE=2
 KR_TPLOG=$KR_LOGDIR/kernelray.log
 # 分流模式（docs/adr/0014）：shell 的偏好，与 日志等级 不同，它立即
 # 生效。文件存在即 大陆直连；不存在即 全局，即之前每个版本的行为。
@@ -42,9 +45,24 @@ KR_BUSYBOX=${KR_BUSYBOX:-/data/adb/ksu/bin/busybox}
 # 用自己的标签调 kr_log。
 kr_tp_log() { kr_log "$@"; }
 
+# 链在不在，不问形状。回滚要拆的是「没有任何核心在承载的捕获」，旧形状的链
+# 照样在捕获；用形状哨兵去问会让它被跳过，留下一张没人应答的捕获表。
+kr_tp_chains_exist() {
+  iptables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 && return 0
+  ip6tables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 && return 0
+  return 1
+}
+
 kr_tp_rules_present() {
   iptables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
   ip6tables -t mangle -nL KR_TP_OUTPUT >/dev/null 2>&1 || return 1
+  # 链存在不代表它是这一版的形状：模块升级后不重启时，上一版的链还在，
+  # 只探链会让 kr_tp_install 短路掉安装，新加的规则永远不落地。探一条只在
+  # 当前形状里存在的规则（链路本地 DNS 拒绝）当哨兵。哨兵只证明「这条规则
+  # 在」，不证明它的位置：上一版根本没有这条规则，所以实际场景里这就够了；
+  # 以后改形状时同时加 KR_TP_SHAPE，让缓存也跟着失效。
+  ip6tables -t mangle -C KR_TP_OUTPUT -d fe80::/10 -p udp --dport 53 -j REJECT \
+    >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -57,7 +75,7 @@ kr_tp_rules_cache_write() { # <0|1> [boot-id]
   _cb=${2:-$(kr_boot_id)}
   [ -d "$KR_RUNDIR" ] || mkdir -p "$KR_RUNDIR" 2>/dev/null
   _ct=$KR_TP_RULES.$$.tmp
-  printf 'boot=%s\npresent=%s\n' "$_cb" "${1:-0}" >"$_ct" 2>/dev/null || {
+  printf 'boot=%s\nshape=%s\npresent=%s\n' "$_cb" "$KR_TP_SHAPE" "${1:-0}" >"$_ct" 2>/dev/null || {
     rm -f "$_ct"
     return 1
   }
@@ -73,16 +91,19 @@ kr_tp_rules_cache() { # [boot-id]；缓存可用时设置 KR_TP_RULES_CACHED=1|0
   KR_TP_RULES_CACHED=""
   [ -s "$KR_TP_RULES" ] || return 1
   _cc_boot=""
+  _cc_shape=""
   _cc_present=""
   while IFS='=' read -r _cc_k _cc_v; do
     case "$_cc_k" in
       boot) _cc_boot=$_cc_v ;;
+      shape) _cc_shape=$_cc_v ;;
       present) _cc_present=$_cc_v ;;
     esac
   done <"$KR_TP_RULES"
   _cc_now=${1:-}
   [ -n "$_cc_now" ] || _cc_now=$(kr_boot_id)
   [ -n "$_cc_now" ] && [ "$_cc_boot" = "$_cc_now" ] || return 1
+  [ "$_cc_shape" = "$KR_TP_SHAPE" ] || return 1
   case "$_cc_present" in
     0 | 1) KR_TP_RULES_CACHED=$_cc_present; return 0 ;;
   esac
@@ -143,6 +164,13 @@ kr_tp_conflict() {
   return 1
 }
 
+# 链可能已经存在（模块升级、或上一次安装中途失败）。`-N` 在链存在时会
+# 失败，把它当错误会让重建直接放弃——上一版的规则形状就永远修不掉，修复
+# 对存量用户静默不生效。改成「建不出就清空」，然后按当前形状重新填充。
+kr_tp_chain_new() { # <二进制> <表> <链>
+  $1 -t $2 -N "$3" 2>/dev/null || $1 -t $2 -F "$3" || return 1
+}
+
 # 一个地址族的规则：<iptables|ip6tables>。核心自己的 socket 带旁路
 # mark、最先返回；发往端口 53 的 DNS 在旁路段之前就用捕获 mark 标记，
 # 让局域网解析器也被捕获（docs/adr/0006）；DHCP 在一切之前旁路，
@@ -150,13 +178,23 @@ kr_tp_conflict() {
 kr_tp_ipt_rules() { # <二进制>
   _i=$1
   if [ "$_i" = ip6tables ]; then
-    $_i -t mangle -N KR_TP_OUTPUT 2>/dev/null || return 1
-    $_i -t mangle -F KR_TP_OUTPUT || return 1
+    kr_tp_chain_new $_i mangle KR_TP_OUTPUT || return 1
     $_i -t mangle -A KR_TP_OUTPUT -m mark --mark $KR_BYPASS -j RETURN || return 1
+    # 链路本地解析器抓不住：内核把链路本地目的地按 oif 钉在网卡上，
+    # 捕获表里的 local ::/0 dev lo 永远不被查表，包原样出网卡、被上游
+    # 污染，而解析器把污染应答当成有效结果——没有回退。静默泄漏比失败
+    # 更坏，所以让这些查询立刻失败，解析器转用可捕获的 IPv4 服务器
+    #（docs/adr/0006：到达 tproxy 入站的 53 才由模块应答）。
+    # 不支持 --reject-with 的内核上退回默认拒绝：拿不到 reset 也比完全
+    # 不接管好（失败关闭的半径应该只到「这一次查询」，不是「整个接管」）。
+    $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p tcp --dport 53 -j REJECT --reject-with tcp-reset ||
+      $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p tcp --dport 53 -j REJECT || return 1
+    $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p udp --dport 53 -j REJECT || return 1
     $_i -t mangle -A KR_TP_OUTPUT -p tcp --dport 53 -j MARK --set-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK --set-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_OUTPUT -m mark --mark $KR_MARK -j RETURN || return 1
     $_i -t mangle -A KR_TP_OUTPUT -d ::1/128 -j RETURN || return 1
+    # 53 已在上面被拒；这条只兜住其余链路本地流量（它们本来也进不了捕获表）。
     $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -j RETURN || return 1
     $_i -t mangle -A KR_TP_OUTPUT -d fc00::/7 -j RETURN || return 1
     $_i -t mangle -A KR_TP_OUTPUT -d ff00::/8 -j RETURN || return 1
@@ -166,8 +204,7 @@ kr_tp_ipt_rules() { # <二进制>
     done
     $_i -t mangle -A KR_TP_OUTPUT -j MARK --set-mark $KR_MARK || return 1
 
-    $_i -t mangle -N KR_TP_PREROUTING 2>/dev/null || return 1
-    $_i -t mangle -F KR_TP_PREROUTING || return 1
+    kr_tp_chain_new $_i mangle KR_TP_PREROUTING || return 1
     # 只把本地客户端的包交给监听——每个被捕获的包都源自本地源。
     # lo 上的其余一切都是核心自己的透明应答（SYN-ACK、DNS 应答，其
     # 源是 ORIGINAL 目的地）：它带着从被捕获 SYN 继承的 tproxy mark，
@@ -187,8 +224,7 @@ kr_tp_ipt_rules() { # <二进制>
       $_i -t mangle -A KR_TP_PREROUTING -s "${_a%/*}" -p udp -j TPROXY --on-port $KR_TP_PORT --tproxy-mark $KR_MARK || return 1
     done
   else
-    $_i -t mangle -N KR_TP_OUTPUT 2>/dev/null || return 1
-    $_i -t mangle -F KR_TP_OUTPUT || return 1
+    kr_tp_chain_new $_i mangle KR_TP_OUTPUT || return 1
     $_i -t mangle -A KR_TP_OUTPUT -m mark --mark $KR_BYPASS -j RETURN || return 1
     $_i -t mangle -A KR_TP_OUTPUT -p tcp --dport 53 -j MARK --set-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK --set-mark $KR_MARK || return 1
@@ -210,8 +246,7 @@ kr_tp_ipt_rules() { # <二进制>
     done
     $_i -t mangle -A KR_TP_OUTPUT -j MARK --set-mark $KR_MARK || return 1
 
-    $_i -t mangle -N KR_TP_PREROUTING 2>/dev/null || return 1
-    $_i -t mangle -F KR_TP_PREROUTING || return 1
+    kr_tp_chain_new $_i mangle KR_TP_PREROUTING || return 1
     $_i -t mangle -A KR_TP_PREROUTING ! -i lo -j RETURN || return 1
     # 环回目的地是本地入站（socks/http），不是被捕获流量；下面按源
     # 匹配的 TPROXY 会劫走它的 SYN-ACK，挂死本地连接。
@@ -226,8 +261,7 @@ kr_tp_ipt_rules() { # <二进制>
   fi
 
   # 通配 tproxy 监听绝不能是局域网上的开放代理（docs/adr/0004）。
-  $_i -t filter -N KR_TP_INPUT 2>/dev/null || return 1
-  $_i -t filter -F KR_TP_INPUT || return 1
+  kr_tp_chain_new $_i filter KR_TP_INPUT || return 1
   $_i -t filter -A KR_TP_INPUT ! -i lo -p tcp --dport $KR_TP_PORT -j DROP || return 1
   $_i -t filter -A KR_TP_INPUT ! -i lo -p udp --dport $KR_TP_PORT -j DROP || return 1
   $_i -t filter -A KR_TP_INPUT -j RETURN || return 1
@@ -252,13 +286,25 @@ kr_tp_own_addrs() { # <iptables|ip6tables>，stdout 输出
   fi
 }
 
+kr_tp_rule_flush() { # <""|"-6"> <pref>
+  _tpr_n=0
+  while [ "$_tpr_n" -lt 8 ] && ip $1 rule del pref "$2" 2>/dev/null; do
+    _tpr_n=$((_tpr_n + 1))
+  done
+}
+
 kr_tp_routes() {
-  # 捕获路径：OUTPUT 链标记的包经 lo 重路由进 tproxy 监听。
-  ip rule del pref $KR_RULE_PREF 2>/dev/null
+  # 捕获路径：OUTPUT 链标记的包经 lo 重路由进 tproxy 监听。先清空该 pref：
+  # 重复接管会累加出多条规则，只删一条会留下指向同一张表的旧副本。
+  kr_tp_rule_flush "" $KR_RULE_PREF
   ip rule add pref $KR_RULE_PREF fwmark $KR_MARK lookup $KR_TABLE || return 1
   ip route replace local 0.0.0.0/0 dev lo table $KR_TABLE || return 1
-  ip -6 rule del pref $KR_RULE_PREF 2>/dev/null
+  kr_tp_rule_flush "-6" $KR_RULE_PREF
   ip -6 rule add pref $KR_RULE_PREF fwmark $KR_MARK lookup $KR_TABLE || return 1
+  # 链路本地目的地在这张表里注定是死的：内核按 oif 钉住它，不查表（实测
+  # `ip -6 route get fe80::a:1 oif wlan0 mark 0x4b53` 给出 `dev wlan0 table wlan0`）。
+  # 别为了让它生效而改这条路由：53 的答案在 OUTPUT 链的 fe80 REJECT 里，
+  # 两者是同一处设计（docs/adr/0006）。
   ip -6 route replace local ::/0 dev lo table $KR_TABLE || return 1
   # 旁路路径：核心自己的 socket 带 $KR_BYPASS，绝不能进捕获表
   #（那会把它们环回进核心）。Android 经 netd 的 mark 选择的逐网络
@@ -279,7 +325,7 @@ kr_tp_routes() {
   ip route show table main 2>/dev/null | grep -v '^default' | while IFS= read -r _rt; do
     ip route add $_rt table $KR_BYPASS_TABLE 2>/dev/null
   done
-  ip rule del pref $KR_BYPASS_PREF 2>/dev/null
+  kr_tp_rule_flush "" $KR_BYPASS_PREF
   ip rule add pref $KR_BYPASS_PREF fwmark $KR_BYPASS lookup $KR_BYPASS_TABLE || return 1
   _def6=$(ip -6 route show table all 2>/dev/null | grep -m1 '^default ')
   if [ -n "$_def6" ]; then
@@ -288,7 +334,7 @@ kr_tp_routes() {
       for _a in $(kr_tp_own_addrs ip6tables); do
         ip -6 route add local "${_a%/*}" dev lo table $KR_BYPASS_TABLE 2>/dev/null
       done
-      ip -6 rule del pref $KR_BYPASS_PREF 2>/dev/null
+      kr_tp_rule_flush "-6" $KR_BYPASS_PREF
       ip -6 rule add pref $KR_BYPASS_PREF fwmark $KR_BYPASS lookup $KR_BYPASS_TABLE || return 1
     else
       kr_tp_log TProxy "could not copy the ipv6 default route; no v6 bypass"
@@ -355,12 +401,15 @@ kr_tp_remove() {
     "$_i" -t filter -F KR_TP_INPUT 2>/dev/null
     "$_i" -t filter -X KR_TP_INPUT 2>/dev/null
   done
-  ip rule del pref $KR_RULE_PREF 2>/dev/null
-  ip -6 rule del pref $KR_RULE_PREF 2>/dev/null
-  ip rule del pref $KR_BYPASS_PREF 2>/dev/null
-  ip -6 rule del pref $KR_BYPASS_PREF 2>/dev/null
-  ip route del local 0.0.0.0/0 table $KR_TABLE 2>/dev/null
-  ip -6 route del local ::/0 table $KR_TABLE 2>/dev/null
+  kr_tp_rule_flush "" $KR_RULE_PREF
+  kr_tp_rule_flush "-6" $KR_RULE_PREF
+  kr_tp_rule_flush "" $KR_BYPASS_PREF
+  kr_tp_rule_flush "-6" $KR_BYPASS_PREF
+  # flush 而不是按装进去的形状 del：捕获表是本模块私有的，按精确
+  # spec 删在路由被内核规范化过（例如 replace 之后形状变了）时会静默
+  # 漏删，留下把本地流量送进黑洞的残留路由。
+  ip route flush table $KR_TABLE 2>/dev/null
+  ip -6 route flush table $KR_TABLE 2>/dev/null
   ip route flush table $KR_BYPASS_TABLE 2>/dev/null
   ip -6 route flush table $KR_BYPASS_TABLE 2>/dev/null
   kr_tp_rules_cache_write 0
@@ -716,6 +765,8 @@ kr_tp_engage() {
 # 只读诊断。不再有可报告的开关（docs/adr/0011）；规则才是值得询问
 # 的事实。
 kr_tproxy_status() {
-  kr_tp_rules_present && echo "rules=present" || echo "rules=absent"
+  # 问链在不在，不问形状：旧形状的链照样在捕获，报 absent 会让 UI 显示“直连”
+  # 而流量实际被 mark 进表 19283。
+  kr_tp_chains_exist && echo "rules=present" || echo "rules=absent"
   return 0
 }

@@ -893,8 +893,10 @@ kr_swap_rollback() {
 # 拆掉没有任何核心在承载的捕获。kr_stop 把换入起点的规则也拆了，
 # 所以这里不再区分"规则是不是换入带来的"——在位而无人使用即拆。
 kr_swap_tp_rollback() {
-  command -v kr_tp_rules_present >/dev/null 2>&1 || return 0
-  kr_tp_rules_present || return 0
+  # 问链在不在，不问形状：形状哨兵会让旧形状的链被当成“没装”，而它正在
+  # 捕获。回滚漏拆就是一张没人应答的捕获表。
+  command -v kr_tp_chains_exist >/dev/null 2>&1 || return 0
+  kr_tp_chains_exist || return 0
   kr_log TProxy "the swap brought the rules up and no core is running; removing them"
   kr_tp_remove
   return 0

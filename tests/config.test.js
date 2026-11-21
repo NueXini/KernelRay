@@ -232,8 +232,11 @@ function makeIptablesStub(m, present) {
   return { path: posixPathEnv(dir), log: log };
 }
 
-function writeRulesCache(m, boot, present) {
-  fs.writeFileSync(m.rules, "boot=" + boot + "\npresent=" + present + "\n");
+// shape 是规则形状的版本；不传就是当前版本（缓存可用），传旧版本号模拟
+// “换过 tproxy.sh 但没重启”的缓存。
+function writeRulesCache(m, boot, present, shape) {
+  const s = shape === undefined ? 2 : shape;
+  fs.writeFileSync(m.rules, "boot=" + boot + "\nshape=" + s + "\npresent=" + present + "\n");
 }
 
 function runFail(dir, body, args, extraEnv) {
@@ -977,6 +980,24 @@ check("status: a stale rule cache forces one real check and is repaired", () => 
     "the repaired cache is used without another probe");
 });
 
+check("status: a cache written by an older rule shape is not trusted", () => {
+  const m = makeModule();
+  // 同一个 boot id：换掉 tproxy.sh 但没重启。boot id 管不住这一维，
+  // shape 才管得住。
+  writeRulesCache(m, "the-current-boot", 1, 1);
+  const stub = makeIptablesStub(m, false);
+  const kv = runShell(m.dir,
+    '. "$KR_TEST_SCRIPT"; kr_boot_id() { echo the-current-boot; }; kr_status_kv',
+    [], { PATH: stub.path });
+  if (!/^rules=absent$/m.test(kv)) { throw new Error(kv); }
+  if (!fs.existsSync(stub.log)) {
+    throw new Error("a cache from an older shape must not answer for the kernel");
+  }
+  if (!/^shape=2$/m.test(fs.readFileSync(m.rules, "utf8"))) {
+    throw new Error("the repair must record the current shape");
+  }
+});
+
 check("status: a missing rule cache is answered by one check and written back", () => {
   const m = makeModule();
   const stub = makeIptablesStub(m, true);
@@ -985,7 +1006,7 @@ check("status: a missing rule cache is answered by one check and written back", 
     [], { PATH: stub.path });
   if (!/^rules=present$/m.test(kv)) { throw new Error(kv); }
   const calls = fs.readFileSync(stub.log, "utf8").trim().split("\n");
-  eq(calls.length, 2, "one probe per family when both are present");
+  eq(calls.length, 3, "one chain probe per family, plus the v6 shape sentinel");
   const cache = fs.readFileSync(m.rules, "utf8");
   if (!/^boot=the-current-boot$/m.test(cache) || !/^present=1$/m.test(cache)) {
     throw new Error("cache not written:\n" + cache);
