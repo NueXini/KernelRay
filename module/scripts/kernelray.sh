@@ -1423,6 +1423,94 @@ kr_sub_fetch() {
 # 下一次更新整体清掉（ADR 0002 的代价）。可覆盖，供测试指向临时目录。
 KR_DIAG_DL=${KR_DIAG_DL:-/sdcard/Download}
 
+# 排障探针，一次问全。过去真机排障为每个问题付一次 adb 往返：路由 get
+# 探针、iptables 计数器、解析器状态、私有表里还剩多少东西。这些全是
+# 瞬时的内核事实——停机后的残留重启后就永远问不回来——所以值得让
+# 诊断包当场收走（probes.txt），CLI 的 `probe` 动词也能直接打印同一套，
+# 交互排障一条命令顶过去 N 次往返。全部只读、不发任何网络包（路由
+# get 只问内核的查找，不出网卡）、缺什么工具就少答什么，绝不为缺失
+# 失败。stdout 交给调用方，不打印日志。
+kr_diag_probes() {
+  printf '# live probes, %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+  # 接管判定与残留计数（英文用 GLOSSARY 的词：takeover，不用 capture）。
+  # rules/shape 是解读（kr_tp_chains_exist / 形状哨兵，与 kr_tproxy_status
+  # 的 rules=present|absent 同词汇），计数是原始事实：停机后的包里
+  # rules=absent 而计数非零，就是拆除留下的残留——同一问题重启后只能
+  # 靠这个当场回答。tproxy.sh 没被 source（旧布局）就没有接管可问：
+  # 记一行 missing=（与 info.txt 同词汇），mark 相关的探针一并跳过，
+  # 猜命名空间只会出假证据。
+  if command -v kr_tp_chains_exist >/dev/null 2>&1; then
+    if kr_tp_chains_exist; then
+      echo "rules=present"
+      if kr_tp_rules_present; then
+        echo "shape=current"
+      else
+        echo "shape=stale"
+      fi
+    else
+      echo "rules=absent"
+    fi
+    for _t in "$KR_TABLE" "$KR_BYPASS_TABLE"; do
+      printf 'table_%s_rules_v4=%s\n' "$_t" "$(ip rule show 2>/dev/null | grep -c "lookup $_t")"
+      printf 'table_%s_rules_v6=%s\n' "$_t" "$(ip -6 rule show 2>/dev/null | grep -c "lookup $_t")"
+      printf 'table_%s_routes_v4=%s\n' "$_t" "$(ip route show table "$_t" 2>/dev/null | grep -c .)"
+      printf 'table_%s_routes_v6=%s\n' "$_t" "$(ip -6 route show table "$_t" 2>/dev/null | grep -c .)"
+    done
+    # 路由 get 探针：带接管 mark 的查找应落进表 19283（dev lo）。链路本地
+    # 目的地是关键证人——内核按 scope 把它钉在网卡上，捕获表里的
+    # local ::/0 永远不被查表，上次故障的决定性证据就是它（kr_tp_routes
+    # 里的注）。出口网卡优先从 IPv6 默认路由推导（证人是 v6 的），问
+    # 不出来退回 IPv4。内核拒绝查找也是答案：错误照抄。
+    _oif=$(ip -6 route show table all 2>/dev/null | grep -m1 '^default ' | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+    [ -n "$_oif" ] || _oif=$(ip route show table all 2>/dev/null | grep -m1 '^default ' | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+    for _p in \
+      "ip route get 192.0.2.1 mark $KR_MARK" \
+      "ip -6 route get 2001:db8::1 mark $KR_MARK"
+    do
+      printf '\n$ %s\n' "$_p"
+      $_p 2>&1 || printf '(failed)\n'
+    done
+    if [ -n "$_oif" ]; then
+      printf '\n$ ip -6 route get fe80::1 oif %s mark %s\n' "$_oif" "$KR_MARK"
+      ip -6 route get fe80::1 oif "$_oif" mark "$KR_MARK" 2>&1 || printf '(failed)\n'
+    fi
+  else
+    echo "missing=tproxy.sh"
+  fi
+  # 不带 mark 的对照任何布局下都值得收：它回答默认路由本身长什么样。
+  for _p in "ip route get 192.0.2.1" "ip -6 route get 2001:db8::1"; do
+    printf '\n$ %s\n' "$_p"
+    $_p 2>&1 || printf '(failed)\n'
+  done
+  # 计数器：快照用 -S 只有形状；多少包被 mark、多少包走到 RETURN，
+  # 只有 -nvL 回答得了。链不在时 iptables 自己的错误文本就是答案。
+  for _ipt in iptables ip6tables; do
+    for _ch in KR_TP_OUTPUT KR_TP_PREROUTING; do
+      printf '\n## %s -t mangle -nvL %s\n' "$_ipt" "$_ch"
+      "$_ipt" -t mangle -nvL "$_ch" 2>&1
+    done
+  done
+  # 解析器状态：上次故障的触发条件（WLAN 解析器首位是路由器的 IPv6
+  # 链路本地地址，netd 的私账）在包里没有任何记录，只能现场问。
+  printf '\n## resolver state\n'
+  if command -v getprop >/dev/null 2>&1; then
+    printf 'net.dns1=%s\n' "$(getprop net.dns1 2>/dev/null)"
+    printf 'net.dns2=%s\n' "$(getprop net.dns2 2>/dev/null)"
+  fi
+  if command -v settings >/dev/null 2>&1; then
+    printf 'private_dns_mode=%s\n' "$(settings get global private_dns_mode 2>/dev/null)"
+    printf 'private_dns_hostname=%s\n' "$(settings get global private_dns_hostname 2>/dev/null)"
+  fi
+  if command -v ndc >/dev/null 2>&1; then
+    _out=$(ndc resolver getnetdns 2>/dev/null) || return 0
+    # netd 的应答是小写的裸地址；归一化一次，别让分类器猜大小写。
+    _out=$(printf '%s' "$_out" | tr '[:upper:]' '[:lower:]')
+    printf '\n$ ndc resolver getnetdns\n'
+    printf '%s\n' "$_out"
+  fi
+  return 0
+}
+
 # 只读收集：日志、运行状态与活内核快照打成一个 tar.gz 放进下载目录。
 # 绝不触碰 config.json、state.json、outbound.json、nodeip——凭据不进包
 # 是这个手势存在的前提。日志以其原文进包：访问日志携带到过的域名，
@@ -1491,6 +1579,9 @@ kr_diagnostics() {
       ip -6 route show table "$_t" 2>/dev/null || printf '(unavailable)\n'
     done
   } >"$_d/kernel-snapshot.txt"
+  # 排障探针（kr_diag_probes）：判定行、残留计数、计数器、路由 get 与
+  # 解析器状态——快照之外的那一半现场。
+  kr_diag_probes >"$_d/probes.txt"
   # 打包：tar 一定有；gzip 缺了就退回纯 tar——一个能解开的包胜过没有包。
   _tar=$_stage/$_name.tar
   if ! tar -cf "$_tar" -C "$_stage" "$_name" 2>/dev/null; then
@@ -1530,6 +1621,7 @@ kr_cli() {
     unapply) kr_unapply ;;
     ports) kr_apply_ports ;;
     diagnostics) kr_diagnostics ;;
+    probe) kr_diag_probes ;;
     routing)
       case "${1:-status}" in
         global|cn|cnadblock) kr_route_set "$1" ;;
@@ -1583,7 +1675,7 @@ kr_cli() {
       esac
       ;;
     *)
-      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|diagnostics|sub fetch|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
+      echo "usage: kernelray.sh {start|stop|apply <node-id>|unapply|ports|diagnostics|probe|sub fetch|tproxy status|routing {global|cn|cnadblock|status}|loglevel {none|error|warning|info|debug|status}|status [log|nodes]|log [lines]|log clear|mlog [lines]|mlog clear|mlog append <tag> <message...>}" >&2
       return 2
       ;;
   esac

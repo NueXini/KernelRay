@@ -28,9 +28,14 @@ const fakeIpt = [
   "exit 0",
   ""
 ].join("\n");
+// 假的 ip：回显调用行；`ip route show table all` 额外给出一条默认路由，
+// 让路由 get 探针能从它推导出口网卡（真机上由内核回答）。
 const fakeIp = [
   "#!/bin/sh",
   'echo "ip $*"',
+  'case "$*" in',
+  '  *"route show table all"*) echo "default dev wlan0" ;;',
+  "esac",
   "exit 0",
   ""
 ].join("\n");
@@ -190,6 +195,7 @@ check("diagnostics: present logs and status are collected, no credential files i
     name + "/kernel-snapshot.txt",
     name + "/kernelray.log",
     name + "/module.prop",
+    name + "/probes.txt",
     name + "/rules",
     name + "/status.json",
     name + "/xray.log"
@@ -203,6 +209,36 @@ check("diagnostics: present logs and status are collected, no credential files i
   assert.match(snapshot, /ip rule show/, "policy rules section");
   assert.match(snapshot, /ip route show table 19283/, "capture table section");
   assert.match(snapshot, /ip route show table 19282/, "bypass table section");
+});
+
+check("diagnostics: probes.txt answers the takeover state, the counters, the route lookups and the resolver state", function () {
+  const m = makeModule();
+  const dest = runShell(m, ["diagnostics"]).trim();
+  const tar = path.basename(dest);
+  const name = tar.replace(/\.tar\.gz$/, "");
+  const probes = readEntry(m, tar, name + "/probes.txt");
+  // 假 iptables/ip6tables 从不失败：链在，形状是当前的。verdict 与
+  // kr_tproxy_status 的 rules=present|absent 同词汇（GLOSSARY：接管）。
+  assert.match(probes, /^rules=present$/m, "takeover verdict");
+  assert.match(probes, /^shape=current$/m, "shape verdict");
+  assert.match(probes, /^table_19283_rules_v4=\d+$/m, "rule counts are facts");
+  assert.match(probes, /^table_19283_routes_v6=\d+$/m, "table route counts");
+  // 计数器：快照只有 -S 的形状；多少包被 mark 只有 -nvL 回答得了。
+  assert.match(probes,
+    /## iptables -t mangle -nvL KR_TP_OUTPUT\niptables -t mangle -nvL KR_TP_OUTPUT/,
+    "counter section with a live answer");
+  // 路由 get 探针：带接管 mark 的查找与不带 mark 的对照；链路本地证人
+  // 在默认路由推导出的出口网卡上（假 ip 给的是 wlan0）。
+  assert.match(probes,
+    /\$ ip route get 192\.0\.2\.1 mark 19283\nip route get 192\.0\.2\.1 mark 19283/,
+    "takeover-mark route probe with its answer");
+  assert.match(probes, /\$ ip -6 route get fe80::1 oif wlan0 mark 19283/,
+    "link-local witness probe");
+  assert.match(probes, /\$ ip route get 192\.0\.2\.1\n/, "unmarked control probe");
+  assert.match(probes, /## resolver state/, "resolver section");
+  assert.match(probes, /^private_dns_mode=/m, "private dns state");
+  // ndc 不在场（桩目录里没有它）就少答一项，绝不为缺失失败。
+  assert.doesNotMatch(probes, /ndc resolver getnetdns/, "missing ndc stays silent");
 });
 
 check("diagnostics: credential files stay in place, unchanged and out of the archive", function () {
@@ -258,10 +294,21 @@ check("diagnostics: the module log records the archive location", function () {
     /\[Module\] diagnostics bundle written to .*/, "log line");
 });
 
-check("usage: the CLI help line mentions diagnostics", function () {
+check("probe: one command prints the whole probe set and writes no archive", function () {
+  const m = makeModule();
+  const out = runShell(m, ["probe"]);
+  assert.match(out, /^rules=present$/m, "verdict line");
+  assert.match(out, /\$ ip route get 192\.0\.2\.1/, "route-get probes");
+  assert.match(out, /## iptables -t mangle -nvL/, "counter dump");
+  assert.match(out, /## resolver state/, "resolver state");
+  eq(fs.existsSync(m.dl) ? dlEntries(m).length : 0, 0, "no archive written");
+});
+
+check("usage: the CLI help line mentions diagnostics and probe", function () {
   const m = makeModule();
   const r = runFail(m, ["nonsense"]);
   assert.match(r.stderr, /diagnostics/, "usage mentions diagnostics");
+  assert.match(r.stderr, /probe/, "usage mentions probe");
 });
 
 process.on("exit", function () {

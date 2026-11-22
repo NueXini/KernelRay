@@ -311,7 +311,7 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 用户在 WebUI 点「收集诊断包」或跑 `kernelray.sh diagnostics`，得到一个
 `/sdcard/Download/KernelRay-diagnostics-<YYYYmmdd-HHMMSS>.tar.gz`（没有 gzip 时退回 `.tar`）。
 只读收集：`config.json` / `state.json` / `outbound.json` / `nodeip` **绝不进包**（凭据），
-所以包里找不到节点的服务器地址。七个常驻文件（日志轮转过的话还有 `xray.log.1`）：
+所以包里找不到节点的服务器地址。八个常驻文件（日志轮转过的话还有 `xray.log.1`）：
 
 | 文件 | 回答什么 |
 | --- | --- |
@@ -320,11 +320,13 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 | `status.json` | 模块最后一次自报的状态（`state`/`phase`/`pid`/`node`）。是缓存，可能已经过期 |
 | `rules` | `config/runtime/rules`，按 boot id 记的规则形状缓存。它回答「**这一版**装了吗」，不回答「有没有东西在捕获」——旧形状的链照样在捕获（ADR 0019） |
 | `kernel-snapshot.txt` | 收集那一刻的活内核：`iptables`/`ip6tables` 的 `-t mangle -S` 全表（含别的模块的链）、`KR_TP_INPUT` filter 链、`ip rule show` 与 `ip -6 rule show`、两张表的 v4+v6 路由。**只有它是现场**，`rules` 只是缓存 |
+| `probes.txt` | 排障探针，一次问全：`rules=`/`shape=` 判定行（与 `tproxy status` 同词汇：链在不在、是不是当前形状）、私有表的规则与路由计数（停机后 `rules=absent` 而计数非零就是拆除残留）、带接管 mark 与不带 mark 的 `ip route get` 探针（含链路本地证人——内核按 scope 把链路本地目的地钉在网卡上，捕获表永远不被查表）、`-nvL` 计数器、解析器状态（`getprop`/Private DNS/`ndc resolver getnetdns`；工具缺了就少答一项，绝不为缺失失败）。交互排障可以不收包，直接跑 `kernelray.sh probe` 打印同一套：一条命令顶过去逐项问的 N 次 adb 往返 |
 | `kernelray.log` | 模块日志，通常很小 |
 | `xray.log` | 核心日志，通常是包里最大的一个；真正的拨号失败在这里 |
 
 `kernel-snapshot.txt` 用的是 `-S`，**不带计数器**。要证明「多少包被 mark、多少包走到了
-RETURN」这类问题，得在设备上现跑 `iptables -t mangle -nvL KR_TP_OUTPUT`——包里没有这些数字。
+RETURN」这类问题，读 `probes.txt`——它同时带着路由 get 探针与解析器状态，这两个正是
+上次真机排障里决定性的证据：都在故障当场才问得到，重启后就永远问不回来了。
 
 ## 11. 一条命令走完（复制粘贴用）
 
