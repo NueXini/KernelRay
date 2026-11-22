@@ -41,12 +41,12 @@ const fakeIpt = [
   "  exit 0",
   "fi",
   'case "$*" in',
-  '  *"-C KR_TP_OUTPUT"*"--dport 53 -j REJECT"*) [ -n "$FAKE_IPT_NO_SENTINEL" ] && exit 1 ;; # chain is an older shape',
+  '  *"-C KR_TP_GUARD"*"--dport 53 -j REJECT"*) [ -n "$FAKE_IPT_NO_SENTINEL" ] && exit 1 ;; # chain is an older shape',
   '  *-nL*) [ -n "$FAKE_IPT_NOCHAIN" ] && exit 1 ;;',
   '  *-C*) [ -n "$FAKE_IPT_NOCHAIN" ] && exit 1 ;; # the hook rule is not there yet',
   '  *"-N KR_TP_OUTPUT"*) { [ -n "$FAKE_IPT_FAIL_N" ] || [ -n "$FAKE_IPT_CHAIN_EXISTS" ]; } && exit 1 ;;',
   '  *"-F KR_TP_OUTPUT"*) [ -n "$FAKE_IPT_FAIL_N" ] && exit 1 ;; # a chain that exists but cannot be cleared',
-  '  *"-A KR_TP_OUTPUT"*--reject-with*) [ -n "$FAKE_IPT_NO_REJECT_WITH" ] && exit 1 ;; # kernel without --reject-with',
+  '  *"-A KR_TP_GUARD"*--reject-with*) [ -n "$FAKE_IPT_NO_REJECT_WITH" ] && exit 1 ;; # kernel without --reject-with',
   "esac",
   "exit 0",
   ""
@@ -349,7 +349,7 @@ check("install: both families get the full rule set and the policy routing", () 
 // 本地目的地按 oif 钉在网卡上，捕获表的 local ::/0 dev lo 永远不被查表。不拦的话查询
 // 原样出网卡、拿到被污染的应答，而解析器把它当有效结果——没有回退，于是被封锁的域名
 // 解析成错误地址。
-check("install: dns to a link-local resolver is rejected before the mark", () => {
+check("install: dns to a link-local resolver is rejected in the guard chain", () => {
   const m = makeModule();
   runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1" });
   const log = fakeLog(m);
@@ -361,19 +361,27 @@ check("install: dns to a link-local resolver is rejected before the mark", () =>
     }
     // TCP 必须 reset：mangle OUTPUT 里的 icmp6-port-unreachable 不会结束一个已发
     // SYN 的 stub 解析器，它要等到重传预算耗尽才换服务器。
-    const reject = "ip6tables -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p " + proto +
+    const reject = "ip6tables -t filter -A KR_TP_GUARD -d fe80::/10 -p " + proto +
       " --dport 53 -j REJECT" + (proto === "tcp" ? " --reject-with tcp-reset" : "");
     if (!log.includes(reject)) {
       throw new Error("ip6tables: " + proto + " link-local dns reject missing");
     }
-    if (log.indexOf(reject) > log.indexOf(mark)) {
-      throw new Error("ip6tables: " + proto + " link-local reject must precede the mark");
-    }
+  }
+  // REJECT 目标只在 filter 表里合法：mangle 里出现任何 REJECT 都会被内核
+  // 以 Invalid argument 拒掉，整个接管装不上（模拟器实测）。这里放的是
+  // 同链顺序断言时代留下的坑，不能再踩。
+  const bad = log.split("\n").filter((l) => l.includes("-t mangle") && l.includes("-j REJECT"));
+  if (bad.length) {
+    throw new Error("REJECT is only valid in filter, not mangle: " + bad.join("; "));
+  }
+  // 守卫链必须真的被钩进 filter OUTPUT，否则它一条包都看不到。
+  if (!log.includes("ip6tables -t filter -A OUTPUT -j KR_TP_GUARD")) {
+    throw new Error("the guard chain must be hooked into filter OUTPUT");
   }
   // 非 53 的链路本地流量（DHCPv6、NDP）必须继续可用：除上面两条外不允许
   // 出现任何发往 fe80::/10 的 REJECT。
   const rejects = log.split("\n").filter((l) => l.includes("ip6tables") &&
-    l.includes("-A KR_TP_OUTPUT") && l.includes("fe80::/10") && l.includes("-j REJECT"));
+    l.includes("-A KR_TP_GUARD") && l.includes("fe80::/10") && l.includes("-j REJECT"));
   if (rejects.length !== 2) {
     throw new Error("only port 53 may be rejected on link-local destinations: " + rejects.length);
   }
@@ -393,7 +401,7 @@ check("install: a chain in an older shape is rebuilt instead of skipped", () => 
   if (!log.includes("iptables -t mangle -F KR_TP_OUTPUT")) {
     throw new Error("an existing chain must be flushed before it is refilled");
   }
-  if (!log.includes("ip6tables -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p udp --dport 53 -j REJECT")) {
+  if (!log.includes("ip6tables -t filter -A KR_TP_GUARD -d fe80::/10 -p udp --dport 53 -j REJECT")) {
     throw new Error("the rebuild must reach the new rules");
   }
 });
@@ -425,7 +433,7 @@ check("install: tcp reject falls back to a plain reject", () => {
   const m = makeModule();
   runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1", FAKE_IPT_NO_REJECT_WITH: "1" });
   const log = fakeLog(m);
-  if (!log.includes("ip6tables -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p tcp --dport 53 -j REJECT")) {
+  if (!log.includes("ip6tables -t filter -A KR_TP_GUARD -d fe80::/10 -p tcp --dport 53 -j REJECT")) {
     throw new Error("the plain reject must be added when --reject-with fails");
   }
   if (!log.includes("ip6tables -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK")) {

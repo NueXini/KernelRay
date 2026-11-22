@@ -227,6 +227,10 @@ check("diagnostics: probes.txt answers the takeover state, the counters, the rou
   assert.match(probes,
     /## iptables -t mangle -nvL KR_TP_OUTPUT\niptables -t mangle -nvL KR_TP_OUTPUT/,
     "counter section with a live answer");
+  // 守卫链是 v6 独有的 filter 链（REJECT 只在 filter 表合法），计数器里也要收。
+  assert.match(probes,
+    /## ip6tables -t filter -nvL KR_TP_GUARD\nip6tables -t filter -nvL KR_TP_GUARD/,
+    "guard chain counter with a live answer");
   // 路由 get 探针：带接管 mark 的查找与不带 mark 的对照；链路本地证人
   // 在默认路由推导出的出口网卡上（假 ip 给的是 wlan0）。
   assert.match(probes,

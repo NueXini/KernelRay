@@ -1490,6 +1490,10 @@ kr_diag_probes() {
       "$_ipt" -t mangle -nvL "$_ch" 2>&1
     done
   done
+  # 守卫链是 v6 独有的 filter 链：多少条链路本地 DNS 查询被拒，
+  # 只有它能回答。
+  printf '\n## ip6tables -t filter -nvL KR_TP_GUARD\n'
+  ip6tables -t filter -nvL KR_TP_GUARD 2>&1
   # 解析器状态：上次故障的触发条件（WLAN 解析器首位是路由器的 IPv6
   # 链路本地地址，netd 的私账）在包里没有任何记录，只能现场问。
   printf '\n## resolver state\n'

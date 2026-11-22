@@ -61,7 +61,7 @@ kr_tp_rules_present() {
   # 当前形状里存在的规则（链路本地 DNS 拒绝）当哨兵。哨兵只证明「这条规则
   # 在」，不证明它的位置：上一版根本没有这条规则，所以实际场景里这就够了；
   # 以后改形状时同时加 KR_TP_SHAPE，让缓存也跟着失效。
-  ip6tables -t mangle -C KR_TP_OUTPUT -d fe80::/10 -p udp --dport 53 -j REJECT \
+  ip6tables -t filter -C KR_TP_GUARD -d fe80::/10 -p udp --dport 53 -j REJECT \
     >/dev/null 2>&1 || return 1
   return 0
 }
@@ -180,16 +180,6 @@ kr_tp_ipt_rules() { # <二进制>
   if [ "$_i" = ip6tables ]; then
     kr_tp_chain_new $_i mangle KR_TP_OUTPUT || return 1
     $_i -t mangle -A KR_TP_OUTPUT -m mark --mark $KR_BYPASS -j RETURN || return 1
-    # 链路本地解析器抓不住：内核把链路本地目的地按 oif 钉在网卡上，
-    # 捕获表里的 local ::/0 dev lo 永远不被查表，包原样出网卡、被上游
-    # 污染，而解析器把污染应答当成有效结果——没有回退。静默泄漏比失败
-    # 更坏，所以让这些查询立刻失败，解析器转用可捕获的 IPv4 服务器
-    #（docs/adr/0006：到达 tproxy 入站的 53 才由模块应答）。
-    # 不支持 --reject-with 的内核上退回默认拒绝：拿不到 reset 也比完全
-    # 不接管好（失败关闭的半径应该只到「这一次查询」，不是「整个接管」）。
-    $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p tcp --dport 53 -j REJECT --reject-with tcp-reset ||
-      $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p tcp --dport 53 -j REJECT || return 1
-    $_i -t mangle -A KR_TP_OUTPUT -d fe80::/10 -p udp --dport 53 -j REJECT || return 1
     $_i -t mangle -A KR_TP_OUTPUT -p tcp --dport 53 -j MARK --set-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_OUTPUT -p udp --dport 53 -j MARK --set-mark $KR_MARK || return 1
     $_i -t mangle -A KR_TP_OUTPUT -m mark --mark $KR_MARK -j RETURN || return 1
@@ -266,12 +256,33 @@ kr_tp_ipt_rules() { # <二进制>
   $_i -t filter -A KR_TP_INPUT ! -i lo -p udp --dport $KR_TP_PORT -j DROP || return 1
   $_i -t filter -A KR_TP_INPUT -j RETURN || return 1
 
+  if [ "$_i" = ip6tables ]; then
+    # 链路本地解析器抓不住：内核把链路本地目的地按 oif 钉在网卡上，
+    # 捕获表里的 local ::/0 dev lo 永远不被查表，包原样出网卡、被上游
+    # 污染，而解析器把污染应答当成有效结果——没有回退。静默泄漏比失败
+    # 更坏，所以让这些查询立刻失败，解析器转用可捕获的 IPv4 服务器
+    #（docs/adr/0006：到达 tproxy 入站的 53 才由模块应答）。REJECT 目标
+    # 只在 filter 表里合法（x_tables 对 mangle 报 Invalid argument，
+    # 接管会因此永远装不上——模拟器实测），所以守卫住自己的 filter
+    # OUTPUT 链，不动 mangle 的捕获链。不支持 --reject-with 的内核上
+    # 退回默认拒绝：拿不到 reset 也比完全不接管好（失败关闭的半径应该
+    # 只到「这一次查询」，不是「整个接管」）。
+    kr_tp_chain_new $_i filter KR_TP_GUARD || return 1
+    $_i -t filter -A KR_TP_GUARD -d fe80::/10 -p tcp --dport 53 -j REJECT --reject-with tcp-reset ||
+      $_i -t filter -A KR_TP_GUARD -d fe80::/10 -p tcp --dport 53 -j REJECT || return 1
+    $_i -t filter -A KR_TP_GUARD -d fe80::/10 -p udp --dport 53 -j REJECT || return 1
+  fi
+
   $_i -t mangle -C PREROUTING -j KR_TP_PREROUTING 2>/dev/null ||
     $_i -t mangle -A PREROUTING -j KR_TP_PREROUTING || return 1
   $_i -t mangle -C OUTPUT -j KR_TP_OUTPUT 2>/dev/null ||
     $_i -t mangle -A OUTPUT -j KR_TP_OUTPUT || return 1
   $_i -t filter -C INPUT -j KR_TP_INPUT 2>/dev/null ||
     $_i -t filter -A INPUT -j KR_TP_INPUT || return 1
+  if [ "$_i" = ip6tables ]; then
+    $_i -t filter -C OUTPUT -j KR_TP_GUARD 2>/dev/null ||
+      $_i -t filter -A OUTPUT -j KR_TP_GUARD || return 1
+  fi
   return 0
 }
 
@@ -303,7 +314,7 @@ kr_tp_routes() {
   ip -6 rule add pref $KR_RULE_PREF fwmark $KR_MARK lookup $KR_TABLE || return 1
   # 链路本地目的地在这张表里注定是死的：内核按 oif 钉住它，不查表（实测
   # `ip -6 route get fe80::a:1 oif wlan0 mark 0x4b53` 给出 `dev wlan0 table wlan0`）。
-  # 别为了让它生效而改这条路由：53 的答案在 OUTPUT 链的 fe80 REJECT 里，
+  # 别为了让它生效而改这条路由：53 的答案在 filter OUTPUT 的 KR_TP_GUARD 守卫里，
   # 两者是同一处设计（docs/adr/0006）。
   ip -6 route replace local ::/0 dev lo table $KR_TABLE || return 1
   # 旁路路径：核心自己的 socket 带 $KR_BYPASS，绝不能进捕获表
@@ -360,7 +371,7 @@ kr_tp_copy_route() { # <4|6> <路由行>
 
 # 主动告知：解析器列表全部链路本地（纯 IPv6 网络）时，DNS 按设计会失败——
 # 链路本地查询在 OUTPUT 链被拒绝，fallback 需要一个可捕获的 IPv4 解析器
-#（kr_tp_ipt_rules 里的 fe80 REJECT）。日志把它说出来，用户与下一次排障
+#（KR_TP_GUARD 里的 fe80 REJECT）。日志把它说出来，用户与下一次排障
 # 就不必翻 ADR 才知道这不是 bug。ndc 缺失、应答拿不到或列表里还有非
 # 链路本地的地址就什么都不说：保守的沉默胜过误报。仅在接管安装完成后
 # 调用。stdout 不是返回值，本函数不打印。
@@ -421,12 +432,15 @@ kr_tp_remove() {
     "$_i" -t mangle -D PREROUTING -j KR_TP_PREROUTING 2>/dev/null
     "$_i" -t mangle -D OUTPUT -j KR_TP_OUTPUT 2>/dev/null
     "$_i" -t filter -D INPUT -j KR_TP_INPUT 2>/dev/null
+    "$_i" -t filter -D OUTPUT -j KR_TP_GUARD 2>/dev/null
     "$_i" -t mangle -F KR_TP_PREROUTING 2>/dev/null
     "$_i" -t mangle -X KR_TP_PREROUTING 2>/dev/null
     "$_i" -t mangle -F KR_TP_OUTPUT 2>/dev/null
     "$_i" -t mangle -X KR_TP_OUTPUT 2>/dev/null
     "$_i" -t filter -F KR_TP_INPUT 2>/dev/null
     "$_i" -t filter -X KR_TP_INPUT 2>/dev/null
+    "$_i" -t filter -F KR_TP_GUARD 2>/dev/null
+    "$_i" -t filter -X KR_TP_GUARD 2>/dev/null
   done
   kr_tp_rule_flush "" $KR_RULE_PREF
   kr_tp_rule_flush "-6" $KR_RULE_PREF
