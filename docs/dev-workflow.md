@@ -306,6 +306,26 @@ adb -s $D shell 'ls -d /data/adb/modules/KernelRay; ps -A -o PID,ARGS | grep -c 
 | 点了已应用节点的「应用」但没反应 | 正常：没有字段变化，只会同步 `selected`，不会重启核心 |
 | `node=` 为空但配置里有代理 | `config/runtime/applied` 丢了或没写；打开节点再点一次「应用」，别手改 `config.json` |
 
+### 诊断包里有什么
+
+用户在 WebUI 点「收集诊断包」或跑 `kernelray.sh diagnostics`，得到一个
+`/sdcard/Download/KernelRay-diagnostics-<YYYYmmdd-HHMMSS>.tar.gz`（没有 gzip 时退回 `.tar`）。
+只读收集：`config.json` / `state.json` / `outbound.json` / `nodeip` **绝不进包**（凭据），
+所以包里找不到节点的服务器地址。七个常驻文件（日志轮转过的话还有 `xray.log.1`）：
+
+| 文件 | 回答什么 |
+| --- | --- |
+| `info.txt` | `key=value`：`bundle`/`date`/`boot`/`uptime`，接着是 `kr_route_status` 的 `mode`/`effective`/`geodata`，以及每个缺失文件的 `missing=` 行。**先读它**——它一次给出分流模式和哪些文件不在，省得去 grep 一个根本没收集到的文件 |
+| `module.prop` | 用户当时装的是哪个版本。先确认这个，再相信你正在读的代码和机器上跑的一致 |
+| `status.json` | 模块最后一次自报的状态（`state`/`phase`/`pid`/`node`）。是缓存，可能已经过期 |
+| `rules` | `config/runtime/rules`，按 boot id 记的规则形状缓存。它回答「**这一版**装了吗」，不回答「有没有东西在捕获」——旧形状的链照样在捕获（ADR 0019） |
+| `kernel-snapshot.txt` | 收集那一刻的活内核：`iptables`/`ip6tables` 的 `-t mangle -S` 全表（含别的模块的链）、`KR_TP_INPUT` filter 链、`ip rule show` 与 `ip -6 rule show`、两张表的 v4+v6 路由。**只有它是现场**，`rules` 只是缓存 |
+| `kernelray.log` | 模块日志，通常很小 |
+| `xray.log` | 核心日志，通常是包里最大的一个；真正的拨号失败在这里 |
+
+`kernel-snapshot.txt` 用的是 `-S`，**不带计数器**。要证明「多少包被 mark、多少包走到了
+RETURN」这类问题，得在设备上现跑 `iptables -t mangle -nvL KR_TP_OUTPUT`——包里没有这些数字。
+
 ## 11. 一条命令走完（复制粘贴用）
 
 ```sh
