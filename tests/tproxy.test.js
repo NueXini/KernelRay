@@ -96,6 +96,18 @@ const fakePing = [
   ""
 ].join("\n");
 
+// 假 ndc：`resolver getnetdns` 打印 $FAKE_NDC_RESOLVERS（模拟 netd 的
+// 解析器列表应答，如 `200 0 fe80::a:1%wlan0 192.168.10.1`）；未设置时
+// 成功但什么都不说——列表拿不到就该沉默。
+const fakeNdc = [
+  "#!/bin/sh",
+  'if [ "$*" = "resolver getnetdns" ] && [ -n "$FAKE_NDC_RESOLVERS" ]; then',
+  '  echo "$FAKE_NDC_RESOLVERS"',
+  "fi",
+  "exit 0",
+  ""
+].join("\n");
+
 // `-version` 输出版本，`-test` 通过，`run -c` 保持存活，让启动能到达 "running"。
 // 每次调用都记入 $FAKE_LOG，测试因此可以断言什么先跑、什么后跑。
 const fakeCore = [
@@ -159,7 +171,8 @@ function makeModule() {
   const stubs = path.join(dir, "stubs");
   fs.mkdirSync(stubs, { recursive: true });
   for (const [name, body] of [["iptables", fakeIpt], ["ip6tables", fakeIpt],
-    ["ip", fakeIp], ["settings", fakeSettings], ["busybox", fakeWget], ["ping", fakePing]]) {
+    ["ip", fakeIp], ["settings", fakeSettings], ["busybox", fakeWget], ["ping", fakePing],
+    ["ndc", fakeNdc]]) {
     fs.writeFileSync(path.join(stubs, name), body, "utf8");
     fs.chmodSync(path.join(stubs, name), 0o755);
   }
@@ -219,6 +232,40 @@ const BODY_REMOVE = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_remove';
 const BODY_CONFLICT = '. "$KR_TEST_SCRIPT"; kr_dirs; kr_tp_conflict';
 // 完整走一遍启动路径：闸门、接管规则（engage）以及启动所运行的配置。
 const BODY_BOOT = '. "$KR_TEST_SCRIPT"; kr_dirs; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
+
+// ---- 主动告知：解析器列表 ----------------------------------------------------------------
+
+// 纯 IPv6 网络（解析器全部链路本地）上 DNS 按设计会失败（docs/adr/0006）。
+// 安装要把它说出来：用户与下一次排障不必翻 ADR 才知道这不是 bug。
+
+check("install: a link-local-only resolver network is announced in the module log", () => {
+  const m = makeModule();
+  runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1", FAKE_NDC_RESOLVERS: "200 0 fe80::a:1%wlan0" });
+  const log = fs.readFileSync(m.log, "utf8");
+  if (!log.includes("only link-local resolvers on the current network")) {
+    throw new Error("link-local-only resolver list not announced");
+  }
+});
+
+check("install: a mixed resolver list stays silent", () => {
+  const m = makeModule();
+  runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1", FAKE_NDC_RESOLVERS: "200 0 192.168.10.1 fe80::a:1%wlan0" });
+  const log = fs.readFileSync(m.log, "utf8");
+  if (log.includes("only link-local resolvers")) {
+    throw new Error("mixed resolver list must not be announced");
+  }
+});
+
+check("install: without ndc the resolver check stays silent", () => {
+  const m = makeModule();
+  // 真的把 ndc 从 PATH 里拿掉：桩存在但应答为空不是同一个分支。
+  fs.rmSync(path.join(m.dir, "stubs", "ndc"));
+  runShell(m, BODY_INSTALL, { FAKE_IPT_NOCHAIN: "1", FAKE_NDC_RESOLVERS: "200 0 fe80::a:1%wlan0" });
+  const log = fs.readFileSync(m.log, "utf8");
+  if (log.includes("link-local")) {
+    throw new Error("missing ndc must not fabricate a resolver verdict");
+  }
+});
 
 // ---- 规则安装 ----------------------------------------------------------------------------
 

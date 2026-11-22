@@ -358,12 +358,38 @@ kr_tp_copy_route() { # <4|6> <路由行>
   fi
 }
 
+# 主动告知：解析器列表全部链路本地（纯 IPv6 网络）时，DNS 按设计会失败——
+# 链路本地查询在 OUTPUT 链被拒绝，fallback 需要一个可捕获的 IPv4 解析器
+#（kr_tp_ipt_rules 里的 fe80 REJECT）。日志把它说出来，用户与下一次排障
+# 就不必翻 ADR 才知道这不是 bug。ndc 缺失、应答拿不到或列表里还有非
+# 链路本地的地址就什么都不说：保守的沉默胜过误报。仅在接管安装完成后
+# 调用。stdout 不是返回值，本函数不打印。
+kr_tp_resolver_warn() {
+  command -v ndc >/dev/null 2>&1 || return 0
+  _out=$(ndc resolver getnetdns 2>/dev/null) || return 0
+  # netd 的应答是小写的裸地址；归一化一次，别让分类器猜大小写。
+  _out=$(printf '%s' "$_out" | tr '[:upper:]' '[:lower:]')
+  _total=0
+  _ll=0
+  for _tok in $_out; do
+    case "$_tok" in
+      fe80* | FE80*) _total=$((_total + 1)); _ll=$((_ll + 1)) ;;
+      *.*.*.* | *:*) _total=$((_total + 1)) ;;
+    esac
+  done
+  if [ "$_total" -gt 0 ] && [ "$_total" = "$_ll" ]; then
+    kr_log DNS "only link-local resolvers on the current network; DNS to them is rejected by design and needs a catchable IPv4 resolver"
+  fi
+  return 0
+}
+
 # 安装整套接管命名空间，两个地址族。任何失败都会把一切再次移除：
 # 半次捕获是静默泄漏，不是更小的功能（docs/adr/0004）。
 kr_tp_install() {
   if kr_tp_rules_present; then
     kr_tp_log TProxy "takeover rules already present"
     kr_tp_rules_cache_write 1
+    kr_tp_resolver_warn
     return 0
   fi
   kr_tp_log TProxy "installing takeover rules (mark $KR_MARK, table $KR_TABLE, pref $KR_RULE_PREF, port $KR_TP_PORT)"
@@ -384,6 +410,7 @@ kr_tp_install() {
   fi
   kr_tp_log TProxy "takeover rules installed"
   kr_tp_rules_cache_write 1
+  kr_tp_resolver_warn
   return 0
 }
 
