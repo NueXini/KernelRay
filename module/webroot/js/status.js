@@ -34,6 +34,9 @@ function setButtons() {
   els.iSocks.disabled = !hasBridge;
   els.iHttp.disabled = !hasBridge;
   els.portsSave.disabled = busy || !hasBridge;
+  els.iDnsDirect.disabled = !hasBridge;
+  els.iDnsRemote.disabled = !hasBridge;
+  els.dnsSave.disabled = busy || !hasBridge;
   els.diagCollect.disabled = busy || diagBusy || !hasBridge;
   els.diagCollect.textContent = diagBusy ? T.diagCollecting : T.diagCollect;
   if (els.nList) { els.nList.classList.toggle("busy", busy); }

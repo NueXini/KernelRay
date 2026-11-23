@@ -14,8 +14,10 @@ const path = require("path");
 
 const prefsPath = path.join(__dirname, "..", "module", "webroot", "js", "prefs.js");
 const portsPath = path.join(__dirname, "..", "module", "webroot", "js", "ports.js");
+const dnsPath = path.join(__dirname, "..", "module", "webroot", "js", "dns.js");
 const prefsJs = fs.readFileSync(prefsPath, "utf8");
 const portsJs = fs.readFileSync(portsPath, "utf8");
+const dnsJs = fs.readFileSync(dnsPath, "utf8");
 
 // 偏好代码块从 theme.js 取得键名与主题校验；设备上 <head> 先于 js/prefs.js 加载它。
 // 这里也按同样方式、在 DOM 打桩后加载 theme.js，让测试运行的是随包文件本身，
@@ -55,6 +57,20 @@ if (pfrom < 0 || pto < 0) {
 const PB = new Function(portsJs.slice(pfrom, pto) + "\nreturn {" +
   " portVal: portVal, portsNormalize: portsNormalize, portsValidate: portsValidate," +
   " PORT_DEFAULTS: PORT_DEFAULTS, TP_PORT: TP_PORT" +
+"};")();
+
+// DNS 上游代码块遵循同样的抽取约定。
+const DNS_START = "// ---- dns upstream settings ----";
+const DNS_END = "// ---- end dns upstream settings ----";
+const dfrom = dnsJs.indexOf(DNS_START);
+const dto = dnsJs.indexOf(DNS_END);
+if (dfrom < 0 || dto < 0) {
+  console.error("could not find the dns upstream settings block markers in dns.js");
+  process.exit(1);
+}
+const DB = new Function(dnsJs.slice(dfrom, dto) + "\nreturn {" +
+  " dnsVal: dnsVal, dnsOk: dnsOk, dnsValidate: dnsValidate," +
+  " DNS_DIRECT_DEFAULT: DNS_DIRECT_DEFAULT, DNS_REMOTE_DEFAULT: DNS_REMOTE_DEFAULT" +
 "};")();
 
 let pass = 0;
@@ -231,6 +247,57 @@ check("ports: validation refuses the tproxy inbound's port", () => {
   eq(PB.portsValidate(PB.TP_PORT, 11009), "portTp");
   eq(PB.portsValidate(11008, PB.TP_PORT), "portTp");
   eq(PB.TP_PORT, 10810, "the reserved port is the shell's KR_TP_PORT");
+});
+
+// DNS 上游的接受范围与 shell 的 kr_dns_norm 完全一致：UDP 裸 IPv4（可带
+// 端口）或 https://IP[:端口]/dns-query；空值 = 未配置。域名形式的 DoH
+// 一律拒绝。
+check("dns: empty and whitespace mean unconfigured", () => {
+  eq(DB.dnsVal(undefined), "");
+  eq(DB.dnsVal(null), "");
+  eq(DB.dnsVal("  "), "");
+  eq(DB.dnsVal(" https://223.5.5.5/dns-query "), "https://223.5.5.5/dns-query");
+  eq(DB.dnsValidate("", ""), "");
+  eq(DB.dnsValidate("  ", " "), "");
+});
+
+check("dns: UDP upstreams accept bare IPv4 with an optional port", () => {
+  eq(DB.dnsOk("223.5.5.5"), true);
+  eq(DB.dnsOk("119.29.29.29:5353"), true);
+  eq(DB.dnsOk("0.0.0.0"), true);
+  eq(DB.dnsOk("255.255.255.255:65535"), true);
+  eq(DB.dnsOk("119.29.29.29:0"), false, "port 0 is not a port");
+  eq(DB.dnsOk("119.29.29.29:65536"), false);
+  eq(DB.dnsOk("119.29.29.29:"), false);
+  eq(DB.dnsOk("1.2.3"), false, "a short IP is not an upstream");
+  eq(DB.dnsOk("1.2.3.4.5"), false);
+  eq(DB.dnsOk("256.1.1.1"), false);
+  eq(DB.dnsOk("udp://223.5.5.5"), false);
+  eq(DB.dnsOk("dns.alidns.com"), false, "a bare domain is not an upstream");
+});
+
+check("dns: DoH upstreams must be https with an IP and /dns-query", () => {
+  eq(DB.dnsOk("https://223.5.5.5/dns-query"), true);
+  eq(DB.dnsOk("https://9.9.9.9:8443/dns-query"), true);
+  eq(DB.dnsOk("https://1.1.1.1/dns-query/"), false);
+  eq(DB.dnsOk("https://1.1.1.1/dns"), false);
+  eq(DB.dnsOk("http://1.1.1.1/dns-query"), false, "plain http is not DoH");
+  eq(DB.dnsOk("https://dns.alidns.com/dns-query"), false,
+    "domain DoH needs bootstrapping and is refused outright");
+  eq(DB.dnsOk("https://dns.google/dns-query"), false);
+  eq(DB.dnsOk("https://223.5.5.5:0/dns-query"), false);
+  eq(DB.dnsOk("https://223.5.5.5:65536/dns-query"), false);
+});
+
+check("dns: validation reports one reason for both fields", () => {
+  eq(DB.dnsValidate("119.29.29.29", "https://1.1.1.1/dns-query"), "");
+  eq(DB.dnsValidate("https://dns.alidns.com/dns-query", ""), "dnsFormat");
+  eq(DB.dnsValidate("", "1.2.3"), "dnsFormat");
+});
+
+check("dns: the UI defaults match the shell fallbacks", () => {
+  eq(DB.DNS_DIRECT_DEFAULT, "https://223.5.5.5/dns-query");
+  eq(DB.DNS_REMOTE_DEFAULT, "https://1.1.1.1/dns-query");
 });
 
 if (failures.length) {

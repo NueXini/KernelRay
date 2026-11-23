@@ -30,10 +30,9 @@ KR_TP_SHAPE=2
 KR_TPLOG=$KR_LOGDIR/kernelray.log
 # 分流模式（docs/adr/0014）：shell 的偏好，与 日志等级 不同，它立即
 # 生效。文件存在即 大陆直连；不存在即 全局，即之前每个版本的行为。
-# cn 模式就是用这两个国内解析器解析大陆域名的。
+# cn 模式用 直连DNS（config/settings.json 的 directDns，kr_settings_dns
+# 解析，未配置/非法走兕底）解析大陆域名。
 KR_ROUTE=$KR_RUNDIR/route
-KR_CN_DNS1=223.5.5.5
-KR_CN_DNS2=119.29.29.29
 # Ali DoH 的 JSON API。是 IP 字面量，询问它不需要自己先解析。
 KR_DOH_RESOLVE=https://223.5.5.5/resolve
 # KernelSU 的 busybox 带 wget applet，但 PATH 里既没有 wget 也没有 curl——
@@ -597,16 +596,28 @@ kr_route_effective() { # [模式覆盖]
   return 0
 }
 
-# DNS 模块块。全局 保留单一 DoH 上游（docs/adr/0006）。大陆直连 对
-# 大陆域名先问国内解析器，让应答是 CDN 期待的那些；geoip:cn 之外的
-# 应答被拒绝、查询落到仍经节点离开的 DoH。<host> <转义 host> 是
-# 已应用节点自己的名字。
+# DNS 模块块。全局 保留单一 远程DNS 上游（docs/adr/0006；默认
+# https://1.1.1.1/dns-query，可自定义）。大陆直连 对大陆域名先问
+# 直连DNS（config/settings.json 的 directDns，未配置/非法时兕底为
+# https://223.5.5.5/dns-query），让应答是 CDN 期待的那些；geoip:cn
+# 之外的应答被拒绝、查询落到仍经节点离开的 远程DNS。<host> <转义 host>
+# 是已应用节点自己的名字。
 kr_tp_dns_block() { # <host> <转义 host> -> KR_DNS_BLOCK
-  _servers='"https://1.1.1.1/dns-query"'
+  # 远程DNS 是不带 domains 的默认上游，接住一切没被 直连DNS 的
+  # geosite:cn 接走的域名。UDP 形式带显式端口时以对象给出端口，
+  # 其余保持裸字符串（DoH 的端口已在 URL 里）。
+  _remote='"'$KR_DNS_REMOTE_ADDR'"'
+  if [ -n "$KR_DNS_REMOTE_PORT" ]; then
+    _remote='{"address":"'$KR_DNS_REMOTE_ADDR'","port":'$KR_DNS_REMOTE_PORT'}'
+  fi
   if [ "$KR_ROUTE_CN" = 1 ]; then
-    _servers='{"address":"'$KR_CN_DNS1'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
-    _servers=$_servers'{"address":"'$KR_CN_DNS2'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]},'
-    _servers=$_servers'"https://1.1.1.1/dns-query"'
+    _direct='{"address":"'$KR_DNS_DIRECT_ADDR'","domains":["geosite:cn"],"expectIPs":["geoip:cn"]}'
+    if [ -n "$KR_DNS_DIRECT_PORT" ]; then
+      _direct='{"address":"'$KR_DNS_DIRECT_ADDR'","port":'$KR_DNS_DIRECT_PORT',"domains":["geosite:cn"],"expectIPs":["geoip:cn"]}'
+    fi
+    _servers=$_direct,$_remote
+  else
+    _servers=$_remote
   fi
   # 钉死的节点地址移除对任何上游解析器的自举依赖：DNS 模块不经
   # 任何人、从 hosts 应答节点域名。大陆直连去广告 往同一映射加广告
@@ -641,9 +652,9 @@ kr_tp_routing_block() { # <1|0> <host> <转义 host>
     if [ -n "$2" ]; then
       _rules='{"inboundTag":["dns"],"domain":["full:'$3'"],"outboundTag":"direct"}'
     fi
-    # 国内解析器查询走 direct；DNS 模块问的其余一切经代理。
+    # 直连DNS 的查询走 direct；DNS 模块问的其余一切经代理。
     if [ "$KR_ROUTE_CN" = 1 ]; then
-      _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"ip":["'$KR_CN_DNS1'","'$KR_CN_DNS2'"],"outboundTag":"direct"}'
+      _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"ip":["'$KR_DNS_DIRECT_IP'"],"outboundTag":"direct"}'
     fi
     _rules=$_rules${_rules:+,}'{"inboundTag":["dns"],"outboundTag":"proxy"}'
     _rules=$_rules',{"network":"tcp,udp","port":53,"outboundTag":"dns-out"}'
@@ -676,6 +687,9 @@ kr_tp_render_blocks() { # [路由覆盖]；设置 KR_TP_INBOUND、KR_DNS_OUTBOUN
   KR_TP_INBOUND='{"tag":"tp-in","listen":"::","port":'"$KR_TP_PORT"',"protocol":"dokodemo-door","settings":{"network":"tcp,udp","followRedirect":true},"streamSettings":{"sockopt":{"tproxy":"tproxy"}}}'
   KR_DNS_OUTBOUND='{"tag":"dns-out","protocol":"dns","settings":{}}'
   kr_route_effective "${1:-}"
+  # 直连DNS 与 远程DNS 从 settings.json 解析（未配置/非法走兕底）；
+  # DNS 块与路由块的 direct 规则共用同一组值。
+  kr_settings_dns
   _host=$(kr_meta_get host 2>/dev/null)
   case "$_host" in
     *:*) _host="" ;; # IPv6 字面量：无可解析

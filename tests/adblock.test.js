@@ -221,7 +221,7 @@ const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 const AD_RULE = { domain: ["geosite:category-ads-all"], outboundTag: "block" };
 const CN_AD_TAKEOVER = [
   { inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct" },
-  { inboundTag: ["dns"], ip: ["223.5.5.5", "119.29.29.29"], outboundTag: "direct" },
+  { inboundTag: ["dns"], ip: ["223.5.5.5"], outboundTag: "direct" },
   { inboundTag: ["dns"], outboundTag: "proxy" },
   { network: "tcp,udp", port: 53, outboundTag: "dns-out" },
   AD_RULE,
@@ -241,7 +241,7 @@ check("render: Direct-CN-Adblock adds the DNS sink and the block rule to Direct-
 
   // 这里承重的是 DNS 模块：被接管的流量不带域名，只有解析器能拒绝广告域名
   // （docs/adr/0021）。
-  eq(cfg.dns.servers.length, 3, "the domestic split survives");
+  eq(cfg.dns.servers.length, 2, "the domestic split survives");
   eq(cfg.dns.hosts, { "geosite:category-ads-all": "#3" }, "the ad sink is the only hosts entry");
   eq(cfg.dns.tag, "dns", "the tag its routing rules match");
 

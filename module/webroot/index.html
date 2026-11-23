@@ -178,6 +178,25 @@
     </section>
 
     <section class="card">
+      <div class="nodehead">
+        <span id="l-set-dns">DNS</span>
+      </div>
+      <div class="ports stack">
+        <label class="portfield">
+          <span id="l-set-dns-direct">Direct DNS</span>
+          <input type="text" id="i-dns-direct" spellcheck="false" autocapitalize="off"
+                 autocomplete="off" placeholder="https://223.5.5.5/dns-query" disabled>
+        </label>
+        <label class="portfield">
+          <span id="l-set-dns-remote">Remote DNS</span>
+          <input type="text" id="i-dns-remote" spellcheck="false" autocapitalize="off"
+                 autocomplete="off" placeholder="https://1.1.1.1/dns-query" disabled>
+        </label>
+      </div>
+      <button type="button" class="primary mt" id="dns-save" disabled>Save</button>
+    </section>
+
+    <section class="card">
       <div class="cardtitle" id="l-set-dev">Developer options</div>
       <div class="cardsec">
         <div class="hint" id="l-set-diag-hint"></div>

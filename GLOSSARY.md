@@ -133,6 +133,19 @@ _避免_: overlap, interference
 让设备 DNS 经模块自己的解析器应答、并把这些查询经代理送出，而不是交给网络的解析器。
 _避免_: DNS hijack, fake DNS（那是模块不使用的技术）
 
+**直连 DNS (Direct DNS)**:
+大陆直连 与 大陆直连去广告 里解析大陆目的地所用的上游。它是在这两种 分流模式
+下用户可替换的单个上游（`config/settings.json` 的 `directDns`），未配置或非法时以
+DoH `https://223.5.5.5/dns-query` 兜底；不是 核心配置 里的 DNS 模块本身，也不属于 全局。
+_避免_: 核心DNS, 国内DNS, 主DNS, 国内上游DNS（旧称，已被本词条替代）
+
+**远程 DNS (Remote DNS)**:
+DNS 模块对一切非大陆目的地（全局 模式下则是全部目的地）使用的默认上游。它是用户可
+替换的单个上游（`config/settings.json` 的 `remoteDns`），未配置或非法时以 DoH
+`https://1.1.1.1/dns-query` 兜底；它的上游查询经 代理 离开设备，与 直连DNS
+的查询走 direct 相对。
+_避免_: 代理DNS, 国外DNS, fallback DNS
+
 **失败关闭 (Fail-closed)**:
 核心死亡后规则留在原位，流量被丢弃而不是直连出去。规则独立于核心的生死而存在，只有
 显式的 取消应用、无法重启核心的回滚、重启或卸载才会撤掉它们。

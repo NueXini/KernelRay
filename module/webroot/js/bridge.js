@@ -7,6 +7,9 @@ var CLI = MOD + "/scripts/kernelray.sh";
 // 各自一个文件，UI 偏好单独一个子目录，运行时文件在 config/runtime/ 下。
 var CONFIG = MOD + "/config";
 var STATE = CONFIG + "/state.json";
+// DNS 上游（直连DNS/远程DNS）：与 state.json 同类的核心意图，但它是
+// 独立的 key=value 之外的 JSON 文件，由 shell 与本页共同读写。
+var SETTINGS = CONFIG + "/settings.json";
 var APPLIED = CONFIG + "/runtime/applied";
 var OUTBOUND = CONFIG + "/outbound.json";
 var OUTBOUND_META = CONFIG + "/outbound.meta";
@@ -72,6 +75,10 @@ function writeState(state) {
   return writeFile(STATE, JSON.stringify(state, null, 2) + "\n", "600");
 }
 
+function writeSettings(obj) {
+  return writeFile(SETTINGS, JSON.stringify(obj, null, 2) + "\n", "600");
+}
+
 // 节点/订阅的文件路径。id 由身份哈希派生，只可能是 [0-9A-Za-z_-]+：
 // 拼进路径前再校验一次，它同时是文件名，也等于防御路径注入。
 function nodeFile(id) {
@@ -134,4 +141,4 @@ function readJsonDir(dir) {
     });
 }
 
-export { MOD, CLI, STATE, APPLIED, OUTBOUND, OUTBOUND_META, SUBFETCH_URL, NODES_DIR, SUBS_DIR, PREFS_FILE, LOG_LEVELS, hasBridge, exec, parseKv, writeFile, writeState, nodeFile, subFile, parseState, readState, readJsonDir };
+export { MOD, CLI, STATE, SETTINGS, APPLIED, OUTBOUND, OUTBOUND_META, SUBFETCH_URL, NODES_DIR, SUBS_DIR, PREFS_FILE, LOG_LEVELS, hasBridge, exec, parseKv, writeFile, writeState, writeSettings, nodeFile, subFile, parseState, readState, readJsonDir };

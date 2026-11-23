@@ -33,6 +33,12 @@ KR_STATUS=$KR_RUNDIR/status.json
 KR_VERFILE=$KR_RUNDIR/version
 KR_TMPL=$KR_CONFDIR/config.example.json
 KR_STATE=$KR_CONFDIR/state.json
+# 自定义 DNS 上游：直连DNS 与 远程DNS，各一个值（UDP 的 IP[:端口] 或 DoH 的
+# https://IP[:端口]/dns-query，只收 IPv4 字面量）。文件由 UI 首次保存时创建，
+# 模块不随包带它：缺失或键为空串都等于未配置，走各自的兕底。
+KR_SETTINGS=$KR_CONFDIR/settings.json
+KR_DNS_DIRECT_DEFAULT="https://223.5.5.5/dns-query"
+KR_DNS_REMOTE_DEFAULT="https://1.1.1.1/dns-query"
 KR_OUTBOUND=$KR_CONFDIR/outbound.json
 KR_OUTBOUND_META=$KR_CONFDIR/outbound.meta
 KR_APPLIED=$KR_RUNDIR/applied
@@ -426,6 +432,106 @@ kr_setting_port() { # <键> <默认值>
     httpPort) printf '%s\n' "$KR_HTTP_PORT" ;;
     *) printf '%s\n' "$2" ;;
   esac
+}
+
+# 校验一个 DNS 上游值：UDP 形式 `IP[:端口]` 或 DoH 形式
+# `https://IP[:端口]/dns-query`。只收 IPv4 字面量：域名形式的 DoH
+# 会造成自举依赖（上游自己的地址要先问别人），被硬性拒绝；IPv6
+# 同理暂不收录。成功时设置 KR_DNS_VAL_ADDR / KR_DNS_VAL_PORT /
+# KR_DNS_VAL_IP：ADDR 是核心配置里 address 字段的值（UDP 是裸 IP，
+# DoH 是完整 URL），PORT 只在 UDP 显式给出端口时非空（DoH 的端口
+# 已在 URL 里），IP 是供路由规则使用的裸 IP。失败返回 1，不设置
+# 任何值。
+kr_dns_valid() { # <值>
+  KR_DNS_VAL_ADDR=""
+  KR_DNS_VAL_PORT=""
+  KR_DNS_VAL_IP=""
+  _v=$1
+  _form=udp
+  case "$_v" in
+    https://*)
+      case "$_v" in
+        https://*/dns-query) ;;
+        *) return 1 ;;
+      esac
+      _hostport=${_v#https://}
+      _hostport=${_hostport%/dns-query}
+      _form=doh
+      ;;
+    *)
+      # 裸 IP 或 IP:端口；路径分隔符在这里非法（DoH 必须走上面的分支）。
+      case "$_v" in
+        */*) return 1 ;;
+      esac
+      _hostport=$_v
+      ;;
+  esac
+  case "$_hostport" in
+    *:*)
+      KR_DNS_VAL_IP=${_hostport%:*}
+      _port=${_hostport##*:}
+      case "$_port" in '' | *[!0-9]*) return 1 ;; esac
+      [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] || return 1
+      ;;
+    *) KR_DNS_VAL_IP=$_hostport ;;
+  esac
+  # IPv4 点分四段：每段 1-3 位数字、无前导零、<=255。
+  case $(printf '%s' "$KR_DNS_VAL_IP" | awk -F. '
+    {
+      if (NF != 4) { print 0; exit }
+      for (i = 1; i <= 4; i++) {
+        n = $i
+        if (n == "" || length(n) > 3 || n !~ /^[0-9]+$/ || n ~ /^0[0-9]/ || n + 0 > 255) { print 0; exit }
+      }
+      print 1
+    }') in
+    1) ;;
+    *) return 1 ;;
+  esac
+  case "$_form" in
+    doh) KR_DNS_VAL_ADDR=$_v ;;
+    udp)
+      KR_DNS_VAL_ADDR=$KR_DNS_VAL_IP
+      [ -n "$_port" ] && KR_DNS_VAL_PORT=$_port
+      ;;
+  esac
+  return 0
+}
+
+# 从 config/settings.json 读用户自定义的 直连DNS 与 远程DNS。UI 把两个键各
+# 序列化在单独一行；这里只读这两个扁平字符串键并逐字段校验，缺失、空串或
+# 非法值都落到各自的兕底（与端口的逐字段回退同一个哲学），所以一份手改的
+# settings.json 永远无法把 DNS 整体弄坏。日志只区分「非法值被拒绝」
+#（多一行，便于排查）；未配置走兕底是默认行为，不打扰。
+# 设置 KR_DNS_DIRECT_ADDR / KR_DNS_DIRECT_PORT / KR_DNS_DIRECT_IP 与
+# KR_DNS_REMOTE_ADDR / KR_DNS_REMOTE_PORT（供 tproxy 的 DNS 与路由块用）。
+kr_settings_dns() {
+  KR_DNS_DIRECT_ADDR=$KR_DNS_DIRECT_DEFAULT
+  KR_DNS_DIRECT_PORT=""
+  KR_DNS_DIRECT_IP=223.5.5.5
+  KR_DNS_REMOTE_ADDR=$KR_DNS_REMOTE_DEFAULT
+  KR_DNS_REMOTE_PORT=""
+  [ -s "$KR_SETTINGS" ] || return 0
+  _d=$(sed -n 's/.*"directDns"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$KR_SETTINGS" 2>/dev/null | head -n 1)
+  _r=$(sed -n 's/.*"remoteDns"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$KR_SETTINGS" 2>/dev/null | head -n 1)
+  if [ -n "$_d" ]; then
+    if kr_dns_valid "$_d"; then
+      KR_DNS_DIRECT_ADDR=$KR_DNS_VAL_ADDR
+      KR_DNS_DIRECT_PORT=$KR_DNS_VAL_PORT
+      KR_DNS_DIRECT_IP=$KR_DNS_VAL_IP
+    else
+      kr_log_file DNS "directDns: invalid value rejected; using the fallback $KR_DNS_DIRECT_DEFAULT"
+    fi
+  fi
+  if [ -n "$_r" ]; then
+    if kr_dns_valid "$_r"; then
+      KR_DNS_REMOTE_ADDR=$KR_DNS_VAL_ADDR
+      KR_DNS_REMOTE_PORT=$KR_DNS_VAL_PORT
+    else
+      kr_log_file DNS "remoteDns: invalid value rejected; using the fallback $KR_DNS_REMOTE_DEFAULT"
+    fi
+  fi
+  return 0
 }
 
 # 日志等级（docs/adr/0015）：shell 的偏好，如同分流模式。文件不存在即
@@ -968,6 +1074,27 @@ kr_apply_ports() {
   fi
   kr_swap_config "$KR_CANDIDATE" "" || return 1
   kr_log Node "ports applied: $(kr_setting_port socksPort 10808) socks / $(kr_setting_port httpPort 10809) http"
+  return 0
+}
+
+# dns：用 config/settings.json 里的上游重渲染 config.json。UI 先写
+# settings.json（意图），然后调用本函数；候选的测试与换入与端口
+# 完全相同——DNS 改的是上游，从不改出站。保存已渲染的值什么都不做。
+kr_apply_dns() {
+  kr_dirs
+  _n=$(kr_applied_id) || {
+    kr_log Node "dns: no applied node"
+    echo "no applied node; apply a node first" >&2
+    return 1
+  }
+  kr_config_candidate "$_n" || return 1
+  if [ -z "$KR_CANDIDATE" ]; then
+    kr_log Node "dns: the config already carries the saved DNS settings"
+    return 0
+  fi
+  kr_swap_config "$KR_CANDIDATE" "" || return 1
+  # 候选渲染已解析过 settings.json：直接引用那时的值。
+  kr_log Node "dns applied: direct $KR_DNS_DIRECT_ADDR / remote $KR_DNS_REMOTE_ADDR"
   return 0
 }
 
@@ -1624,6 +1751,7 @@ kr_cli() {
     apply) kr_apply "${1:-}" ;;
     unapply) kr_unapply ;;
     ports) kr_apply_ports ;;
+    dns) kr_apply_dns ;;
     diagnostics) kr_diagnostics ;;
     probe) kr_diag_probes ;;
     routing)

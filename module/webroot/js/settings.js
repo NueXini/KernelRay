@@ -1,8 +1,9 @@
 import { T } from "./i18n.js";
 import { els } from "./els.js";
 import { busy, setBusy, toast, refreshPage } from "./main.js";
-import { exec, CLI, STATE, hasBridge, writeState } from "./bridge.js";
+import { exec, CLI, STATE, SETTINGS, hasBridge, writeState, writeSettings } from "./bridge.js";
 import { portsNormalize, portsValidate, portVal } from "./ports.js";
+import { dnsVal, dnsValidate } from "./dns.js";
 import { lastKv, setButtons } from "./status.js";
 import { themePref, langPref, logLines } from "./prefs.js";
 
@@ -83,4 +84,73 @@ function resetPortsDirty() {
 }
 function setPortDirty(field, val) { portsDirty[field] = val; }
 
-export { portsDirty, renderPrefs, refreshSettings, doSavePorts, resetPortsDirty, setPortDirty };
+// ---- dns upstream settings ----
+// 直连DNS/远程DNS 的展示与保存。输入框为空 = 未配置，用 placeholder
+// 提示 shell 的兜底值；保存时读-改-写 config/settings.json，再交给
+// shell 的 `dns` 命令渲染/重启（与端口的手势同构）。
+var dnsDirty = { direct: false, remote: false };
+
+function parseSettings(text) {
+  var s = null;
+  try { s = JSON.parse((text || "").trim()); } catch (e) { s = null; }
+  return s && typeof s === "object" && !Array.isArray(s) ? s : {};
+}
+
+// 状态轮询不经过 settings.json，本页自己拉：空值保持空输入框。
+// 与端口一样，用户正在编辑的字段绝不被轮询覆盖。
+function refreshDns() {
+  if (!hasBridge) { return; }
+  return exec("cat " + SETTINGS + " 2>/dev/null").then(function (r) {
+    var s = parseSettings(r.stdout);
+    var d = dnsVal(s.directDns);
+    var w = dnsVal(s.remoteDns);
+    if (!dnsDirty.direct && document.activeElement !== els.iDnsDirect) {
+      els.iDnsDirect.value = d;
+    }
+    if (!dnsDirty.remote && document.activeElement !== els.iDnsRemote) {
+      els.iDnsRemote.value = w;
+    }
+  });
+}
+
+function doSaveDns() {
+  if (busy || !hasBridge) { return; }
+  var d = dnsVal(els.iDnsDirect.value);
+  var w = dnsVal(els.iDnsRemote.value);
+  var err = dnsValidate(d, w);
+  if (err) { toast(T[err]); return; }
+  setBusy(true);
+  setButtons();
+  toast(T.dnsSaving);
+  exec("cat " + SETTINGS + " 2>/dev/null").then(function (r) {
+    var s = parseSettings(r.stdout);
+    // 空值等于未配置：删键而不是留空串。
+    if (d) { s.directDns = d; } else { delete s.directDns; }
+    if (w) { s.remoteDns = w; } else { delete s.remoteDns; }
+    return writeSettings(s).then(function () {
+      return exec(CLI + " dns");
+    }).then(function (r) {
+      if (r.errno !== 0) { toast(T.actionFailed + ": " + (r.stderr || r.errno)); }
+      else {
+        dnsDirty.direct = false;
+        dnsDirty.remote = false;
+        toast(T.dnsSaved);
+      }
+    });
+  }).catch(function (e) {
+    toast(T.actionFailed + ": " + e.message);
+  }).then(function () {
+    setBusy(false);
+    setButtons();
+    refreshPage();
+  });
+}
+
+function resetDnsDirty() {
+  dnsDirty.direct = false;
+  dnsDirty.remote = false;
+}
+function setDnsDirty(field, val) { dnsDirty[field] = val; }
+// ---- end dns upstream settings ----
+
+export { portsDirty, renderPrefs, refreshSettings, doSavePorts, resetPortsDirty, setPortDirty, dnsDirty, refreshDns, doSaveDns, resetDnsDirty, setDnsDirty };

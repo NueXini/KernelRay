@@ -212,6 +212,16 @@ function runFail(dir, body, args, extraEnv) {
   throw new Error("expected the shell command to fail");
 }
 
+// 直连DNS 与 远程DNS 是 config/settings.json 里各一个字符串键；两个键
+// 各占一行正是 shell 逐行提取的形状。undefined 表示不写这个键。
+function writeSettings(m, direct, remote) {
+  const o = {};
+  if (direct !== undefined) { o.directDns = direct; }
+  if (remote !== undefined) { o.remoteDns = remote; }
+  fs.writeFileSync(path.join(m.dir, "config", "settings.json"),
+    JSON.stringify(o, null, 2) + "\n");
+}
+
 function writeOutbound(m, host) {
   fs.writeFileSync(m.outbound, JSON.stringify(fixture));
   fs.writeFileSync(m.meta, "id=" + ID + "\nhost=" + (host || "n.example.com") + "\n");
@@ -232,7 +242,7 @@ const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 
 const CN_RULES_TAKEOVER = [
   { inboundTag: ["dns"], domain: ["full:n.example.com"], outboundTag: "direct" },
-  { inboundTag: ["dns"], ip: ["223.5.5.5", "119.29.29.29"], outboundTag: "direct" },
+  { inboundTag: ["dns"], ip: ["223.5.5.5"], outboundTag: "direct" },
   { inboundTag: ["dns"], outboundTag: "proxy" },
   { network: "tcp,udp", port: 53, outboundTag: "dns-out" },
   { ip: ["geoip:private"], outboundTag: "direct" },
@@ -255,14 +265,11 @@ check("render: Direct-CN splits DNS and sends mainland destinations direct", () 
   runShell(m.dir, BODY_PREF, ["cn"]);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
 
-  eq(cfg.dns.servers.length, 3, "two domestic resolvers and the DoH fallback");
+  eq(cfg.dns.servers.length, 2, "the direct upstream and the remote fallback");
   eq(cfg.dns.servers[0], {
-    address: "223.5.5.5", domains: ["geosite:cn"], expectIPs: ["geoip:cn"]
-  }, "first domestic resolver");
-  eq(cfg.dns.servers[1], {
-    address: "119.29.29.29", domains: ["geosite:cn"], expectIPs: ["geoip:cn"]
-  }, "second domestic resolver");
-  eq(cfg.dns.servers[2], "https://1.1.1.1/dns-query", "DoH stays the fallback");
+    address: "https://223.5.5.5/dns-query", domains: ["geosite:cn"], expectIPs: ["geoip:cn"]
+  }, "unconfigured direct upstream falls back to the Ali DoH");
+  eq(cfg.dns.servers[1], "https://1.1.1.1/dns-query", "the remote upstream stays the default");
   eq(cfg.dns.queryStrategy, "UseIPv4", "queryStrategy survives the split");
   // 下面的分流规则匹配 inboundTag:["dns"]；只有 dns 块声明了该标签，核心
   // 才会给它的上游查询打上这个标签 —— 否则标签就是 xray.system.<uuid>，每条
@@ -300,7 +307,7 @@ check("render: an IP node keeps the resolver rule and loses the bootstrap rule",
   runShell(m.dir, BODY_PREF, ["cn"]);
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
   eq(cfg.routing.rules, CN_RULES_TAKEOVER.slice(1), "no full:host rule for a literal");
-  eq(cfg.dns.servers.length, 3, "the split is not tied to the node's hostname");
+  eq(cfg.dns.servers.length, 2, "the split is not tied to the node's hostname");
 });
 
 check("render: a pinned node address lands in the hosts of the split DNS too", () => {
@@ -309,9 +316,39 @@ check("render: a pinned node address lands in the hosts of the split DNS too", (
   runShell(m.dir, BODY_PREF, ["cn"]);
   fs.writeFileSync(path.join(m.dir, "config", "runtime", "nodeip"), "203.0.113.9\n");
   const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
-  eq(cfg.dns.servers.length, 3, "the split survives the pin");
+  eq(cfg.dns.servers.length, 2, "the split survives the pin");
   eq(cfg.dns.hosts, { "full:n.example.com": "203.0.113.9" }, "hosts pin");
   eq(cfg.routing.rules, CN_RULES_TAKEOVER, "the rules are unchanged by the pin");
+});
+
+check("render: custom DNS upstreams land in the split config", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  runShell(m.dir, BODY_PREF, ["cn"]);
+  // 直连 UDP 带显式端口；远程 DoH 带自定义端口。
+  writeSettings(m, "119.29.29.29:5353", "https://9.9.9.9:8443/dns-query");
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.dns.servers[0], {
+    address: "119.29.29.29", port: 5353, domains: ["geosite:cn"], expectIPs: ["geoip:cn"]
+  }, "custom direct UDP upstream with an explicit port");
+  eq(cfg.dns.servers[1], "https://9.9.9.9:8443/dns-query", "custom remote DoH upstream");
+  eq(cfg.routing.rules[1], { inboundTag: ["dns"], ip: ["119.29.29.29"], outboundTag: "direct" },
+    "the direct rule follows the custom upstream");
+});
+
+check("render: invalid or domain DoH DNS values fall back per field", () => {
+  const m = makeModule();
+  writeOutbound(m);
+  runShell(m.dir, BODY_PREF, ["cn"]);
+  // 域名形式的 DoH（自举依赖，硬性禁止）与段数不对的裸 IP。
+  writeSettings(m, "https://dns.alidns.com/dns-query", "1.2.3");
+  const cfg = JSON.parse(runShell(m.dir, BODY_RENDER, [shPath(m.outbound)]));
+  eq(cfg.dns.servers[0], {
+    address: "https://223.5.5.5/dns-query", domains: ["geosite:cn"], expectIPs: ["geoip:cn"]
+  }, "invalid direct value falls back");
+  eq(cfg.dns.servers[1], "https://1.1.1.1/dns-query", "invalid remote value falls back");
+  eq(cfg.routing.rules[1], { inboundTag: ["dns"], ip: ["223.5.5.5"], outboundTag: "direct" },
+    "the direct rule follows the fallback");
 });
 
 // ---- 降级 ------------------------------------------------------------------------

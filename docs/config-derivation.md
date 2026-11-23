@@ -16,6 +16,7 @@
 | 路径 | 写入者 | 性质 |
 | --- | --- | --- |
 | `config/state.json` | WebUI | 用户意图：`selected` 与入站端口（节点库不在这里，见下两行） |
+| `config/settings.json` | WebUI | 用户意图：自定义 DNS 上游（`directDns` / `remoteDns`，见「自定义 DNS 上游」）；缺失或字段缺失 = 全部用内置兜底 |
 | `config/nodes/<id>.json` | WebUI | 一个手工节点一个文件：裸节点对象（见 [`state-schema.md`](state-schema.md)） |
 | `config/subscriptions/<id>.json` | WebUI | 一条订阅一个文件：`{id,name,url,nodes[],lastFetched?,lastError?}`，节点内嵌 |
 | `config/webui/preferences.json` | WebUI | UI 偏好（主题、语言、日志行数） |
@@ -24,6 +25,7 @@
 | `config/config.example.json` | 仓库 | 配置模板（本身不可运行） |
 | `config/config.json` | shell | 核心实际运行的配置 |
 | `config/state.json` → 渲染 | WebUI 写、shell 读 | 入站端口（`settings.socksPort` / `settings.httpPort`），渲染时提取（ADR 0009） |
+| `config/settings.json` → 渲染 | WebUI 写、shell 读 | DNS 上游（`directDns` / `remoteDns`），渲染时逐行提取字符串键；无效值拒绝并回落内置兜底 |
 | `config/runtime/applied` | shell | `config.json` 由哪个节点 id 构建而来 |
 | `config/runtime/config.tested` | shell | 通过了 `xray -test` 的那些字节的副本（ADR 0017） |
 | `config/runtime/status.json` | shell | `state`、`phase`、`started`、`revision`、`node`、`route`、`boot`（写入它的那次开机；阅读方把别的开机的文件当 `idle`，docs/adr/0018） |
@@ -201,7 +203,9 @@ toast 显示。只有失败的 **启动** 才让状态失败，恢复路径在�
 拒绝掉的同一个隐患，所以 UI 在那边渲染节点、交给 shell 一条扁平出站。唯一的例外是入站
 端口（[ADR 0009](adr/0009-shell-reads-state-settings-for-inbound-ports.md)）：
 `kr_render_config` 用 `sed` 从 `settings` 对象里恰好提取两个扁平整数键，任何异常时逐字段
-回退到 10808/10809。分流模式 没有长出这个例外：它是 shell 自己的偏好文件
+回退到 10808/10809。DNS 上游是第二处例外：字段住在独立的扁平文件 `config/settings.json`
+里（每键一行），`kr_settings_dns` 用同样的逐行 `sed` 提取两个字符串键，无效值拒绝并回落
+内置兑底。分流模式 没有长出这个例外：它是 shell 自己的偏好文件
 （[ADR 0014](adr/0014-geodata-ships-in-the-module-and-routing-is-a-preset-mode.md)），所以
 `sed` 仍然只读两个整数。日志等级 是同一类 shell 偏好
 （[ADR 0015](adr/0015-log-level-waits-for-the-next-core-start.md)）。
@@ -214,6 +218,28 @@ ports`。shell 重渲染配置 — 用的是已应用节点的出站，账目对
 或 `outbound.meta` 指向别的节点，而不是渲染别的什么。随后经与 `apply` 相同的 备份 → 停止
 → 换入 → 重启 → 回滚 路径测试并换入。已应用 id 不动：端口改的是本地入站，从不改出站。
 `-test` 或启动失败的候选让旧配置和运行中的核心保持原样。
+
+## 自定义 DNS 上游
+
+设置页的 DNS 卡片与端口卡片是同一类手势：UI 校验两个字段，读-改-写
+`config/settings.json`，然后调用 `kernelray.sh dns`。shell 走与端口相同
+的 渲染 → `-test` → 换入/重启 路径，已应用 id 不动。
+
+两个字段是 `directDns`（直连DNS）与 `remoteDns`（远程DNS），各接受一种形式的值：
+
+- **UDP**：裸 IPv4，可带端口（`119.29.29.29`、`119.29.29.29:5353`）；
+- **DoH**：`https://IP[:端口]/dns-query`（`https://223.5.5.5/dns-query`）。
+
+域名形式的 DoH 一律拒绝（UI 与 shell 同一条规则）：它要先问自己才能找到自己，
+自举依赖让首次解析永远失败。空值或字段缺失 = 未配置。未配置与无效值的回落
+都是内置兑底：直连 `https://223.5.5.5/dns-query`，远程 `https://1.1.1.1/dns-query`。
+无效值额外写一行 DNS 日志便于排查。
+
+大陆直连 形态里两个上游各司其职：带 `geosite:cn` + `expectIPs:geoip:cn` 的
+直连条目解析大陆域名（它的查询直连发出，由 routing 的 `inboundTag:["dns"]`
+规则放行其 IP），数组末尾不带 `domains` 的远程条目是其余域名的默认上游
+（查询经代理发出）。全局 形态只有远程条目。DNS 上游变化改变渲染字节，
+因此自然走进 `kr_ensure_config` 的漂移检查，无需自己的检测器。
 
 ## 转义
 

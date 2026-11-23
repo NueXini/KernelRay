@@ -175,6 +175,7 @@ function makeModule(core) {
     dir: dir,
     stubs: stubs,
     config: path.join(dir, "config", "config.json"),
+settings: path.join(dir, "config", "settings.json"),
     state: path.join(dir, "config", "state.json"),
     outbound: path.join(dir, "config", "outbound.json"),
     meta: path.join(dir, "config", "outbound.meta"),
@@ -277,6 +278,15 @@ function writeStatePorts(m, settings, opts) {
   fs.writeFileSync(m.state, JSON.stringify(state, null, 2) + "\n");
 }
 
+// 直连DNS 与 远程DNS 各占一行（shell 逐行提取的形状）；undefined 表示
+// 不写这个键。
+function writeSettings(m, direct, remote) {
+  const o = {};
+  if (direct !== undefined) { o.directDns = direct; }
+  if (remote !== undefined) { o.remoteDns = remote; }
+  fs.writeFileSync(m.settings, JSON.stringify(o, null, 2) + "\n");
+}
+
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, "utf8"));
 }
@@ -287,10 +297,12 @@ const BODY_STATUS = '. "$KR_TEST_SCRIPT"; kr_status_write "$1" "$2"';
 const BODY_APPLY = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply "$1"';
 const BODY_UNAPPLY = '. "$KR_TEST_SCRIPT"; kr_unapply';
 const BODY_PORTS = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply_ports';
+const BODY_DNS = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_apply_dns';
 const BODY_START = '. "$KR_TEST_SCRIPT"; chmod +x "$KR_MODDIR/bin/xray"; kr_start';
 const BODY_STOP = '. "$KR_TEST_SCRIPT"; kr_stop';
 const BODY_CLI = '. "$KR_TEST_SCRIPT"; kr_cli "$@"';
 const BODY_SETTING_PORT = '. "$KR_TEST_SCRIPT"; kr_setting_port "$1" "$2"';
+const BODY_ROUTE = '. "$KR_TEST_SCRIPT"; kr_route_write "$1"';
 
 // ---- 配置模板渲染 -----------------------------------------------------------------
 
@@ -492,6 +504,58 @@ check("ports: without an applied node the change is refused", () => {
   writeStatePorts(m, { socksPort: 13008, httpPort: 13009 });
   writeOutbound(m);
   const r = runFail(m.dir, BODY_PORTS);
+  if (!/no applied node/.test(r.stderr)) {
+    throw new Error("expected the no-node refusal, got: " + r.stderr);
+  }
+  if (fs.existsSync(m.config)) { throw new Error("no config must be created"); }
+});
+
+check("dns: a stopped core gets the re-rendered config with the custom upstreams", () => {
+  const m = makeModule();
+  // cn 形态需要 geo 数据（docs/adr/0014），否则渲染降级为全局。
+  fs.writeFileSync(path.join(m.dir, "bin", "geosite.dat"), "geosite\n");
+  fs.writeFileSync(path.join(m.dir, "bin", "geoip.dat"), "geoip\n");
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  runShell(m.dir, BODY_ROUTE, ["cn"]);
+  writeSettings(m, "119.29.29.29:5353", "https://9.9.9.9:8443/dns-query");
+  runShell(m.dir, BODY_DNS);
+  const cfg = readJson(m.config);
+  eq(cfg.dns.servers[0], {
+    address: "119.29.29.29", port: 5353, domains: ["geosite:cn"], expectIPs: ["geoip:cn"]
+  }, "the custom direct UDP upstream, rendered with the split treatment");
+  eq(cfg.dns.servers[1], "https://9.9.9.9:8443/dns-query", "the custom remote DoH upstream");
+  eq(fs.readFileSync(m.applied, "utf8").trim(), ID, "applied id untouched");
+  eq(readJson(m.status).state, "stopped", "state");
+});
+
+check("dns: an invalid value still applies, with the fallback and a log line", () => {
+  const m = makeModule();
+  fs.writeFileSync(path.join(m.dir, "bin", "geosite.dat"), "geosite\n");
+  fs.writeFileSync(path.join(m.dir, "bin", "geoip.dat"), "geoip\n");
+  writeOutbound(m);
+  fs.writeFileSync(m.applied, ID + "\n");
+  runShell(m.dir, BODY_ROUTE, ["cn"]);
+  // 域名形式的 DoH 被硬性拒绝；空串等于未配置，同样走兕底。
+  writeSettings(m, "https://dns.alidns.com/dns-query", "");
+  runShell(m.dir, BODY_DNS);
+  const cfg = readJson(m.config);
+  eq(cfg.dns.servers[0].address, "https://223.5.5.5/dns-query", "direct falls back");
+  eq(cfg.dns.servers[1], "https://1.1.1.1/dns-query", "remote falls back");
+  const log = fs.readFileSync(path.join(m.dir, "logs", "kernelray.log"), "utf8");
+  if (!/directDns: invalid value rejected/.test(log)) {
+    throw new Error("expected the rejection log line, got: " + log);
+  }
+  if (/remoteDns: invalid value rejected/.test(log)) {
+    throw new Error("an empty value is unconfigured, not invalid");
+  }
+});
+
+check("dns: without an applied node the change is refused", () => {
+  const m = makeModule();
+  writeSettings(m, "119.29.29.29", undefined);
+  writeOutbound(m);
+  const r = runFail(m.dir, BODY_DNS);
   if (!/no applied node/.test(r.stderr)) {
     throw new Error("expected the no-node refusal, got: " + r.stderr);
   }

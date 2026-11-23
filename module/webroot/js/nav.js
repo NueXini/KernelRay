@@ -1,7 +1,7 @@
 import { els, tabs, pages } from "./els.js";
 import { refreshPage } from "./main.js";
 import { updateLogNav } from "./log.js";
-import { resetPortsDirty } from "./settings.js";
+import { resetPortsDirty, resetDnsDirty } from "./settings.js";
 import { editMode, resetEditMode } from "./nodelist.js";
 
 // ---- navigation ----
@@ -29,6 +29,7 @@ function showRoute(route, opts) {
   // 离开页面就丢弃。
   if (route !== "settings") {
     resetPortsDirty();
+    resetDnsDirty();
   }
   if (route !== "nodes" && editMode) {
     resetEditMode();

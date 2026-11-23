@@ -255,6 +255,8 @@ textarea {
 textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .row.mt { margin-top: 10px; }
 .ports { display: flex; gap: 10px; margin-top: 6px; }
+/* DNS 上游是长 URL，一行一个字段，挤成两列会把值截断得看不出写的是谁。 */
+.ports.stack { flex-direction: column; }
 .portfield { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .portfield span { font-size: 12px; color: var(--muted); }
 .portfield input {
@@ -268,6 +270,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 /* 诊断包按钮与保存按钮同型：直接住在 cardsec 里，flex: 1 帮不了它，
    占满卡片宽，与上面的说明文字留出间隔。 */
 #diag-collect { width: 100%; margin-top: 12px; }
+#dns-save { width: 100%; margin-top: 12px; }
 .prow {
   display: flex; gap: 9px; align-items: flex-start; padding: 8px 0;
   border-top: 1px solid var(--line); font-size: 13px;

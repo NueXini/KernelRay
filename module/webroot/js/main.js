@@ -2,7 +2,7 @@ import { T, setLang } from "./i18n.js";
 import { els } from "./els.js";
 import { hasBridge, exec, CLI, LOG_LEVELS } from "./bridge.js";
 import { THEMES, LANGS, LOG_LINE_STEPS, themePref, langPref, logLines, loadPrefs, setPref } from "./prefs.js";
-import { renderPrefs, refreshSettings, doSavePorts, setPortDirty } from "./settings.js";
+import { renderPrefs, refreshSettings, doSavePorts, setPortDirty, refreshDns, doSaveDns, setDnsDirty } from "./settings.js";
 import { setButtons, routeValue, refreshStatus, lastKv, coreRunning } from "./status.js";
 import { clearCurrentLog, setLogSource, updateLogNav, refreshLog, renderLog, clearLogLabel, logSource, lastLogSize, invalidateLog } from "./log.js";
 import { renderNodeList, invalidateList, findNodeById, canCheckNode, askDelete, confirmDelete, confirmBatchDelete, refreshNodes, editMode, confirmId, checkSet, lastStateObj, lastApplied, setConfirmId, toggleCheck, toggleEditMode, setCheck, setBatchConfirm, toggleCollapse } from "./nodelist.js";
@@ -79,6 +79,10 @@ function label(key) {
   els.lSetPorts.textContent = T.setPorts;
   els.lSetPortsHint.textContent = T.setPortsHint;
   els.portsSave.textContent = T.portsSave;
+  els.lSetDns.textContent = T.setDns;
+  els.lSetDnsDirect.textContent = T.setDnsDirect;
+  els.lSetDnsRemote.textContent = T.setDnsRemote;
+  els.dnsSave.textContent = T.dnsSave;
   els.lSetDev.textContent = T.setDev;
   els.diagHint.textContent = T.diagHint;
   els.diagCollect.textContent = diagBusy ? T.diagCollecting : T.diagCollect;
@@ -148,7 +152,7 @@ function refreshPage(manual) {
       });
     }
   } else if (currentRoute === "settings") {
-    page = status.then(function () { refreshSettings(); });
+    page = status.then(function () { refreshSettings(); return refreshDns(); });
   }
   var done = function () {
     pollInFlight = false;
@@ -393,6 +397,9 @@ els.selLog.addEventListener("change", function () {
 els.portsSave.addEventListener("click", doSavePorts);
 els.iSocks.addEventListener("input", function () { setPortDirty("socks", true); });
 els.iHttp.addEventListener("input", function () { setPortDirty("http", true); });
+els.dnsSave.addEventListener("click", doSaveDns);
+els.iDnsDirect.addEventListener("input", function () { setDnsDirty("direct", true); });
+els.iDnsRemote.addEventListener("input", function () { setDnsDirty("remote", true); });
 
 // 只在页面确实可见时轮询；WebView 在后台会冻结定时器，
 // 否则恢复时陈旧的 interval 会堆积起来。
